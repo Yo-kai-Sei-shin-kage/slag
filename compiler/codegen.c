@@ -124,6 +124,11 @@ static Local *find_local(Codegen *cg, const char *name) {
 }
 
 // Allocate a new local. Returns its stack offset (negative from rbp).
+//
+// For non-array TYPE_STR locals, two 8-byte slots are reserved: the
+// pointer at `offset` and the length (int64) at `offset - 8`. This lets
+// string variables carry their length alongside the pointer, which
+// print/println and future string operations rely on.
 static Local *alloc_local(Codegen *cg, const char *name, SlagType type,
                            int is_array, SlagType elem_type, int size) {
     if (cg->local_count >= MAX_LOCALS) {
@@ -131,8 +136,16 @@ static Local *alloc_local(Codegen *cg, const char *name, SlagType type,
         exit(1);
     }
     // Each local takes 8 bytes (int/float/bool/ptr all stored as qword).
-    // Arrays take 8 * size bytes.
-    int bytes = is_array ? (8 * size) : 8;
+    // Arrays take 8 * size bytes. Non-array strings take 16 bytes
+    // (ptr + len).
+    int bytes;
+    if (is_array) {
+        bytes = 8 * size;
+    } else if (type == TYPE_STR) {
+        bytes = 16;
+    } else {
+        bytes = 8;
+    }
     cg->frame_size += bytes;
 
     Local *loc = &cg->locals[cg->local_count++];
@@ -142,8 +155,78 @@ static Local *alloc_local(Codegen *cg, const char *name, SlagType type,
     loc->is_array  = is_array;
     loc->elem_type = elem_type;
     loc->size      = size;
-    loc->offset    = -(cg->frame_size); // grows downward
+    loc->offset    = -(cg->frame_size); // grows downward; offset = ptr slot
     return loc;
+}
+
+// For a TYPE_STR local, returns the stack offset of its length slot
+// (always 8 bytes below the pointer slot).
+static int str_len_offset(const Local *loc) {
+    return loc->offset - 8;
+}
+
+
+static void emit_call_expr(Codegen *cg, const Expr *e);
+// Load a string literal's ptr into rax and len into rdx.
+static void emit_load_str_lit(Codegen *cg, const Expr *e) {
+    int idx = add_str_const(cg, e->as.str.value);
+    size_t slen = strlen(e->as.str.value);
+    emit(cg, "    lea  rax, [_str%d]", idx);
+    emit(cg, "    mov  rdx, %zu", slen);
+}
+
+// Load a string-typed local's ptr into rax and len into rdx.
+static void emit_load_str_local(Codegen *cg, const Local *loc) {
+    emit(cg, "    mov  rax, [rbp%+d]", loc->offset);
+    emit(cg, "    mov  rdx, [rbp%+d]", str_len_offset(loc));
+}
+
+// Store ptr (in rax) and len (in rdx) into a string-typed local's slots.
+static void emit_store_str_local(Codegen *cg, const Local *loc) {
+    emit(cg, "    mov  [rbp%+d], rax", loc->offset);
+    emit(cg, "    mov  [rbp%+d], rdx", str_len_offset(loc));
+}
+
+// Emit code that evaluates a str-typed expression, leaving ptr in rax
+// and len in rdx. Handles: string literals, str-typed local variables,
+// and calls (readfile/readline/match — assumed to return ptr in rax,
+// len in rdx per the codegen calling convention).
+static void emit_str_expr(Codegen *cg, const Expr *e) {
+    switch (e->kind) {
+        case EXPR_STR_LIT:
+            emit_load_str_lit(cg, e);
+            break;
+
+        case EXPR_IDENT:
+        case EXPR_DOLLAR_IDENT: {
+            Local *loc = find_local(cg, e->as.str.value);
+            if (!loc) {
+                fprintf(stderr, "codegen error: undefined string variable '%s'\n",
+                        e->as.str.value);
+                emit(cg, "    xor  rax, rax");
+                emit(cg, "    xor  rdx, rdx");
+            } else {
+                emit_load_str_local(cg, loc);
+            }
+            break;
+        }
+
+        case EXPR_CALL:
+        case EXPR_MEMBER_CALL:
+            // readfile/readline/match etc. return ptr in rax, len in rdx.
+            emit_call_expr(cg, e);
+            break;
+
+        case EXPR_ARITH:
+            emit_str_expr(cg, e->as.arith.inner);
+            break;
+
+        default:
+            fprintf(stderr, "codegen error: unsupported string expression kind %d\n", e->kind);
+            emit(cg, "    xor  rax, rax");
+            emit(cg, "    xor  rdx, rdx");
+            break;
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -626,27 +709,14 @@ static void emit_print(Codegen *cg, const ExprList *args, int is_println) {
     const Expr *arg = args->items[0];
     SlagType t = expr_type(cg, arg, TYPE_STR);
 
-    if (t == TYPE_STR) {
-        // String literal: rdx = ptr, r8 = len
-        if (arg->kind == EXPR_STR_LIT) {
-            int idx = add_str_const(cg, arg->as.str.value);
-            size_t slen = strlen(arg->as.str.value);
-            emit(cg, "    ; print string literal");
-            emit(cg, "    mov  rcx, [_stdout]");
-            emit(cg, "    lea  rdx, [_str%d]", idx);
-            emit(cg, "    mov  r8,  %zu", slen);
-            emit_write_console(cg);
-        } else {
-            // Variable: rax = ptr, rdx = len (from emit_expr convention)
-            emit_int_expr(cg, arg);  // rax = ptr
-            emit(cg, "    mov  rdx, rax");
-            // length: try .len member or fall back to a fixed sentinel
-            // For now emit as: r8 = 0 (caller must use typed str with len)
-            // TODO: proper str length tracking
-            emit(cg, "    mov  r8,  0   ; TODO: str length");
-            emit(cg, "    mov  rcx, [_stdout]");
-            emit_write_console(cg);
-        }
+if (t == TYPE_STR) {
+        // Evaluate the string expression: rax = ptr, rdx = len.
+        emit(cg, "    ; print string");
+        emit_str_expr(cg, arg);
+        emit(cg, "    mov  r8,  rdx        ; length");
+        emit(cg, "    mov  rdx, rax        ; buffer ptr");
+        emit(cg, "    mov  rcx, [_stdout]");
+        emit_write_console(cg);
     } else if (t == TYPE_INT) {
         // Convert int to decimal string and print.
         // We use a small stack buffer and a simple itoa loop.
@@ -745,7 +815,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         } else if (strcmp(name, "println") == 0) {
             emit_print(cg, args, 1);
         } else if (strcmp(name, "readline") == 0) {
+            emit_call_prologue(cg);
             emit(cg, "    call _slag_readline   ; rax = str ptr, rdx = len");
+            emit_call_epilogue(cg, 0);
         } else if (strcmp(name, "readfile") == 0) {
             if (args->count >= 1) {
                 int idx = add_str_const(cg, args->items[0]->as.str.value);
@@ -827,7 +899,8 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         // ------------------------------------------------------------------
         // var TYPE name = expr;
         // ------------------------------------------------------------------
-        case STMT_VAR_DECL: {
+
+            case STMT_VAR_DECL: {
             Local *loc = alloc_local(cg,
                 s->as.var_decl.name,
                 s->as.var_decl.type,
@@ -839,6 +912,9 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
             if (t == TYPE_FLOAT) {
                 emit_float_expr(cg, s->as.var_decl.init);
                 emit(cg, "    movsd [rbp%+d], xmm0", loc->offset);
+            } else if (t == TYPE_STR) {
+                emit_str_expr(cg, s->as.var_decl.init);
+                emit_store_str_local(cg, loc);
             } else {
                 emit_int_expr(cg, s->as.var_decl.init);
                 emit(cg, "    mov  [rbp%+d], rax", loc->offset);
@@ -909,12 +985,16 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
                 if (loc->type == TYPE_FLOAT) {
                     emit_float_expr(cg, value);
                     emit(cg, "    movsd [rbp%+d], xmm0", loc->offset);
+                } else if (loc->type == TYPE_STR) {
+                    emit_str_expr(cg, value);
+                    emit_store_str_local(cg, loc);
                 } else {
                     emit_int_expr(cg, value);
                     emit(cg, "    mov  [rbp%+d], rax", loc->offset);
                 }
 
             } else if (target->kind == EXPR_INDEX) {
+
                 // array[index] = value
                 Local *loc = NULL;
                 if (target->as.index.base->kind == EXPR_IDENT ||
@@ -1079,9 +1159,9 @@ static int calculate_frame_size(const StmtList *list) {
     for (int i = 0; i < list->count; i++) {
         const Stmt *s = list->items[i];
         if (!s) continue;
-        switch (s->kind) {
+           switch (s->kind) {
             case STMT_VAR_DECL:
-                size += 8;
+                size += (s->as.var_decl.type == TYPE_STR) ? 16 : 8;
                 break;
             case STMT_ARRAY_DECL: {
                 int n = 0;
@@ -1253,6 +1333,7 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    test rax, rax");
     emit(cg, "    jns  .ftoa_frac_pos");
     emit(cg, "    neg  rax");
+
     emit(cg, ".ftoa_frac_pos:");
     emit(cg, "    mov  rcx, rax");
     emit(cg, "    mov  rdx, r8");
@@ -1261,6 +1342,138 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    pop  r9");
     emit(cg, "    add  r9,  rax");
     emit(cg, "    mov  rax, r9            ; total length");
+    emit(cg, "    mov  rsp, rbp");
+    emit(cg, "    pop  rbp");
+    emit(cg, "    ret");
+    emit(cg, "");
+
+    // _slag_readline: read a line from stdin into a static buffer,
+    // strip trailing \r\n. Returns rax = ptr, rdx = length.
+    emit(cg, "; --- _slag_readline ---");
+    emit(cg, "_slag_readline:");
+    emit(cg, "    push rbp");
+    emit(cg, "    mov  rbp, rsp");
+    emit(cg, "    sub  rsp, 64");
+    emit(cg, "    mov  rcx, [_stdin]");
+    emit(cg, "    lea  rdx, [_readline_buf]");
+    emit(cg, "    mov  r8,  1024          ; max chars to read");
+    emit(cg, "    lea  r9,  [rsp+32]      ; &charsRead");
+    emit(cg, "    mov  qword [rsp+32], 0");
+    emit(cg, "    mov  qword [rsp+40], 0  ; lpInputControl = NULL");
+    emit(cg, "    sub  rsp, 32            ; shadow space");
+    emit(cg, "    call ReadConsoleA");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, "    mov  rax, [rsp+32]      ; charsRead");
+    emit(cg, "    ; strip trailing \\r\\n");
+    emit(cg, "    lea  rcx, [_readline_buf]");
+    emit(cg, ".readline_strip:");
+    emit(cg, "    test rax, rax");
+    emit(cg, "    jz   .readline_done");
+    emit(cg, "    mov  dl, [rcx + rax - 1]");
+    emit(cg, "    cmp  dl, 10             ; '\\n'");
+    emit(cg, "    je   .readline_dec");
+    emit(cg, "    cmp  dl, 13             ; '\\r'");
+    emit(cg, "    je   .readline_dec");
+    emit(cg, "    jmp  .readline_done");
+    emit(cg, ".readline_dec:");
+    emit(cg, "    dec  rax");
+    emit(cg, "    jmp  .readline_strip");
+    emit(cg, ".readline_done:");
+    emit(cg, "    mov  rdx, rax           ; length");
+    emit(cg, "    lea  rax, [_readline_buf]");
+    emit(cg, "    mov  rsp, rbp");
+    emit(cg, "    pop  rbp");
+    emit(cg, "    ret");
+    emit(cg, "");
+
+    // _slag_readfile: rcx = path ptr (null-terminated).
+    // Returns rax = ptr to heap buffer, rdx = length in bytes.
+    // On error, returns rax = 0, rdx = 0.
+    emit(cg, "; --- _slag_readfile ---");
+    emit(cg, "_slag_readfile:");
+    emit(cg, "    push rbp");
+    emit(cg, "    mov  rbp, rsp");
+    emit(cg, "    sub  rsp, 64");
+    emit(cg, "    mov  r12, rcx           ; save path ptr (non-volatile)");
+    emit(cg, "    push r12");
+    emit(cg, "    push r13");
+    emit(cg, "    push r14");
+    emit(cg, "");
+    emit(cg, "    ; CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL,");
+    emit(cg, "    ;             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)");
+    emit(cg, "    mov  rcx, r12");
+    emit(cg, "    mov  rdx, 0x80000000    ; GENERIC_READ");
+    emit(cg, "    mov  r8,  1             ; FILE_SHARE_READ");
+    emit(cg, "    xor  r9,  r9            ; lpSecurityAttributes = NULL");
+    emit(cg, "    sub  rsp, 48            ; shadow + 2 stack args");
+    emit(cg, "    mov  qword [rsp+32], 3  ; OPEN_EXISTING");
+    emit(cg, "    mov  qword [rsp+40], 0x80 ; FILE_ATTRIBUTE_NORMAL");
+    emit(cg, "    call CreateFileA");
+    emit(cg, "    add  rsp, 48");
+    emit(cg, "    cmp  rax, -1            ; INVALID_HANDLE_VALUE");
+    emit(cg, "    je   .readfile_fail");
+    emit(cg, "    mov  r13, rax           ; save file handle");
+    emit(cg, "");
+    emit(cg, "    ; GetFileSize(handle, NULL)");
+    emit(cg, "    mov  rcx, r13");
+    emit(cg, "    xor  rdx, rdx");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    call GetFileSize");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, "    cmp  rax, -1");
+    emit(cg, "    je   .readfile_fail_close");
+    emit(cg, "    mov  r14, rax           ; save file size");
+    emit(cg, "");
+    emit(cg, "    ; GetProcessHeap()");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    call GetProcessHeap");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, "    mov  r12, rax           ; save heap handle");
+    emit(cg, "");
+    emit(cg, "    ; HeapAlloc(heap, 0, size)");
+    emit(cg, "    mov  rcx, r12");
+    emit(cg, "    xor  rdx, rdx");
+    emit(cg, "    mov  r8,  r14");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    call HeapAlloc");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, "    test rax, rax");
+    emit(cg, "    jz   .readfile_fail_close");
+    emit(cg, "    mov  r12, rax           ; save buffer ptr");
+    emit(cg, "");
+    emit(cg, "    ; ReadFile(handle, buf, size, &bytesRead, NULL)");
+    emit(cg, "    mov  rcx, r13");
+    emit(cg, "    mov  rdx, r12");
+    emit(cg, "    mov  r8,  r14");
+    emit(cg, "    lea  r9,  [rsp+32]");
+    emit(cg, "    sub  rsp, 48");
+    emit(cg, "    mov  qword [rsp+32], 0");
+    emit(cg, "    mov  qword [rsp+40], 0  ; lpOverlapped = NULL");
+    emit(cg, "    call ReadFile");
+    emit(cg, "    add  rsp, 48");
+    emit(cg, "");
+    emit(cg, "    ; CloseHandle(file handle)");
+    emit(cg, "    mov  rcx, r13");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    call CloseHandle");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, "");
+    emit(cg, "    mov  rax, r12           ; ptr");
+    emit(cg, "    mov  rdx, r14           ; length");
+    emit(cg, "    jmp  .readfile_done");
+    emit(cg, "");
+    emit(cg, ".readfile_fail_close:");
+    emit(cg, "    mov  rcx, r13");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    call CloseHandle");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, ".readfile_fail:");
+    emit(cg, "    xor  rax, rax");
+    emit(cg, "    xor  rdx, rdx");
+    emit(cg, ".readfile_done:");
+    emit(cg, "    pop  r14");
+    emit(cg, "    pop  r13");
+    emit(cg, "    pop  r12");
     emit(cg, "    mov  rsp, rbp");
     emit(cg, "    pop  rbp");
     emit(cg, "    ret");
@@ -1284,16 +1497,16 @@ static void emit_data_section(Codegen *cg) {
     }
     if (cg->float_const_count) emit(cg, "");
 
-    // String constants.
+    // String constants. Always emitted with a trailing 0 byte so they
+    // can double as null-terminated C strings (needed by readfile's
+    // CreateFileA path argument), in addition to being used with
+    // explicit ptr+len elsewhere.
     for (int i = 0; i < cg->str_const_count; i++) {
         emit_raw(cg, "_str%d:  db ", i);
-        // First byte placeholder — emit_str_bytes starts with ", x"
-        // so we seed with a zero-length open.
         const char *s = cg->str_consts[i];
         if (*s == '\0') {
             emit_raw(cg, "0");
         } else {
-            // Start in quote mode.
             int in_quote = 0;
             for (const char *p = s; *p; p++) {
                 unsigned char c = (unsigned char)*p;
@@ -1311,6 +1524,7 @@ static void emit_data_section(Codegen *cg) {
                 }
             }
             if (in_quote) emit_raw(cg, "\"");
+            emit_raw(cg, ", 0");  // null terminator
         }
         fprintf(cg->out, "\n");
     }
@@ -1320,8 +1534,9 @@ static void emit_data_section(Codegen *cg) {
     emit(cg, "_newline: db 10");
     emit(cg, "");
 
-    // stdout handle storage (populated at startup).
+    // stdout/stdin handle storage (populated at startup).
     emit(cg, "_stdout:  dq 0");
+    emit(cg, "_stdin:   dq 0");
     emit(cg, "");
 
     // CPU topology globals (populated at startup).
@@ -1339,7 +1554,8 @@ static void emit_data_section(Codegen *cg) {
 static void emit_bss_section(Codegen *cg) {
     (void)cg;
     emit(cg, "section .bss");
-    emit(cg, "_written_bytes: resq 1   ; scratch for WriteConsoleA");
+    emit(cg, "_written_bytes: resq 1     ; scratch for WriteConsoleA");
+    emit(cg, "_readline_buf:  resb 1024  ; line input buffer for readline()");
     emit(cg, "");
 }
 
@@ -1351,10 +1567,17 @@ static void emit_imports(Codegen *cg) {
     emit(cg, "; --- Win32 imports ---");
     emit(cg, "extern GetStdHandle");
     emit(cg, "extern WriteConsoleA");
+    emit(cg, "extern ReadConsoleA");
     emit(cg, "extern ExitProcess");
     emit(cg, "extern CreateThread");
     emit(cg, "extern WaitForMultipleObjects");
     emit(cg, "extern GetLogicalProcessorInformation");
+    emit(cg, "extern CreateFileA");
+    emit(cg, "extern ReadFile");
+    emit(cg, "extern GetFileSize");
+    emit(cg, "extern CloseHandle");
+    emit(cg, "extern GetProcessHeap");
+    emit(cg, "extern HeapAlloc");
     emit(cg, "");
 }
 
@@ -1377,6 +1600,14 @@ static void emit_startup(Codegen *cg) {
     emit(cg, "    call GetStdHandle");
     emit(cg, "    add  rsp, 32");
     emit(cg, "    mov  [_stdout], rax");
+    emit(cg, "");
+    emit(cg, "    ; get stdin handle (STD_INPUT_HANDLE = -10)");
+    emit(cg, "    mov  rcx, -10");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    call GetStdHandle");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, "    mov  [_stdin], rax");
+    emit(cg, "");
     emit(cg, "");
     emit(cg, "    ; TODO: GetLogicalProcessorInformation for CPU topology");
     emit(cg, "    mov  qword [_cpu_physical_cores],    1");

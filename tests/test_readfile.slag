@@ -1,0 +1,6 @@
+function main() {
+    var str content = readfile("test_data.txt");
+    println("File contents:");
+    println(content);
+    return;
+}
