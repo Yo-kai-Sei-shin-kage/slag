@@ -1,0 +1,17 @@
+// Lexer smoke test
+function add(int a, int b) {
+    return int $(($a + $b));
+}
+
+function main() {
+    var float radius = 5.0;
+    var float area = $((3.14159 * $radius * $radius));
+    var str log = readfile("app.log");
+    var str[] errors = match(log, /ERROR:[^\n]+/);
+    var int i = 0;
+    while ($i < errors.len) {
+        println(errors[$i]);
+        i = $(($i + 1));
+    }
+    return;
+}
