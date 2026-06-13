@@ -1,0 +1,16 @@
+# Build artifacts
+*.o
+*.exe
+*.asm
+*.obj
+
+# Compiled test binaries
+compiler/lexer_test
+compiler/ast_test
+compiler/parser_test
+slag
+
+# Editor/OS junk
+*.swp
+*~
+.DS_Store
