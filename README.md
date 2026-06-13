@@ -1,0 +1,47 @@
+# Slag
+
+A statically typed, compiled systems programming language targeting native Win64 PE executables. 
+Slag compiles directly to NASM x86-64 assembly, links with no C runtime dependency, and is designed 
+for bare-metal control on Windows 11 — file processing, multithreaded workloads, and software-rendered 
+graphics (with a PS2-era rendering ceiling as a long-term target).
+
+The full language design is documented in [`slag_spec.md`](slag_spec.md).
+
+## Status
+
+Slag is under active development. The pipeline currently supports:
+
+- **Lexer** — full tokenization including `$((...))` arithmetic blocks, `$variable` references, regex literals, and all core keywords/operators.
+- **Parser** — complete recursive descent parser producing a full AST: functions, typed variable and array declarations, if/else/else-if, while, typed returns, thread/sync blocks, and `on` event handlers.
+- **Code generator** — emits NASM x86-64 Win64 assembly. Working: integer and float arithmetic, comparisons, logical short-circuit operators, fixed-size arrays (declaration, indexing, `.len`), control flow, `print`/`println` for ints/floats/string literals, and user-defined function calls under the Win64 calling convention.
+
+### Not yet implemented
+
+- String variable length tracking (printing `str` variables)
+- `match()` / regex engine
+- `readfile()` / `readline()` runtime
+- Dynamic/regex-sized arrays
+- `thread` / `sync` / `lock` (currently stubbed)
+- CPU topology detection (`cpu.*` fields hardcoded to 1)
+- Windowing and graphics (`window.*`, `pixel`, keyboard/mouse `on` handlers)
+- 3D software rendering pipeline
+- Self-hosting compiler
+
+## Toolchain requirements
+
+Slag's compiler is written in C and built with MinGW-w64 GCC, targeting `x86_64-w64-mingw32`. Output assembly is assembled with NASM (`-f win64`) and linked with the MinGW-w64 linker. No CRT is linked into Slag-compiled programs; only `kernel32.dll`, `user32.dll`, and `gdi32.dll` are imported as needed.
+
+## Building the compiler
+
+```bash
+cd compiler
+gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c
+```
+
+## Compiling a Slag program
+
+```bash
+./slag program.slag
+nasm -f win64 program.asm -o program.obj
+x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -e _start
+```
