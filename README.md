@@ -45,5 +45,3 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -e _start
 ```
-
-## Project layout
