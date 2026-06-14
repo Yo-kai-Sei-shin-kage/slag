@@ -1,0 +1,237 @@
+function abs_int(int v) {
+    if (v < 0) {
+        var int neg = $((0 - $v));
+        return int neg;
+    }
+    return int v;
+}
+
+function sign_int(int v) {
+    if (v > 0) {
+        return int 1;
+    }
+    if (v < 0) {
+        return int -1;
+    }
+    return int 0;
+}
+
+function draw_line(int x0, int y0, int x1, int y1, int r, int g, int b) {
+    var int dx = abs_int($(($x1 - $x0)));
+    var int dy = abs_int($(($y1 - $y0)));
+    var int sx = sign_int($(($x1 - $x0)));
+    var int sy = sign_int($(($y1 - $y0)));
+    var int err = $(($dx - $dy));
+
+    var int x = x0;
+    var int y = y0;
+    var int running = 1;
+
+    while (running == 1) {
+        pixel(x, y, r, g, b);
+
+        if (x == x1) {
+            if (y == y1) {
+                running = 0;
+            }
+        }
+
+        if (running == 1) {
+            var int e2 = $((2 * $err));
+            if (e2 > $((0 - $dy))) {
+                err = $(($err - $dy));
+                x = $(($x + $sx));
+            }
+            if (e2 < $dx) {
+                err = $(($err + $dx));
+                y = $(($y + $sy));
+            }
+        }
+    }
+    return;
+}
+
+function to_screen_x(float x, float z) {
+    var float d = 4.0;
+    var float scale = 100.0;
+    var float zd = $(($z + $d));
+    var float proj = $(($x * $scale));
+    proj = $(($proj / $zd));
+    var float sx = $((160.0 + $proj));
+    var int result = sx;
+    return int result;
+}
+
+function to_screen_y(float y, float z) {
+    var float d = 4.0;
+    var float scale = 100.0;
+    var float zd = $(($z + $d));
+    var float proj = $(($y * $scale));
+    proj = $(($proj / $zd));
+    var float sy = $((120.0 - $proj));
+    var int result = sy;
+    return int result;
+}
+
+function draw_cube_edges(
+    int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
+    int x4, int y4, int x5, int y5, int x6, int y6, int x7, int y7,
+    int r, int g, int b)
+{
+    draw_line(x0, y0, x1, y1, r, g, b);
+    draw_line(x1, y1, x2, y2, r, g, b);
+    draw_line(x2, y2, x3, y3, r, g, b);
+    draw_line(x3, y3, x0, y0, r, g, b);
+
+    draw_line(x4, y4, x5, y5, r, g, b);
+    draw_line(x5, y5, x6, y6, r, g, b);
+    draw_line(x6, y6, x7, y7, r, g, b);
+    draw_line(x7, y7, x4, y4, r, g, b);
+
+    draw_line(x0, y0, x4, y4, r, g, b);
+    draw_line(x1, y1, x5, y5, r, g, b);
+    draw_line(x2, y2, x6, y6, r, g, b);
+    draw_line(x3, y3, x7, y7, r, g, b);
+    return;
+}
+
+function main() {
+    window.open(320, 240, "Rotating Cube");
+
+    on key_down(int key) {
+        if (key == 27) {
+            window.close();
+        }
+    }
+
+    var float cosy = 0.99862953;
+    var float siny = 0.05233596;
+    var float cosx = 0.99756406;
+    var float sinx = 0.06975647;
+
+    var float vx0 = -1.0; var float vy0 = -1.0; var float vz0 = -1.0;
+    var float vx1 =  1.0; var float vy1 = -1.0; var float vz1 = -1.0;
+    var float vx2 =  1.0; var float vy2 =  1.0; var float vz2 = -1.0;
+    var float vx3 = -1.0; var float vy3 =  1.0; var float vz3 = -1.0;
+    var float vx4 = -1.0; var float vy4 = -1.0; var float vz4 =  1.0;
+    var float vx5 =  1.0; var float vy5 = -1.0; var float vz5 =  1.0;
+    var float vx6 =  1.0; var float vy6 =  1.0; var float vz6 =  1.0;
+    var float vx7 = -1.0; var float vy7 =  1.0; var float vz7 =  1.0;
+
+    var int px0 = 0; var int py0 = 0;
+    var int px1 = 0; var int py1 = 0;
+    var int px2 = 0; var int py2 = 0;
+    var int px3 = 0; var int py3 = 0;
+    var int px4 = 0; var int py4 = 0;
+    var int px5 = 0; var int py5 = 0;
+    var int px6 = 0; var int py6 = 0;
+    var int px7 = 0; var int py7 = 0;
+
+    var int first_frame = 1;
+
+    while (window.is_open()) {
+        var float tx0 = $(($vx0 * $cosy)); var float tz0 = $(($vx0 * $siny));
+        tx0 = $(($tx0 + ($vz0 * $siny)));
+        tz0 = $((($vz0 * $cosy) - $tz0));
+
+        var float tx1 = $(($vx1 * $cosy)); var float tz1 = $(($vx1 * $siny));
+        tx1 = $(($tx1 + ($vz1 * $siny)));
+        tz1 = $((($vz1 * $cosy) - $tz1));
+
+        var float tx2 = $(($vx2 * $cosy)); var float tz2 = $(($vx2 * $siny));
+        tx2 = $(($tx2 + ($vz2 * $siny)));
+        tz2 = $((($vz2 * $cosy) - $tz2));
+
+        var float tx3 = $(($vx3 * $cosy)); var float tz3 = $(($vx3 * $siny));
+        tx3 = $(($tx3 + ($vz3 * $siny)));
+        tz3 = $((($vz3 * $cosy) - $tz3));
+
+        var float tx4 = $(($vx4 * $cosy)); var float tz4 = $(($vx4 * $siny));
+        tx4 = $(($tx4 + ($vz4 * $siny)));
+        tz4 = $((($vz4 * $cosy) - $tz4));
+
+        var float tx5 = $(($vx5 * $cosy)); var float tz5 = $(($vx5 * $siny));
+        tx5 = $(($tx5 + ($vz5 * $siny)));
+        tz5 = $((($vz5 * $cosy) - $tz5));
+
+        var float tx6 = $(($vx6 * $cosy)); var float tz6 = $(($vx6 * $siny));
+        tx6 = $(($tx6 + ($vz6 * $siny)));
+        tz6 = $((($vz6 * $cosy) - $tz6));
+
+        var float tx7 = $(($vx7 * $cosy)); var float tz7 = $(($vx7 * $siny));
+        tx7 = $(($tx7 + ($vz7 * $siny)));
+        tz7 = $((($vz7 * $cosy) - $tz7));
+
+        var float ty0 = $(($vy0 * $cosx)); var float fz0 = $(($vy0 * $sinx));
+        ty0 = $(($ty0 - ($tz0 * $sinx)));
+        fz0 = $(($fz0 + ($tz0 * $cosx)));
+
+        var float ty1 = $(($vy1 * $cosx)); var float fz1 = $(($vy1 * $sinx));
+        ty1 = $(($ty1 - ($tz1 * $sinx)));
+        fz1 = $(($fz1 + ($tz1 * $cosx)));
+
+        var float ty2 = $(($vy2 * $cosx)); var float fz2 = $(($vy2 * $sinx));
+        ty2 = $(($ty2 - ($tz2 * $sinx)));
+        fz2 = $(($fz2 + ($tz2 * $cosx)));
+
+        var float ty3 = $(($vy3 * $cosx)); var float fz3 = $(($vy3 * $sinx));
+        ty3 = $(($ty3 - ($tz3 * $sinx)));
+        fz3 = $(($fz3 + ($tz3 * $cosx)));
+
+        var float ty4 = $(($vy4 * $cosx)); var float fz4 = $(($vy4 * $sinx));
+        ty4 = $(($ty4 - ($tz4 * $sinx)));
+        fz4 = $(($fz4 + ($tz4 * $cosx)));
+
+        var float ty5 = $(($vy5 * $cosx)); var float fz5 = $(($vy5 * $sinx));
+        ty5 = $(($ty5 - ($tz5 * $sinx)));
+        fz5 = $(($fz5 + ($tz5 * $cosx)));
+
+        var float ty6 = $(($vy6 * $cosx)); var float fz6 = $(($vy6 * $sinx));
+        ty6 = $(($ty6 - ($tz6 * $sinx)));
+        fz6 = $(($fz6 + ($tz6 * $cosx)));
+
+        var float ty7 = $(($vy7 * $cosx)); var float fz7 = $(($vy7 * $sinx));
+        ty7 = $(($ty7 - ($tz7 * $sinx)));
+        fz7 = $(($fz7 + ($tz7 * $cosx)));
+
+        vx0 = tx0; vy0 = ty0; vz0 = fz0;
+        vx1 = tx1; vy1 = ty1; vz1 = fz1;
+        vx2 = tx2; vy2 = ty2; vz2 = fz2;
+        vx3 = tx3; vy3 = ty3; vz3 = fz3;
+        vx4 = tx4; vy4 = ty4; vz4 = fz4;
+        vx5 = tx5; vy5 = ty5; vz5 = fz5;
+        vx6 = tx6; vy6 = ty6; vz6 = fz6;
+        vx7 = tx7; vy7 = ty7; vz7 = fz7;
+
+        var int sx0 = to_screen_x(vx0, vz0); var int sy0 = to_screen_y(vy0, vz0);
+        var int sx1 = to_screen_x(vx1, vz1); var int sy1 = to_screen_y(vy1, vz1);
+        var int sx2 = to_screen_x(vx2, vz2); var int sy2 = to_screen_y(vy2, vz2);
+        var int sx3 = to_screen_x(vx3, vz3); var int sy3 = to_screen_y(vy3, vz3);
+        var int sx4 = to_screen_x(vx4, vz4); var int sy4 = to_screen_y(vy4, vz4);
+        var int sx5 = to_screen_x(vx5, vz5); var int sy5 = to_screen_y(vy5, vz5);
+        var int sx6 = to_screen_x(vx6, vz6); var int sy6 = to_screen_y(vy6, vz6);
+        var int sx7 = to_screen_x(vx7, vz7); var int sy7 = to_screen_y(vy7, vz7);
+
+        if (first_frame == 0) {
+            draw_cube_edges(
+                px0, py0, px1, py1, px2, py2, px3, py3,
+                px4, py4, px5, py5, px6, py6, px7, py7,
+                0, 0, 0);
+        }
+        first_frame = 0;
+
+        draw_cube_edges(
+            sx0, sy0, sx1, sy1, sx2, sy2, sx3, sy3,
+            sx4, sy4, sx5, sy5, sx6, sy6, sx7, sy7,
+            255, 255, 255);
+
+        px0 = sx0; py0 = sy0; px1 = sx1; py1 = sy1;
+        px2 = sx2; py2 = sy2; px3 = sx3; py3 = sy3;
+        px4 = sx4; py4 = sy4; px5 = sx5; py5 = sy5;
+        px6 = sx6; py6 = sy6; px7 = sx7; py7 = sy7;
+
+        window.flush();
+    }
+
+    return;
+}

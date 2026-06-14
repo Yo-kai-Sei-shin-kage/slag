@@ -609,8 +609,8 @@ static void emit_window_utils(Codegen *cg) {
     E("    sub  rsp, 32");
     E("    call PostMessageA");
     E("    add  rsp, 32");
-    E("    ; sleep 1ms to yield to window thread");
-    E("    mov  rcx, 1");
+    E("    ; sleep ~16ms to yield to window thread and cap frame rate (~60fps)");
+    E("    mov  rcx, 16");
     E("    sub  rsp, 32");
     E("    call Sleep");
     E("    add  rsp, 32");
@@ -647,6 +647,16 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  rbp, rsp");
     E("    sub  rsp, 48");
     E("");
+    E("    ; bounds check: 0 <= x < width, 0 <= y < height");
+    E("    cmp  rcx, 0");
+    E("    jl   .pixel_done");
+    E("    cmp  rcx, [_window_width]");
+    E("    jge  .pixel_done");
+    E("    cmp  rdx, 0");
+    E("    jl   .pixel_done");
+    E("    cmp  rdx, [_window_height]");
+    E("    jge  .pixel_done");
+    E("");
     E("    ; compute offset = (y * width + x) * 4");
     E("    mov  rax, rdx              ; rax = y");
     E("    imul rax, [_window_width]  ; rax = y * width");
@@ -663,6 +673,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  byte [r10+2], r8b     ; R");
     E("    mov  byte [r10+3], 0xFF    ; A = opaque");
     E("");
+    E(".pixel_done:");
     E("    mov  rsp, rbp");
     E("    pop  rbp");
     E("    ret");
@@ -726,6 +737,14 @@ void emit_window_bss(Codegen *cg) {
     E("_window_ready_event: resq 1");
     E("_window_thread:      resq 1");
     E("_window_msg:         resb 48  ; MSG struct");
+    E("");
+    E("; --- shared input state (written by event handlers, read by user code) ---");
+    E("_input_drag_x:       dq 0   ; accumulated drag offset x");
+    E("_input_drag_y:       dq 0   ; accumulated drag offset y");
+    E("_input_dragging:     dq 0   ; 1 while left button held");
+    E("_input_last_x:       dq 0   ; last mouse x (for delta calc)");
+    E("_input_last_y:       dq 0   ; last mouse y");
+    E("_input_wheel:        dq 0   ; accumulated wheel delta");
     E("");
 }
 
