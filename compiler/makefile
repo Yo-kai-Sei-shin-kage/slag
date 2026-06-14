@@ -1,5 +1,3 @@
-# Makefile — Slag compiler (slag.exe) and Slag program build pipeline
-#
 # Toolchain: MinGW-w64 gcc + NASM, targeting Win64 PE.
 #
 # Usage:
@@ -14,7 +12,7 @@ NASMFLAGS = -f win64
 
 LDLIBS  = -lkernel32 -luser32 -lgdi32
 
-SRCS = main.c lexer.c ast.c parser.c codegen.c
+SRCS = main.c lexer.c ast.c parser.c codegen.c window_runtime.c
 OBJS = $(SRCS:.c=.o)
 
 SLAG = slag.exe
@@ -31,7 +29,7 @@ $(SLAG): $(OBJS)
 
 # Pattern rule: foo.slag -> foo.asm (via slag.exe)
 %.asm: %.slag $(SLAG)
-	./$(SLAG) $< 
+	./$(SLAG) $<
 
 # Pattern rule: foo.asm -> foo.obj (via nasm)
 %.obj: %.asm
@@ -43,3 +41,4 @@ $(SLAG): $(OBJS)
 
 clean:
 	rm -f $(SLAG) $(OBJS) *.asm *.obj *.exe
+

@@ -1,0 +1,20 @@
+function main() {
+    window.open(320, 240, "Pixel Test");
+
+    var int x = 0;
+    while (x < 320) {
+        pixel(x, 100, 255, 0, 0);
+        x = $(($x + 1));
+    }
+
+    window.flush();
+
+    var int i = 0;
+    while (i < 5000) {
+        window.flush();
+        i = $(($i + 1));
+    }
+
+    window.close();
+    return;
+}

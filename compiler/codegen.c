@@ -33,13 +33,14 @@
 #include <stdarg.h>
 #include "ast.h"
 #include "codegen.h"
+#include "window_runtime.h"
 
 // ---------------------------------------------------------------------
 // Codegen state
 // ---------------------------------------------------------------------
 
 // A local variable entry in the current function's symbol table.
-typedef struct {
+typedef struct Local {
     char *name;
     SlagType type;
     int is_array;
@@ -50,7 +51,7 @@ typedef struct {
 
 #define MAX_LOCALS 256
 
-typedef struct {
+typedef struct Codegen {
     FILE *out;            // output assembly file
     int label_counter;    // unique label suffix generator
 
@@ -90,6 +91,7 @@ static void emit_raw(Codegen *cg, const char *fmt, ...) {
 static int new_label(Codegen *cg) {
     return cg->label_counter++;
 }
+
 
 // Register a float constant in the .data pool; return its index.
 static int add_float_const(Codegen *cg, double val) {
@@ -164,6 +166,26 @@ static Local *alloc_local(Codegen *cg, const char *name, SlagType type,
 static int str_len_offset(const Local *loc) {
     return loc->offset - 8;
 }
+
+// Non-static wrappers for use by window_runtime.c
+void cg_emit(Codegen *cg, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(cg->out, fmt, ap);
+    va_end(ap);
+    fprintf(cg->out, "\n");
+}
+
+void cg_emit_raw(Codegen *cg, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(cg->out, fmt, ap);
+    va_end(ap);
+}
+
+int cg_new_label(Codegen *cg) { return cg->label_counter++; }
+int cg_add_str_const(Codegen *cg, const char *s) { return add_str_const(cg, s); }
+int cg_add_float_const(Codegen *cg, double val) { return add_float_const(cg, val); }
 
 
 static void emit_call_expr(Codegen *cg, const Expr *e);
@@ -532,6 +554,12 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             break;
         }
 
+        case EXPR_MEMBER_CALL: {
+            // e.g. window.is_open() -> int in rax.
+            emit_call_expr(cg, e);
+            break;
+        }
+
         default:
             emit(cg, "    xor  rax, rax  ; unhandled expr kind %d", e->kind);
             break;
@@ -759,15 +787,24 @@ if (t == TYPE_STR) {
 
 // Emit a user-defined function call. Result in rax (int) or xmm0 (float).
 static void emit_user_call(Codegen *cg, const char *name, const ExprList *args) {
-    // Push args right-to-left for any beyond the first 4.
-    // For the first 4, load into rcx/rdx/r8/r9.
-    // We evaluate all args and push them, then pop into registers.
-    // Simple approach: evaluate each arg, push onto stack, then set up regs.
+    // Win64 calling convention:
+    //   args 0-3 -> rcx, rdx, r8, r9
+    //   args 4+  -> [rsp+32], [rsp+40], ... (after shadow space)
+    //
+    // Strategy:
+    //   1. Evaluate args 0-3 into scratch regs (save to stack temporarily)
+    //   2. Allocate shadow space (32 bytes)
+    //   3. Evaluate and store args 4+ onto stack at [rsp+32], [rsp+40]...
+    //   4. Load args 0-3 into rcx/rdx/r8/r9
+    //   5. Call
+    //   6. Clean up shadow + stack args
 
     int n = args->count;
+    const char *int_regs[] = { "rcx", "rdx", "r8", "r9" };
 
-    // Evaluate and push all args onto the stack (left to right).
-    for (int i = 0; i < n; i++) {
+    // Evaluate first 4 args and push to temp stack storage.
+    int reg_args = n < 4 ? n : 4;
+    for (int i = 0; i < reg_args; i++) {
         SlagType t = expr_type(cg, args->items[i], TYPE_INT);
         if (t == TYPE_FLOAT) {
             emit_float_expr(cg, args->items[i]);
@@ -778,32 +815,46 @@ static void emit_user_call(Codegen *cg, const char *name, const ExprList *args) 
         }
     }
 
-    // Pop args into registers by position (Win64: arg N uses the Nth
-    // slot - rcx/xmm0, rdx/xmm1, r8/xmm2, r9/xmm3 - selected by the
-    // arg's type, both register files indexed by position).
-    // Stack has arg(n-1) on top (pushed last), arg0 deepest.
-    const char *int_regs[] = { "rcx", "rdx", "r8", "r9" };
-    const char *xmm_regs[] = { "xmm0", "xmm1", "xmm2", "xmm3" };
-    int reg_args = n < 4 ? n : 4;
+    // Allocate shadow space + slots for stack args.
+    int stack_args = n > 4 ? n - 4 : 0;
+    int alloc = 32 + stack_args * 8;
+    // Align to 16 bytes.
+    if (alloc % 16 != 0) alloc += 8;
+    emit(cg, "    sub  rsp, %d", alloc);
 
-    for (int i = reg_args - 1; i >= 0; i--) {
+    // Evaluate and store stack args (args 4+) into [rsp+32], [rsp+40]...
+    for (int i = 4; i < n; i++) {
         SlagType t = expr_type(cg, args->items[i], TYPE_INT);
+        int slot = 32 + (i - 4) * 8;
         if (t == TYPE_FLOAT) {
-            emit(cg, "    movsd %s, [rsp]", xmm_regs[i]);
-            emit(cg, "    add  rsp, 8");
+            emit_float_expr(cg, args->items[i]);
+            emit(cg, "    movsd [rsp+%d], xmm0", slot);
         } else {
-            emit(cg, "    pop  %s", int_regs[i]);
+            emit_int_expr(cg, args->items[i]);
+            emit(cg, "    mov  [rsp+%d], rax", slot);
         }
     }
 
-    emit_call_prologue(cg);
-    emit(cg, "    call _%s", name);
-    emit_call_epilogue(cg, 0);
-
-    // Clean up any stack args beyond the first 4.
-    if (n > 4) {
-        emit(cg, "    add  rsp, %d", (n - 4) * 8);
+    // Pop first 4 args into registers (they were pushed left-to-right,
+    // so arg3 is on top — we need a temp area above rsp to swap).
+    // Use r10/r11 as scratch for args 2/3, rcx/rdx for 0/1.
+    // Simpler: use the shadow space slots to hold them then load.
+    // We pushed arg0..arg(reg_args-1) before sub rsp, so they are at
+    // [rsp+alloc], [rsp+alloc+8], ... from arg0 upward.
+    for (int i = 0; i < reg_args; i++) {
+        int off = alloc + (reg_args - 1 - i) * 8;
+        SlagType t = expr_type(cg, args->items[i], TYPE_INT);
+        if (t == TYPE_FLOAT) {
+            emit(cg, "    movsd xmm%d, [rsp+%d]", i, off);
+        } else {
+            emit(cg, "    mov  %s, [rsp+%d]", int_regs[i], off);
+        }
     }
+
+    emit(cg, "    call _%s", name);
+
+    // Clean up shadow + stack args + temp reg storage.
+    emit(cg, "    add  rsp, %d", alloc + reg_args * 8);
 }
 
 // Dispatch a call expression (EXPR_CALL or EXPR_MEMBER_CALL).
@@ -852,9 +903,26 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
 
         // window.open(w, h, title)
         if (strcmp(member, "open") == 0) {
-            emit(cg, "    ; window.open");
-            emit_user_call(cg, "slag_window_open", args);
-        }
+           emit(cg, "    ; window.open");
+        if (args->count >= 3) {
+           // w → rcx
+           emit_int_expr(cg, args->items[0]);
+           emit(cg, "    mov  r12, rax");
+           // h → rdx
+           emit_int_expr(cg, args->items[1]);
+           emit(cg, "    mov  r13, rax");
+           // title string → r8 (ptr), r9 (len)
+           emit_str_expr(cg, args->items[2]);
+           // rax=ptr, rdx=len at this point
+           emit(cg, "    mov  r8,  rax");
+           emit(cg, "    mov  r9,  rdx");
+           emit(cg, "    mov  rcx, r12");
+           emit(cg, "    mov  rdx, r13");
+           emit(cg, "    sub  rsp, 32");
+           emit(cg, "    call _slag_window_open");
+           emit(cg, "    add  rsp, 32");
+       }
+   }
         // window.close()
         else if (strcmp(member, "close") == 0) {
             emit(cg, "    ; window.close");
@@ -868,6 +936,11 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit_call_prologue(cg);
             emit(cg, "    call _slag_window_flush");
             emit_call_epilogue(cg, 0);
+        }
+        // window.is_open() -> int (0 or 1)
+        else if (strcmp(member, "is_open") == 0) {
+            emit(cg, "    ; window.is_open");
+            emit(cg, "    mov  rax, [_window_open]");
         }
         // zbuffer.clear()
         else if (strcmp(member, "clear") == 0) {
@@ -1201,10 +1274,89 @@ static int calculate_frame_size(const StmtList *list) {
     return size;
 }
 
+// ---------------------------------------------------------------------
+// Event handler procs: on key_down(int key) { ... } etc.
+//
+// Emitted as standalone procs named _slag_on_<event_name>, called
+// directly from the WndProc in window_runtime.c. Parameter -> register
+// mapping follows Win64 int-arg convention (rcx, rdx, r8, r9), matching
+// what window_runtime.c passes:
+//   key_down(int key)              -> rcx = key
+//   key_up(int key)                -> rcx = key
+//   mouse_move(int x, int y)        -> rcx = x, rdx = y
+//   mouse_down(int button, int x, int y) -> rcx=button, rdx=x, r8=y
+//   mouse_up(int button, int x, int y)   -> rcx=button, rdx=x, r8=y
+// ---------------------------------------------------------------------
+static void emit_on_handler(Codegen *cg, const Stmt *s) {
+    const char *event_name = s->as.on_handler.event_name;
+    const ParamList *params = &s->as.on_handler.params;
+    const StmtList *body = &s->as.on_handler.body;
+
+    // Reset per-handler local state, sized like a function.
+    cg->local_count = 0;
+    cg->frame_size  = 0;
+
+    for (int i = 0; i < params->count; i++) {
+        alloc_local(cg, params->items[i].name, params->items[i].type,
+                     0, TYPE_UNKNOWN, 0);
+    }
+    int param_size = cg->frame_size;
+
+    int body_size = calculate_frame_size(body);
+
+    int total = (param_size + body_size + 32 + 15) & ~15;
+    if (total < 64) total = 64;
+
+    cg->local_count = 0;
+    cg->frame_size  = 0;
+    for (int i = 0; i < params->count; i++) {
+        alloc_local(cg, params->items[i].name, params->items[i].type,
+                     0, TYPE_UNKNOWN, 0);
+    }
+
+    emit(cg, "; --- on %s handler ---", event_name);
+    emit(cg, "_slag_on_%s:", event_name);
+    emit(cg, "    push rbp");
+    emit(cg, "    mov  rbp, rsp");
+    emit(cg, "    sub  rsp, %d", total);
+
+    const char *param_regs[] = { "rcx", "rdx", "r8", "r9" };
+    for (int i = 0; i < params->count && i < 4; i++) {
+        Local *loc = find_local(cg, params->items[i].name);
+        if (loc) {
+            if (params->items[i].type == TYPE_FLOAT) {
+                emit(cg, "    movsd [rbp%+d], xmm%d", loc->offset, i);
+            } else {
+                emit(cg, "    mov  [rbp%+d], %s", loc->offset, param_regs[i]);
+            }
+        }
+    }
+
+    emit_stmtlist(cg, body);
+
+    emit(cg, "    mov  rsp, rbp");
+    emit(cg, "    pop  rbp");
+    emit(cg, "    ret");
+    emit(cg, "");
+}
+
+// Scan a function body for top-level `on` handlers and emit each as a
+// standalone proc. Handlers nested inside if/while are not supported
+// in v0.1 (only top-level statements in the function body are scanned).
+static void emit_on_handlers(Codegen *cg, const Function *f) {
+    for (int i = 0; i < f->body.count; i++) {
+        Stmt *s = f->body.items[i];
+        if (s->kind == STMT_ON_HANDLER) {
+            emit_on_handler(cg, s);
+        }
+    }
+}
+
 static void emit_function(Codegen *cg, const Function *f) {
     // Reset per-function state.
     cg->local_count = 0;
     cg->frame_size  = 0;
+
 
     // First pass: calculate param space.
     for (int i = 0; i < f->params.count; i++) {
@@ -1678,6 +1830,7 @@ void codegen_program(const Program *prog, FILE *out) {
 
     // Imports.
     emit_imports(&cg);
+    emit_window_imports(&cg);
 
     // .text section.
     emit(&cg, "section .text");
@@ -1689,18 +1842,40 @@ void codegen_program(const Program *prog, FILE *out) {
     // Startup helper.
     emit_startup(&cg);
 
+    // Scan all functions for top-level `on` handlers so we know which
+    // default stubs window_runtime.c should skip.
+    EventHandlerFlags ev_flags;
+    memset(&ev_flags, 0, sizeof(ev_flags));
+    for (int i = 0; i < prog->functions.count; i++) {
+        const Function *f = &prog->functions.items[i];
+        for (int j = 0; j < f->body.count; j++) {
+            Stmt *s = f->body.items[j];
+            if (s->kind != STMT_ON_HANDLER) continue;
+            const char *ev = s->as.on_handler.event_name;
+            if (strcmp(ev, "key_down") == 0)    ev_flags.has_key_down = 1;
+            else if (strcmp(ev, "key_up") == 0)    ev_flags.has_key_up = 1;
+            else if (strcmp(ev, "mouse_move") == 0) ev_flags.has_mouse_move = 1;
+            else if (strcmp(ev, "mouse_down") == 0) ev_flags.has_mouse_down = 1;
+            else if (strcmp(ev, "mouse_up") == 0)   ev_flags.has_mouse_up = 1;
+        }
+    }
+
     // Runtime helpers.
     emit_runtime_helpers(&cg);
+    emit_window_runtime(&cg, &ev_flags);
 
     // User functions.
     for (int i = 0; i < prog->functions.count; i++) {
+        emit_on_handlers(&cg, &prog->functions.items[i]);
         emit_function(&cg, &prog->functions.items[i]);
     }
 
     // Data sections (emitted after text so float/string pools are fully
     // populated by the time we write them).
     emit_data_section(&cg);
+    emit_window_data(&cg);
     emit_bss_section(&cg);
+    emit_window_bss(&cg);
 
     // Free string constant pool.
     for (int i = 0; i < cg.str_const_count; i++) {
