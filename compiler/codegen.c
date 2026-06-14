@@ -1011,6 +1011,47 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  [_input_last_y], rax");
             }
         }
+        // input.set_bbox(minx, miny, maxx, maxy)
+        else if (strcmp(member, "set_bbox") == 0) {
+            emit(cg, "    ; input.set_bbox");
+            if (args->count >= 4) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_input_bbox_minx], rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  [_input_bbox_miny], rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  [_input_bbox_maxx], rax");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  [_input_bbox_maxy], rax");
+            }
+        }
+        // input.in_bbox(mx, my) -> int 1/0
+        else if (strcmp(member, "in_bbox") == 0) {
+            emit(cg, "    ; input.in_bbox");
+            if (args->count >= 2) {
+                int fail_label = new_label(cg);
+                int done_label = new_label(cg);
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r10, rax            ; r10 = mx");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r11, rax            ; r11 = my");
+                emit(cg, "    cmp  r10, [_input_bbox_minx]");
+                emit(cg, "    jl   .L%d", fail_label);
+                emit(cg, "    cmp  r10, [_input_bbox_maxx]");
+                emit(cg, "    jg   .L%d", fail_label);
+                emit(cg, "    cmp  r11, [_input_bbox_miny]");
+                emit(cg, "    jl   .L%d", fail_label);
+                emit(cg, "    cmp  r11, [_input_bbox_maxy]");
+                emit(cg, "    jg   .L%d", fail_label);
+                emit(cg, "    mov  rax, 1");
+                emit(cg, "    jmp  .L%d", done_label);
+                emit(cg, ".L%d:", fail_label);
+                emit(cg, "    mov  rax, 0");
+                emit(cg, ".L%d:", done_label);
+            } else {
+                emit(cg, "    mov  rax, 0");
+            }
+        }
         // zbuffer.clear()
         else if (strcmp(member, "clear") == 0) {
             emit(cg, "    ; zbuffer.clear");
