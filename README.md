@@ -21,15 +21,21 @@ Slag is under active development. The pipeline currently supports:
   - String variable ptr+len tracking
   - `readfile()` — reads file contents into a `str` via Win32 `CreateFileA`/`ReadFile`
   - `readline()` — reads a line from stdin via Win32 `ReadConsoleA`
-  - User-defined function calls under the Win64 calling convention
+  - User-defined function calls under the Win64 calling convention (int and float args/returns, mixed and nested calls)
+  - **Windowing and software-rendered graphics**:
+    - `window.open(w, h, title)` — creates a window on its own thread with a BGRA DIB framebuffer
+    - `pixel(x, y, r, g, b)` — writes a single pixel into the framebuffer
+    - `window.flush()` — pumps the message queue and blits the framebuffer to the window
+    - `window.is_open()` — returns 1/0, enabling `while (window.is_open()) { ... }` main loops
+    - `window.close()` — requests the window close (posts `WM_CLOSE`)
+  - **Keyboard/mouse event handlers** — `on key_down`, `on key_up`, `on mouse_move`, `on mouse_down`, `on mouse_up` are compiled to standalone procs and dispatched directly from the window's `WndProc`; handlers not defined by the user fall back to no-op stubs
 
 ### Not yet implemented
 
-- `match()` / regex engine
+- `match()` / regex engine (descoped — not planned)
 - Dynamic/regex-sized arrays
 - `thread` / `sync` / `lock` (currently stubbed)
 - CPU topology detection (`cpu.*` fields hardcoded to 1)
-- Windowing and graphics (`window.*`, `pixel`, keyboard/mouse `on` handlers)
 - 3D software rendering pipeline
 - Self-hosting compiler
 
@@ -41,7 +47,7 @@ Slag's compiler is written in C and built with MinGW-w64 GCC, targeting `x86_64-
 
 ```bash
 cd compiler
-gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c
+gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime.c
 ```
 
 ## Compiling a Slag program
@@ -50,4 +56,35 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -e _start
+```
+
+## Example: window + pixels + input
+
+```c
+function main() {
+    window.open(320, 240, "Slag Demo");
+
+    on key_down(int key) {
+        if (key == 27) {        // Escape
+            window.close();
+        }
+    }
+
+    on mouse_move(int mx, int my) {
+        pixel(mx, my, 255, 255, 0);
+    }
+
+    var int x = 0;
+    while (x < 320) {
+        pixel(x, 100, 0, 255, 0);
+        x = $(($x + 1));
+    }
+    window.flush();
+
+    while (window.is_open()) {
+        window.flush();
+    }
+
+    return;
+}
 ```
