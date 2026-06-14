@@ -1857,6 +1857,7 @@ void codegen_program(const Program *prog, FILE *out) {
             else if (strcmp(ev, "mouse_move") == 0) ev_flags.has_mouse_move = 1;
             else if (strcmp(ev, "mouse_down") == 0) ev_flags.has_mouse_down = 1;
             else if (strcmp(ev, "mouse_up") == 0)   ev_flags.has_mouse_up = 1;
+            else if (strcmp(ev, "mouse_wheel") == 0) ev_flags.has_mouse_wheel = 1;
         }
     }
 

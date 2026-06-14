@@ -11,6 +11,7 @@ typedef struct {
     int has_mouse_move;
     int has_mouse_down;
     int has_mouse_up;
+    int has_mouse_wheel;
 } EventHandlerFlags;
 
 

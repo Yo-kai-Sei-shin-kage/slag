@@ -46,6 +46,7 @@ static void emit_window_constants(Codegen *cg) {
     E("WM_RBUTTONUP         equ 0x0205");
     E("WM_MBUTTONDOWN       equ 0x0207");
     E("WM_MBUTTONUP         equ 0x0208");
+    E("WM_MOUSEWHEEL        equ 0x020A");
     E("WM_USER_FLUSH        equ 0x0401  ; WM_USER+1: trigger BitBlt");
     E("WM_SIZE              equ 0x0005");
     E("WM_CLOSE             equ 0x0010");
@@ -367,6 +368,12 @@ static void emit_wndproc(Codegen *cg) {
     E("    je   .wndproc_rbuttondown");
     E("    cmp  r13, WM_RBUTTONUP");
     E("    je   .wndproc_rbuttonup");
+    E("    cmp  r13, WM_MBUTTONDOWN");
+    E("    je   .wndproc_mbuttondown");
+    E("    cmp  r13, WM_MBUTTONUP");
+    E("    je   .wndproc_mbuttonup");
+    E("    cmp  r13, WM_MOUSEWHEEL");
+    E("    je   .wndproc_mousewheel");
     E("    jmp  .wndproc_default");
     E("");
 
@@ -510,7 +517,49 @@ static void emit_wndproc(Codegen *cg) {
     E("    jmp  .wndproc_ret");
     E("");
 
-    // Default
+    // WM_MBUTTONDOWN
+    E(".wndproc_mbuttondown:");
+    E("    mov  rcx, 2                ; button = 2 (middle)");
+    E("    mov  rdx, r15");
+    E("    movsx r8, dx");
+    E("    shr  rdx, 16");
+    E("    movsx r9, dx");
+    E("    mov  rdx, r8");
+    E("    mov  r8,  r9");
+    E("    sub  rsp, 32");
+    E("    call _slag_on_mouse_down");
+    E("    add  rsp, 32");
+    E("    xor  rax, rax");
+    E("    jmp  .wndproc_ret");
+    E("");
+
+    // WM_MBUTTONUP
+    E(".wndproc_mbuttonup:");
+    E("    mov  rcx, 2                ; button = 2 (middle)");
+    E("    mov  rdx, r15");
+    E("    movsx r8, dx");
+    E("    shr  rdx, 16");
+    E("    movsx r9, dx");
+    E("    mov  rdx, r8");
+    E("    mov  r8,  r9");
+    E("    sub  rsp, 32");
+    E("    call _slag_on_mouse_up");
+    E("    add  rsp, 32");
+    E("    xor  rax, rax");
+    E("    jmp  .wndproc_ret");
+    E("");
+
+    // WM_MOUSEWHEEL — wParam high word = signed delta (multiples of 120)
+    E(".wndproc_mousewheel:");
+    E("    mov  rcx, r14              ; wParam");
+    E("    shr  rcx, 16");
+    E("    movsx rcx, cx              ; delta");
+    E("    sub  rsp, 32");
+    E("    call _slag_on_mouse_wheel");
+    E("    add  rsp, 32");
+    E("    xor  rax, rax");
+    E("    jmp  .wndproc_ret");
+    E("");
     E(".wndproc_close:");
     E("    mov  rcx, r12");
     E("    sub  rsp, 32");
@@ -644,6 +693,10 @@ static void emit_default_event_handlers(Codegen *cg, const EventHandlerFlags *fl
     }
     if (!flags->has_mouse_up) {
         E("_slag_on_mouse_up:");
+        E("    ret");
+    }
+    if (!flags->has_mouse_wheel) {
+        E("_slag_on_mouse_wheel:");
         E("    ret");
     }
     E("");
