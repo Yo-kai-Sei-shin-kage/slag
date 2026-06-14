@@ -16,6 +16,20 @@ function sign_int(int v) {
     return int 0;
 }
 
+function min_int(int a, int b) {
+    if (a < b) {
+        return int a;
+    }
+    return int b;
+}
+
+function max_int(int a, int b) {
+    if (a > b) {
+        return int a;
+    }
+    return int b;
+}
+
 function draw_line(int x0, int y0, int x1, int y1, int r, int g, int b) {
     var int dx = abs_int($(($x1 - $x0)));
     var int dy = abs_int($(($y1 - $y0)));
@@ -53,22 +67,22 @@ function draw_line(int x0, int y0, int x1, int y1, int r, int g, int b) {
 
 function to_screen_x(float x, float z) {
     var float d = 4.0;
-    var float scale = 100.0;
+    var float scale = 200.0;
     var float zd = $(($z + $d));
     var float proj = $(($x * $scale));
     proj = $(($proj / $zd));
-    var float sx = $((160.0 + $proj));
+    var float sx = $((320.0 + $proj));
     var int result = sx;
     return int result;
 }
 
 function to_screen_y(float y, float z) {
     var float d = 4.0;
-    var float scale = 100.0;
+    var float scale = 200.0;
     var float zd = $(($z + $d));
     var float proj = $(($y * $scale));
     proj = $(($proj / $zd));
-    var float sy = $((120.0 - $proj));
+    var float sy = $((400.0 - $proj));
     var int result = sy;
     return int result;
 }
@@ -96,7 +110,7 @@ function draw_cube_edges(
 }
 
 function main() {
-    window.open(320, 240, "Drag + Wheel Cube");
+    window.open(640, 800, "Drag + Wheel Cube");
 
     on key_down(int key) {
         if (key == 27) {
@@ -106,8 +120,10 @@ function main() {
 
     on mouse_down(int button, int mx, int my) {
         if (button == 0) {
-            input.set_dragging(1);
-            input.set_last(mx, my);
+            if (input.in_bbox(mx, my) == 1) {
+                input.set_dragging(1);
+                input.set_last(mx, my);
+            }
         }
     }
 
@@ -269,6 +285,24 @@ function main() {
         var int sx5 = $((to_screen_x(vx5, vz5) + $dragx)); var int sy5 = $((to_screen_y(vy5, vz5) + $dragy));
         var int sx6 = $((to_screen_x(vx6, vz6) + $dragx)); var int sy6 = $((to_screen_y(vy6, vz6) + $dragy));
         var int sx7 = $((to_screen_x(vx7, vz7) + $dragx)); var int sy7 = $((to_screen_y(vy7, vz7) + $dragy));
+
+        var int bb_minx = sx0; var int bb_maxx = sx0;
+        var int bb_miny = sy0; var int bb_maxy = sy0;
+        bb_minx = min_int(bb_minx, sx1); bb_maxx = max_int(bb_maxx, sx1);
+        bb_miny = min_int(bb_miny, sy1); bb_maxy = max_int(bb_maxy, sy1);
+        bb_minx = min_int(bb_minx, sx2); bb_maxx = max_int(bb_maxx, sx2);
+        bb_miny = min_int(bb_miny, sy2); bb_maxy = max_int(bb_maxy, sy2);
+        bb_minx = min_int(bb_minx, sx3); bb_maxx = max_int(bb_maxx, sx3);
+        bb_miny = min_int(bb_miny, sy3); bb_maxy = max_int(bb_maxy, sy3);
+        bb_minx = min_int(bb_minx, sx4); bb_maxx = max_int(bb_maxx, sx4);
+        bb_miny = min_int(bb_miny, sy4); bb_maxy = max_int(bb_maxy, sy4);
+        bb_minx = min_int(bb_minx, sx5); bb_maxx = max_int(bb_maxx, sx5);
+        bb_miny = min_int(bb_miny, sy5); bb_maxy = max_int(bb_maxy, sy5);
+        bb_minx = min_int(bb_minx, sx6); bb_maxx = max_int(bb_maxx, sx6);
+        bb_miny = min_int(bb_miny, sy6); bb_maxy = max_int(bb_maxy, sy6);
+        bb_minx = min_int(bb_minx, sx7); bb_maxx = max_int(bb_maxx, sx7);
+        bb_miny = min_int(bb_miny, sy7); bb_maxy = max_int(bb_maxy, sy7);
+        input.set_bbox(bb_minx, bb_miny, bb_maxx, bb_maxy);
 
         if (first_frame == 0) {
             draw_cube_edges(

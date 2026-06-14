@@ -37,6 +37,7 @@ Slag is under active development. The pipeline currently supports:
     - `input.last_x()` / `input.last_y()` / `input.set_last(x, y)` — last recorded mouse position
     - `input.wheel()` — returns and resets the accumulated scroll-wheel delta
     - `input.add_wheel(delta)` — accumulate wheel delta (called from `on mouse_wheel`)
+    - `input.set_bbox(minx, miny, maxx, maxy)` / `input.in_bbox(mx, my)` — axis-aligned bounding box check, used for hit-testing draggable objects
   - **3D wireframe pipeline (demonstrated, written entirely in Slag)** — Bresenham line drawing, perspective projection, and per-axis rotation matrices using precomputed sin/cos constants; a rotating cube demo and a mouse-drag + scroll-wheel-rotation cube demo both run at a ~60fps cap (`window.flush()` sleeps ~16ms)
 
 ### Not yet implemented

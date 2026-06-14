@@ -745,6 +745,10 @@ void emit_window_bss(Codegen *cg) {
     E("_input_last_x:       dq 0   ; last mouse x (for delta calc)");
     E("_input_last_y:       dq 0   ; last mouse y");
     E("_input_wheel:        dq 0   ; accumulated wheel delta");
+    E("_input_bbox_minx:    dq 0");
+    E("_input_bbox_miny:    dq 0");
+    E("_input_bbox_maxx:    dq 0");
+    E("_input_bbox_maxy:    dq 0");
     E("");
 }
 
