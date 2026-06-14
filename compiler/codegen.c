@@ -692,13 +692,15 @@ static void emit_call_epilogue(Codegen *cg, int extra) {
 // which writes `len` bytes at `buf` to stdout.
 // On entry: rcx = handle (already loaded), rdx = buf ptr, r8 = length.
 static void emit_write_console(Codegen *cg) {
-    // written: we use a stack slot we already allocated or a temp.
-    emit(cg, "    sub  rsp, 40          ; shadow + written slot");
+    // WriteConsoleA has 5 args: rcx, rdx, r8, r9, [rsp+32].
+    // We need: 32 bytes shadow + 8 bytes for arg5 + 8 bytes alignment pad = 48.
+    // 48 is a multiple of 16 so rsp stays aligned at the call site.
+    emit(cg, "    sub  rsp, 48          ; shadow(32) + arg5(8) + pad(8)");
     emit(cg, "    lea  r9,  [rsp+32]    ; &written");
     emit(cg, "    mov  qword [rsp+32], 0");
-    emit(cg, "    mov  qword [rsp+0],  0 ; lpOverlapped = NULL (5th arg)");
+    emit(cg, "    mov  qword [rsp+40], 0 ; lpOverlapped = NULL (5th arg on stack)");
     emit(cg, "    call WriteConsoleA");
-    emit(cg, "    add  rsp, 40");
+    emit(cg, "    add  rsp, 48");
 }
 
 // Emit a print or println call.
@@ -1204,18 +1206,32 @@ static void emit_function(Codegen *cg, const Function *f) {
     cg->local_count = 0;
     cg->frame_size  = 0;
 
-    // Pre-allocate parameter locals (they live in the frame too).
-    // Win64: first 4 params arrive in rcx/rdx/r8/r9; we spill them.
+    // First pass: calculate param space.
     for (int i = 0; i < f->params.count; i++) {
         alloc_local(cg, f->params.items[i].name,
                     f->params.items[i].type, 0, TYPE_UNKNOWN, 0);
     }
+    int param_size = cg->frame_size;
 
-    // Calculate body frame size and round up to 16-byte alignment.
+    // Calculate body frame size.
     int body_size = calculate_frame_size(&f->body);
-    int total = (cg->frame_size + body_size + 15) & ~15;
-    // Ensure at least 32 bytes for shadow space during any nested calls.
-    if (total < 32) total = 32;
+
+    // Total frame: params + body + 32 bytes shadow space for calls,
+    // rounded up to 16-byte alignment. Minimum 64.
+    int total = (param_size + body_size + 32 + 15) & ~15;
+    if (total < 64) total = 64;
+
+    // Reset symbol table so alloc_local during emit_stmtlist assigns
+    // offsets starting from rbp-8 downward within the reserved frame.
+    cg->local_count = 0;
+    cg->frame_size  = 0;
+
+    // Second pass: re-alloc params so their offsets are registered before
+    // the body is emitted (find_local must resolve param names in body).
+    for (int i = 0; i < f->params.count; i++) {
+        alloc_local(cg, f->params.items[i].name,
+                    f->params.items[i].type, 0, TYPE_UNKNOWN, 0);
+    }
 
     // Emit label.
     if (strcmp(f->name, "main") == 0) {
@@ -1309,7 +1325,7 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "_slag_ftoa:");
     emit(cg, "    push rbp");
     emit(cg, "    mov  rbp, rsp");
-    emit(cg, "    sub  rsp, 64");
+    emit(cg, "    sub  rsp, 8             ; align rsp to 16 for calls");
     emit(cg, "    mov  r8,  rcx           ; output buffer");
     emit(cg, "    ; integer part");
     emit(cg, "    cvttsd2si rax, xmm0");
@@ -1357,13 +1373,13 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    mov  rcx, [_stdin]");
     emit(cg, "    lea  rdx, [_readline_buf]");
     emit(cg, "    mov  r8,  1024          ; max chars to read");
+    emit(cg, "    sub  rsp, 48            ; shadow space + out-params");
     emit(cg, "    lea  r9,  [rsp+32]      ; &charsRead");
     emit(cg, "    mov  qword [rsp+32], 0");
     emit(cg, "    mov  qword [rsp+40], 0  ; lpInputControl = NULL");
-    emit(cg, "    sub  rsp, 32            ; shadow space");
     emit(cg, "    call ReadConsoleA");
-    emit(cg, "    add  rsp, 32");
-    emit(cg, "    mov  rax, [rsp+32]      ; charsRead");
+    emit(cg, "    mov  rax, [rsp+32]      ; save charsRead BEFORE restoring stack");
+    emit(cg, "    add  rsp, 48");
     emit(cg, "    ; strip trailing \\r\\n");
     emit(cg, "    lea  rcx, [_readline_buf]");
     emit(cg, ".readline_strip:");
@@ -1393,11 +1409,11 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "_slag_readfile:");
     emit(cg, "    push rbp");
     emit(cg, "    mov  rbp, rsp");
-    emit(cg, "    sub  rsp, 64");
-    emit(cg, "    mov  r12, rcx           ; save path ptr (non-volatile)");
     emit(cg, "    push r12");
     emit(cg, "    push r13");
     emit(cg, "    push r14");
+    emit(cg, "    sub  rsp, 8");
+    emit(cg, "    mov  r12, rcx           ; save path ptr (non-volatile)");
     emit(cg, "");
     emit(cg, "    ; CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL,");
     emit(cg, "    ;             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)");
@@ -1405,11 +1421,12 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    mov  rdx, 0x80000000    ; GENERIC_READ");
     emit(cg, "    mov  r8,  1             ; FILE_SHARE_READ");
     emit(cg, "    xor  r9,  r9            ; lpSecurityAttributes = NULL");
-    emit(cg, "    sub  rsp, 48            ; shadow + 2 stack args");
+    emit(cg, "    sub  rsp, 64            ; shadow(32) + 3 stack args(24) + pad(8)");
     emit(cg, "    mov  qword [rsp+32], 3  ; OPEN_EXISTING");
     emit(cg, "    mov  qword [rsp+40], 0x80 ; FILE_ATTRIBUTE_NORMAL");
+    emit(cg, "    mov  qword [rsp+48], 0  ; hTemplateFile = NULL");
     emit(cg, "    call CreateFileA");
-    emit(cg, "    add  rsp, 48");
+    emit(cg, "    add  rsp, 64");
     emit(cg, "    cmp  rax, -1            ; INVALID_HANDLE_VALUE");
     emit(cg, "    je   .readfile_fail");
     emit(cg, "    mov  r13, rax           ; save file handle");
@@ -1420,7 +1437,8 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    sub  rsp, 32");
     emit(cg, "    call GetFileSize");
     emit(cg, "    add  rsp, 32");
-    emit(cg, "    cmp  rax, -1");
+    emit(cg, "    mov  eax, eax           ; zero-extend 32-bit result to 64-bit");
+    emit(cg, "    cmp  eax, 0xFFFFFFFF   ; INVALID_FILE_SIZE");
     emit(cg, "    je   .readfile_fail_close");
     emit(cg, "    mov  r14, rax           ; save file size");
     emit(cg, "");
@@ -1445,8 +1463,8 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    mov  rcx, r13");
     emit(cg, "    mov  rdx, r12");
     emit(cg, "    mov  r8,  r14");
-    emit(cg, "    lea  r9,  [rsp+32]");
     emit(cg, "    sub  rsp, 48");
+    emit(cg, "    lea  r9,  [rsp+32]");
     emit(cg, "    mov  qword [rsp+32], 0");
     emit(cg, "    mov  qword [rsp+40], 0  ; lpOverlapped = NULL");
     emit(cg, "    call ReadFile");
@@ -1471,10 +1489,10 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    xor  rax, rax");
     emit(cg, "    xor  rdx, rdx");
     emit(cg, ".readfile_done:");
+    emit(cg, "    lea  rsp, [rbp-24]      ; restore rsp to just above pushed regs");
     emit(cg, "    pop  r14");
     emit(cg, "    pop  r13");
     emit(cg, "    pop  r12");
-    emit(cg, "    mov  rsp, rbp");
     emit(cg, "    pop  rbp");
     emit(cg, "    ret");
     emit(cg, "");
