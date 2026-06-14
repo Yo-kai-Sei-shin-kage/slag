@@ -1,0 +1,54 @@
+function add(int a, int b) {
+    var int result = $(($a + $b));
+    return int result;
+}
+
+function fill_row(int y, int r, int g, int b) {
+    var int x = 0;
+    while (x < 320) {
+        pixel(x, y, r, g, b);
+        x = $(($x + 1));
+    }
+    return;
+}
+
+function main() {
+    window.open(320, 240, "Slag Demo");
+
+    on key_down(int key) {
+        if (key == 27) {
+            window.close();
+        }
+    }
+
+    on mouse_move(int mx, int my) {
+        pixel(mx, my, 255, 255, 0);
+    }
+
+    on mouse_down(int button, int mx, int my) {
+        pixel(mx, my, 0, 255, 255);
+    }
+
+    var str title = "Slag graphics demo running";
+    println(title);
+
+    var int[3] bar_colors_r = {255, 0, 0};
+    var int[3] bar_colors_g = {0, 255, 0};
+    var int[3] bar_colors_b = {0, 0, 255};
+
+    var int i = 0;
+    while (i < 3) {
+        var int y = add($((20 + $i * 60)), 0);
+        fill_row(y, bar_colors_r[i], bar_colors_g[i], bar_colors_b[i]);
+        i = $(($i + 1));
+    }
+
+    window.flush();
+
+    while (window.is_open()) {
+        window.flush();
+    }
+
+    println("window closed");
+    return;
+}
