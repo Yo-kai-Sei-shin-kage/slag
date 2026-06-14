@@ -29,6 +29,15 @@ Slag is under active development. The pipeline currently supports:
     - `window.is_open()` — returns 1/0, enabling `while (window.is_open()) { ... }` main loops
     - `window.close()` — requests the window close (posts `WM_CLOSE`)
   - **Keyboard/mouse event handlers** — `on key_down`, `on key_up`, `on mouse_move`, `on mouse_down`, `on mouse_up` (buttons: 0=left, 1=right, 2=middle), and `on mouse_wheel(int delta)` (delta is ±120 per notch) are compiled to standalone procs and dispatched directly from the window's `WndProc`; handlers not defined by the user fall back to no-op stubs
+  - `pixel(x, y, r, g, b)` bounds-checks against the framebuffer dimensions and silently no-ops out-of-range writes (safe to draw off-screen)
+  - **Shared input-state builtins** — since `on` handlers run in their own stack frames, a small fixed set of `.bss` globals plus accessor builtins let handlers communicate with the main loop:
+    - `input.drag_x()` / `input.drag_y()` — accumulated drag offset
+    - `input.add_drag(dx, dy)` — accumulate a drag delta (called from `on mouse_move`)
+    - `input.is_dragging()` / `input.set_dragging(v)` — drag-state flag
+    - `input.last_x()` / `input.last_y()` / `input.set_last(x, y)` — last recorded mouse position
+    - `input.wheel()` — returns and resets the accumulated scroll-wheel delta
+    - `input.add_wheel(delta)` — accumulate wheel delta (called from `on mouse_wheel`)
+  - **3D wireframe pipeline (demonstrated, written entirely in Slag)** — Bresenham line drawing, perspective projection, and per-axis rotation matrices using precomputed sin/cos constants; a rotating cube demo and a mouse-drag + scroll-wheel-rotation cube demo both run at a ~60fps cap (`window.flush()` sleeps ~16ms)
 
 ### Not yet implemented
 

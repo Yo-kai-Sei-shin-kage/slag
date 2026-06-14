@@ -364,6 +364,9 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             if (!loc) {
                 fprintf(stderr, "codegen error: undefined variable '%s'\n", e->as.str.value);
                 emit(cg, "    xor  rax, rax");
+            } else if (loc->type == TYPE_FLOAT) {
+                emit(cg, "    movsd xmm0, [rbp%+d]", loc->offset);
+                emit(cg, "    cvttsd2si rax, xmm0");
             } else {
                 emit(cg, "    mov  rax, [rbp%+d]", loc->offset);
             }
@@ -942,6 +945,72 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    ; window.is_open");
             emit(cg, "    mov  rax, [_window_open]");
         }
+        // input.drag_x() -> int accumulated drag offset x
+        else if (strcmp(member, "drag_x") == 0) {
+            emit(cg, "    ; input.drag_x");
+            emit(cg, "    mov  rax, [_input_drag_x]");
+        }
+        // input.drag_y() -> int accumulated drag offset y
+        else if (strcmp(member, "drag_y") == 0) {
+            emit(cg, "    ; input.drag_y");
+            emit(cg, "    mov  rax, [_input_drag_y]");
+        }
+        // input.is_dragging() -> int 0/1
+        else if (strcmp(member, "is_dragging") == 0) {
+            emit(cg, "    ; input.is_dragging");
+            emit(cg, "    mov  rax, [_input_dragging]");
+        }
+        // input.wheel() -> int accumulated wheel delta, resets to 0
+        else if (strcmp(member, "wheel") == 0) {
+            emit(cg, "    ; input.wheel");
+            emit(cg, "    mov  rax, [_input_wheel]");
+            emit(cg, "    mov  qword [_input_wheel], 0");
+        }
+        // input.set_dragging(v)
+        else if (strcmp(member, "set_dragging") == 0) {
+            emit(cg, "    ; input.set_dragging");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_input_dragging], rax");
+            }
+        }
+        // input.add_drag(dx, dy) -- accumulate drag offset
+        else if (strcmp(member, "add_drag") == 0) {
+            emit(cg, "    ; input.add_drag");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    add  [_input_drag_x], rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    add  [_input_drag_y], rax");
+            }
+        }
+        // input.add_wheel(delta)
+        else if (strcmp(member, "add_wheel") == 0) {
+            emit(cg, "    ; input.add_wheel");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    add  [_input_wheel], rax");
+            }
+        }
+        // input.last_x() / input.last_y() -- last recorded mouse position
+        else if (strcmp(member, "last_x") == 0) {
+            emit(cg, "    ; input.last_x");
+            emit(cg, "    mov  rax, [_input_last_x]");
+        }
+        else if (strcmp(member, "last_y") == 0) {
+            emit(cg, "    ; input.last_y");
+            emit(cg, "    mov  rax, [_input_last_y]");
+        }
+        // input.set_last(x, y)
+        else if (strcmp(member, "set_last") == 0) {
+            emit(cg, "    ; input.set_last");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_input_last_x], rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  [_input_last_y], rax");
+            }
+        }
         // zbuffer.clear()
         else if (strcmp(member, "clear") == 0) {
             emit(cg, "    ; zbuffer.clear");
@@ -1407,6 +1476,24 @@ static void emit_function(Codegen *cg, const Function *f) {
                 emit(cg, "    movsd [rbp%+d], xmm%d", loc->offset, i);
             } else {
                 emit(cg, "    mov  [rbp%+d], %s", loc->offset, param_regs[i]);
+            }
+        }
+    }
+    // Params beyond the first 4 arrive on the stack at [rbp+16],
+    // [rbp+24], ... (after saved rbp and return address; the 32-byte
+    // shadow space the caller reserved sits below these in the
+    // caller's frame and does not shift these offsets). Copy them
+    // into their local slots too.
+    for (int i = 4; i < f->params.count; i++) {
+        Local *loc = find_local(cg, f->params.items[i].name);
+        if (loc) {
+            int src_off = 48 + (i - 4) * 8;
+            if (f->params.items[i].type == TYPE_FLOAT) {
+                emit(cg, "    movsd xmm0, [rbp+%d]", src_off);
+                emit(cg, "    movsd [rbp%+d], xmm0", loc->offset);
+            } else {
+                emit(cg, "    mov  rax, [rbp+%d]", src_off);
+                emit(cg, "    mov  [rbp%+d], rax", loc->offset);
             }
         }
     }
