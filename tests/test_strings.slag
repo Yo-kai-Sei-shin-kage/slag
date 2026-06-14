@@ -1,9 +1,0 @@
-function main() {
-    var str greeting = "Hello, Slag!";
-    println(greeting);
-
-    var str name = "Yokai";
-    println(name);
-
-    return;
-}
