@@ -891,6 +891,10 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // pixel(x, y, r, g, b)
             emit(cg, "    ; pixel()");
             emit_user_call(cg, "slag_pixel", args);
+        } else if (strcmp(name, "fill_triangle") == 0) {
+            // fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)
+            emit(cg, "    ; fill_triangle()");
+            emit_user_call(cg, "slag_fill_triangle", args);
         } else if (strcmp(name, "zbuffer") == 0) {
             emit(cg, "    ; zbuffer stub");
         } else {
@@ -1011,7 +1015,14 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  [_input_last_y], rax");
             }
         }
-        // input.set_bbox(minx, miny, maxx, maxy)
+        // time.now_ms() -> int milliseconds since system start (GetTickCount)
+        else if (strcmp(member, "now_ms") == 0) {
+            emit(cg, "    ; time.now_ms");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call GetTickCount");
+            emit(cg, "    add  rsp, 32");
+            emit(cg, "    and  rax, 0xFFFFFFFF  ; zero-extend 32-bit result");
+        }
         else if (strcmp(member, "set_bbox") == 0) {
             emit(cg, "    ; input.set_bbox");
             if (args->count >= 4) {

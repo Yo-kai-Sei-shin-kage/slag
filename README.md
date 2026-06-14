@@ -38,7 +38,9 @@ Slag is under active development. The pipeline currently supports:
     - `input.wheel()` — returns and resets the accumulated scroll-wheel delta
     - `input.add_wheel(delta)` — accumulate wheel delta (called from `on mouse_wheel`)
     - `input.set_bbox(minx, miny, maxx, maxy)` / `input.in_bbox(mx, my)` — axis-aligned bounding box check, used for hit-testing draggable objects
-  - **3D wireframe pipeline (demonstrated, written entirely in Slag)** — Bresenham line drawing, perspective projection, and per-axis rotation matrices using precomputed sin/cos constants; a rotating cube demo and a mouse-drag + scroll-wheel-rotation cube demo both run at a ~60fps cap (`window.flush()` sleeps ~16ms)
+    - `fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)` — flat-shaded scanline triangle rasterizer, writes directly to the framebuffer with no per-pixel call overhead; bounds-clamped
+    - `time.now_ms()` — milliseconds since system start (`GetTickCount`), useful for fps counters and frame timing
+  - **3D pipeline (demonstrated, written entirely in Slag)** — Bresenham line drawing, flat-shaded filled triangles, perspective projection, and per-axis rotation matrices using precomputed sin/cos constants. Demos include a wireframe rotating cube, a mouse-drag + scroll-wheel-rotation cube, and a solid 6-face flat-shaded rotating cube — all sustaining a steady ~60fps (capped by `window.flush()`'s ~16ms sleep) at 640x800
 
 ### Not yet implemented
 
