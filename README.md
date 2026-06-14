@@ -45,7 +45,7 @@ Slag is under active development. The pipeline currently supports:
 - Dynamic/regex-sized arrays
 - `thread` / `sync` / `lock` (currently stubbed)
 - CPU topology detection (`cpu.*` fields hardcoded to 1)
-- 3D software rendering pipeline
+- Built-in 3D math/rendering primitives (matrix types, z-buffering, texture mapping) — not needed for basic wireframe work, since a full rotation/projection/line-drawing pipeline can already be written in Slag itself (see rotating-cube demos)
 - Self-hosting compiler
 
 ## Toolchain requirements
