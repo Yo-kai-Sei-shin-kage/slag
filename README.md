@@ -13,13 +13,19 @@ Slag is under active development. The pipeline currently supports:
 
 - **Lexer** — full tokenization including `$((...))` arithmetic blocks, `$variable` references, regex literals, and all core keywords/operators.
 - **Parser** — complete recursive descent parser producing a full AST: functions, typed variable and array declarations, if/else/else-if, while, typed returns, thread/sync blocks, and `on` event handlers.
-- **Code generator** — emits NASM x86-64 Win64 assembly. Working: integer and float arithmetic, comparisons, logical short-circuit operators, fixed-size arrays (declaration, indexing, `.len`), control flow, `print`/`println` for ints/floats/string literals, and user-defined function calls under the Win64 calling convention.
+- **Code generator** — emits NASM x86-64 Win64 assembly. Working:
+  - Integer and float arithmetic, comparisons, logical short-circuit operators
+  - Fixed-size arrays (declaration, indexing, `.len`)
+  - Control flow (if/else, while)
+  - `print`/`println` for ints, floats, string literals, and string variables
+  - String variable ptr+len tracking
+  - `readfile()` — reads file contents into a `str` via Win32 `CreateFileA`/`ReadFile`
+  - `readline()` — reads a line from stdin via Win32 `ReadConsoleA`
+  - User-defined function calls under the Win64 calling convention
 
 ### Not yet implemented
 
-- String variable length tracking (printing `str` variables)
 - `match()` / regex engine
-- `readfile()` / `readline()` runtime
 - Dynamic/regex-sized arrays
 - `thread` / `sync` / `lock` (currently stubbed)
 - CPU topology detection (`cpu.*` fields hardcoded to 1)
