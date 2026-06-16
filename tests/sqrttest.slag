@@ -1,0 +1,19 @@
+function main() {
+    var float a = sqrt(2.0);
+    println(a);
+
+    var float b = sqrt(16.0);
+    println(b);
+
+    var float c = $(( sqrt(9.0) + 1.0 ));
+    println(c);
+
+    var float x = 25.0;
+    var float r = sqrt(x);
+    println(r);
+
+    var int n = sqrt(144.0);
+    println(n);
+
+    return;
+}

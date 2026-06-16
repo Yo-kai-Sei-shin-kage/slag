@@ -348,6 +348,12 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
             }
             return hint;
         }
+        case EXPR_CALL: {
+            // Built-in float-returning calls.
+            if (strcmp(e->as.call.name, "sqrt") == 0) return TYPE_FLOAT;
+            // Other calls: fall through to the hint-based default below.
+            return hint != TYPE_UNKNOWN ? hint : TYPE_INT;
+        }
         default:
             return hint != TYPE_UNKNOWN ? hint : TYPE_INT;
     }
@@ -560,6 +566,14 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
         }
 
         case EXPR_CALL: {
+            // sqrt() returns a float; if used in an int context, compute the
+            // float result then truncate to int.
+            if (strcmp(e->as.call.name, "sqrt") == 0 &&
+                e->as.call.args.count >= 1) {
+                emit_float_expr(cg, e);
+                emit(cg, "    cvttsd2si rax, xmm0   ; (int)sqrt()");
+                break;
+            }
             // Built-in and user function calls that return int.
             emit_call_expr(cg, e);
             break;
@@ -672,6 +686,14 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
         }
 
         case EXPR_CALL: {
+            // Built-in sqrt(x): evaluate the argument as a float into xmm0,
+            // then take the hardware square root.
+            if (strcmp(e->as.call.name, "sqrt") == 0 &&
+                e->as.call.args.count >= 1) {
+                emit_float_expr(cg, e->as.call.args.items[0]);
+                emit(cg, "    sqrtsd xmm0, xmm0   ; sqrt()");
+                break;
+            }
             emit_call_expr(cg, e);
             // Result already in xmm0 for float-returning functions.
             break;
@@ -895,6 +917,11 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // For now emit a stub call.
             emit(cg, "    ; match() - regex engine not yet implemented");
             emit(cg, "    xor  rax, rax");
+        } else if (strcmp(name, "sqrt") == 0) {
+            // sqrt(x) is a float-returning intrinsic; normally handled in
+            // emit_float_expr. If it reaches here (e.g. result discarded in a
+            // statement), just evaluate it into xmm0 via the float path.
+            emit_float_expr(cg, e);
         } else if (strcmp(name, "pixel") == 0) {
             // pixel(x, y, r, g, b)
             emit(cg, "    ; pixel()");
@@ -1949,13 +1976,13 @@ static void emit_startup(Codegen *cg) {
 // then ExitProcess(0).
 // ---------------------------------------------------------------------
 
-static void emit_entry(Codegen *cg) {
+static void emit_entry(Codegen *cg, const char *entry_name) {
     emit(cg, "; --- entry point ---");
     emit(cg, "global _start");
     emit(cg, "_start:");
     emit(cg, "    sub  rsp, 8          ; align stack to 16 bytes");
     emit(cg, "    call _slag_startup");
-    emit(cg, "    call _main");
+    emit(cg, "    call _%s", entry_name);
     emit(cg, "    xor  rcx, rcx        ; exit code 0");
     emit(cg, "    sub  rsp, 32");
     emit(cg, "    call ExitProcess");
@@ -1988,7 +2015,22 @@ void codegen_program(const Program *prog, FILE *out) {
     emit(&cg, "");
 
     // Entry point.
-    emit_entry(&cg);
+    // Pick the entry function: prefer one named "main" for backward
+    // compatibility, otherwise fall back to the first function defined in
+    // the file. This means a standalone function file runs without requiring
+    // a main wrapper.
+    const char *entry_name = "main";
+    int have_main = 0;
+    for (int i = 0; i < prog->functions.count; i++) {
+        if (strcmp(prog->functions.items[i].name, "main") == 0) {
+            have_main = 1;
+            break;
+        }
+    }
+    if (!have_main && prog->functions.count > 0) {
+        entry_name = prog->functions.items[0].name;
+    }
+    emit_entry(&cg, entry_name);
 
     // Startup helper.
     emit_startup(&cg);
