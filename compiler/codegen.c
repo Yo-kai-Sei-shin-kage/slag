@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include "ast.h"
 #include "codegen.h"
 #include "window_runtime.h"
@@ -96,7 +97,14 @@ static int new_label(Codegen *cg) {
 // Register a float constant in the .data pool; return its index.
 static int add_float_const(Codegen *cg, double val) {
     for (int i = 0; i < cg->float_const_count; i++) {
-        if (cg->float_consts[i] == val) return i;
+        // Use bit-pattern comparison so -0.0 and 0.0 are NOT treated as
+        // the same constant: C's == considers -0.0 == 0.0 true, but they
+        // have different IEEE-754 bit patterns (sign bit), which matters
+        // for the xorpd-based float negation idiom.
+        uint64_t a, b;
+        memcpy(&a, &cg->float_consts[i], sizeof(a));
+        memcpy(&b, &val, sizeof(b));
+        if (a == b) return i;
     }
     cg->float_consts[cg->float_const_count] = val;
     return cg->float_const_count++;
