@@ -1060,7 +1060,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    sub  rsp, 32");
             emit(cg, "    call GetTickCount");
             emit(cg, "    add  rsp, 32");
-            emit(cg, "    and  rax, 0xFFFFFFFF  ; zero-extend 32-bit result");
+            emit(cg, "    mov  eax, eax         ; zero-extend 32-bit result into rax");
         }
         else if (strcmp(member, "set_bbox") == 0) {
             emit(cg, "    ; input.set_bbox");
