@@ -928,6 +928,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    ret");
     E("");
 
+
     // -------------------------------------------------------------
     // _slag_fill_triangle_gradient(x0,y0,r0,g0,b0,x1,y1,r1,g1,b1,x2,y2,r2,g2,b2)
     // Per-vertex color scanline rasterizer with linear interpolation
