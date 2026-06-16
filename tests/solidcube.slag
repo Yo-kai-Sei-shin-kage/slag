@@ -1,24 +1,31 @@
 function draw_cube_faces(
     int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
-    int x4, int y4, int x5, int y5, int x6, int y6, int x7, int y7)
+    int x4, int y4, int x5, int y5, int x6, int y6, int x7, int y7,
+    float b_front, float b_back, float b_left, float b_right, float b_top, float b_bottom)
 {
-    fill_triangle(x0, y0, x1, y1, x2, y2, 200, 30, 30);
-    fill_triangle(x0, y0, x2, y2, x3, y3, 200, 30, 30);
+    // front (z=-1) - red
+    fill_triangle(x0, y0, x1, y1, x2, y2, shade_channel(200, b_front), shade_channel(30, b_front), shade_channel(30, b_front));
+    fill_triangle(x0, y0, x2, y2, x3, y3, shade_channel(200, b_front), shade_channel(30, b_front), shade_channel(30, b_front));
 
-    fill_triangle(x4, y4, x5, y5, x6, y6, 30, 180, 30);
-    fill_triangle(x4, y4, x6, y6, x7, y7, 30, 180, 30);
+    // back (z=1) - green
+    fill_triangle(x4, y4, x5, y5, x6, y6, shade_channel(30, b_back), shade_channel(180, b_back), shade_channel(30, b_back));
+    fill_triangle(x4, y4, x6, y6, x7, y7, shade_channel(30, b_back), shade_channel(180, b_back), shade_channel(30, b_back));
 
-    fill_triangle(x0, y0, x3, y3, x7, y7, 30, 30, 200);
-    fill_triangle(x0, y0, x7, y7, x4, y4, 30, 30, 200);
+    // left (x=-1) - blue
+    fill_triangle(x0, y0, x3, y3, x7, y7, shade_channel(30, b_left), shade_channel(30, b_left), shade_channel(200, b_left));
+    fill_triangle(x0, y0, x7, y7, x4, y4, shade_channel(30, b_left), shade_channel(30, b_left), shade_channel(200, b_left));
 
-    fill_triangle(x1, y1, x2, y2, x6, y6, 200, 200, 30);
-    fill_triangle(x1, y1, x6, y6, x5, y5, 200, 200, 30);
+    // right (x=1) - yellow
+    fill_triangle(x1, y1, x2, y2, x6, y6, shade_channel(200, b_right), shade_channel(200, b_right), shade_channel(30, b_right));
+    fill_triangle(x1, y1, x6, y6, x5, y5, shade_channel(200, b_right), shade_channel(200, b_right), shade_channel(30, b_right));
 
-    fill_triangle(x0, y0, x1, y1, x5, y5, 200, 30, 200);
-    fill_triangle(x0, y0, x5, y5, x4, y4, 200, 30, 200);
+    // top (y=-1) - magenta
+    fill_triangle(x0, y0, x1, y1, x5, y5, shade_channel(200, b_top), shade_channel(30, b_top), shade_channel(200, b_top));
+    fill_triangle(x0, y0, x5, y5, x4, y4, shade_channel(200, b_top), shade_channel(30, b_top), shade_channel(200, b_top));
 
-    fill_triangle(x3, y3, x2, y2, x6, y6, 30, 200, 200);
-    fill_triangle(x3, y3, x6, y6, x7, y7, 30, 200, 200);
+    // bottom (y=1) - cyan
+    fill_triangle(x3, y3, x2, y2, x6, y6, shade_channel(30, b_bottom), shade_channel(200, b_bottom), shade_channel(200, b_bottom));
+    fill_triangle(x3, y3, x6, y6, x7, y7, shade_channel(30, b_bottom), shade_channel(200, b_bottom), shade_channel(200, b_bottom));
     return;
 }
 
@@ -62,6 +69,51 @@ function to_screen_y(float y, float z) {
     var float sy = $((400.0 - $proj));
     var int result = sy;
     return int result;
+}
+
+// cross product (a x b) component helpers, for edge vectors a=(ax,ay,az), b=(bx,by,bz)
+function cross_x(float ay, float az, float by, float bz) {
+    var float r = $((($ay * $bz) - ($az * $by)));
+    return float r;
+}
+function cross_y(float ax, float az, float bx, float bz) {
+    var float r = $((($az * $bx) - ($ax * $bz)));
+    return float r;
+}
+function cross_z(float ax, float ay, float bx, float by) {
+    var float r = $((($ax * $by) - ($ay * $bx)));
+    return float r;
+}
+
+// dot product of two 3D vectors
+function dot3(float ax, float ay, float az, float bx, float by, float bz) {
+    var float d = $((($ax * $bx) + ($ay * $by)));
+    d = $(($d + ($az * $bz)));
+    return float d;
+}
+
+// scale a 0-255 color channel by brightness (0.0-1.0+), clamp to [0,255]
+function shade_channel(int base, float brightness) {
+    var float scaled = $(($base * $brightness));
+    var int result = scaled;
+    if (result > 255) { result = 255; }
+    if (result < 0) { result = 0; }
+    return int result;
+}
+
+// compute brightness in [0.3, 1.0] from a face normal and fixed light dir (0,0,-1)
+// (light pointing toward the viewer/camera)
+function face_brightness(float nx, float ny, float nz) {
+    var float lx = 0.0;
+    var float ly = 0.0;
+    var float lz = -1.0;
+    var float d = dot3(nx, ny, nz, lx, ly, lz);
+    // normalize roughly: cube edge length 2, cross product magnitude ~4
+    var float t = $(($d / 4.0));
+    if (t < 0.0) { t = 0.0; }
+    if (t > 1.0) { t = 1.0; }
+    var float brightness = $((0.3 + (0.7 * $t)));
+    return float brightness;
 }
 
 function main() {
@@ -183,6 +235,56 @@ function main() {
         var int sx6 = to_screen_x(vx6, vz6); var int sy6 = to_screen_y(vy6, vz6);
         var int sx7 = to_screen_x(vx7, vz7); var int sy7 = to_screen_y(vy7, vz7);
 
+        // --- compute per-face brightness from face normals (using rotated 3D coords) ---
+        // front face: vertices 0,1,2  edges (v1-v0),(v2-v0)
+        var float ax = $(($vx1 - $vx0)); var float ay = $(($vy1 - $vy0)); var float az = $(($vz1 - $vz0));
+        var float bx = $(($vx2 - $vx0)); var float by = $(($vy2 - $vy0)); var float bz = $(($vz2 - $vz0));
+        var float n_front_x = cross_x(ay, az, by, bz);
+        var float n_front_y = cross_y(ax, az, bx, bz);
+        var float n_front_z = cross_z(ax, ay, bx, by);
+        var float b_front = face_brightness(n_front_x, n_front_y, n_front_z);
+
+        // back face: vertices 4,5,6
+        ax = $(($vx5 - $vx4)); ay = $(($vy5 - $vy4)); az = $(($vz5 - $vz4));
+        bx = $(($vx6 - $vx4)); by = $(($vy6 - $vy4)); bz = $(($vz6 - $vz4));
+        var float n_back_x = cross_x(ay, az, by, bz);
+        var float n_back_y = cross_y(ax, az, bx, bz);
+        var float n_back_z = cross_z(ax, ay, bx, by);
+        var float b_back = face_brightness(n_back_x, n_back_y, n_back_z);
+
+        // left face: vertices 0,3,7
+        ax = $(($vx3 - $vx0)); ay = $(($vy3 - $vy0)); az = $(($vz3 - $vz0));
+        bx = $(($vx7 - $vx0)); by = $(($vy7 - $vy0)); bz = $(($vz7 - $vz0));
+        var float n_left_x = cross_x(ay, az, by, bz);
+        var float n_left_y = cross_y(ax, az, bx, bz);
+        var float n_left_z = cross_z(ax, ay, bx, by);
+        var float b_left = face_brightness(n_left_x, n_left_y, n_left_z);
+
+        // right face: vertices 1,2,6
+        ax = $(($vx2 - $vx1)); ay = $(($vy2 - $vy1)); az = $(($vz2 - $vz1));
+        bx = $(($vx6 - $vx1)); by = $(($vy6 - $vy1)); bz = $(($vz6 - $vz1));
+        var float n_right_x = cross_x(ay, az, by, bz);
+        var float n_right_y = cross_y(ax, az, bx, bz);
+        var float n_right_z = cross_z(ax, ay, bx, by);
+        var float b_right = face_brightness(n_right_x, n_right_y, n_right_z);
+
+        // top face: vertices 0,1,5
+        ax = $(($vx1 - $vx0)); ay = $(($vy1 - $vy0)); az = $(($vz1 - $vz0));
+        bx = $(($vx5 - $vx0)); by = $(($vy5 - $vy0)); bz = $(($vz5 - $vz0));
+        var float n_top_x = cross_x(ay, az, by, bz);
+        var float n_top_y = cross_y(ax, az, bx, bz);
+        var float n_top_z = cross_z(ax, ay, bx, by);
+        var float b_top = face_brightness(n_top_x, n_top_y, n_top_z);
+
+        // bottom face: vertices 3,2,6
+        ax = $(($vx2 - $vx3)); ay = $(($vy2 - $vy3)); az = $(($vz2 - $vz3));
+        bx = $(($vx6 - $vx3)); by = $(($vy6 - $vy3)); bz = $(($vz6 - $vz3));
+        var float n_bottom_x = cross_x(ay, az, by, bz);
+        var float n_bottom_y = cross_y(ax, az, bx, bz);
+        var float n_bottom_z = cross_z(ax, ay, bx, by);
+        var float b_bottom = face_brightness(n_bottom_x, n_bottom_y, n_bottom_z);
+
+        // erase previous frame by filling its faces black
         if (first_frame == 0) {
             draw_cube_faces_color(
                 px0, py0, px1, py1, px2, py2, px3, py3,
@@ -193,7 +295,8 @@ function main() {
 
         draw_cube_faces(
             sx0, sy0, sx1, sy1, sx2, sy2, sx3, sy3,
-            sx4, sy4, sx5, sy5, sx6, sy6, sx7, sy7);
+            sx4, sy4, sx5, sy5, sx6, sy6, sx7, sy7,
+            b_front, b_back, b_left, b_right, b_top, b_bottom);
 
         px0 = sx0; py0 = sy0; px1 = sx1; py1 = sy1;
         px2 = sx2; py2 = sy2; px3 = sx3; py3 = sy3;
