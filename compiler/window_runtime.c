@@ -1349,16 +1349,16 @@ void emit_window_bss(Codegen *cg) {
     E("_window_msg:         resb 48  ; MSG struct");
     E("");
     E("; --- shared input state (written by event handlers, read by user code) ---");
-    E("_input_drag_x:       dq 0   ; accumulated drag offset x");
-    E("_input_drag_y:       dq 0   ; accumulated drag offset y");
-    E("_input_dragging:     dq 0   ; 1 while left button held");
-    E("_input_last_x:       dq 0   ; last mouse x (for delta calc)");
-    E("_input_last_y:       dq 0   ; last mouse y");
-    E("_input_wheel:        dq 0   ; accumulated wheel delta");
-    E("_input_bbox_minx:    dq 0");
-    E("_input_bbox_miny:    dq 0");
-    E("_input_bbox_maxx:    dq 0");
-    E("_input_bbox_maxy:    dq 0");
+    E("_input_drag_x:       resq 1   ; accumulated drag offset x");
+    E("_input_drag_y:       resq 1   ; accumulated drag offset y");
+    E("_input_dragging:     resq 1   ; 1 while left button held");
+    E("_input_last_x:       resq 1   ; last mouse x (for delta calc)");
+    E("_input_last_y:       resq 1   ; last mouse y");
+    E("_input_wheel:        resq 1   ; accumulated wheel delta");
+    E("_input_bbox_minx:    resq 1");
+    E("_input_bbox_miny:    resq 1");
+    E("_input_bbox_maxx:    resq 1");
+    E("_input_bbox_maxy:    resq 1");
     E("");
 }
 
