@@ -56,7 +56,12 @@ No explicit cast syntax exists or is required.
 .B str
 A string value, internally represented as a pointer/length pair.
 String literals are double-quoted and support
-.B \\n \\t \\\\ \\" \\0
+.BR \en ,
+.BR \et ,
+.BR \e\e ,
+.BR \e" ,
+and
+.B \e0
 escapes.
 .TP
 .B bool
@@ -146,10 +151,12 @@ function greet(str name) {
 .SS I/O
 .TP
 .BI print( expr )
-.TQ
+Print a value (int, float, or str) to standard output with no trailing
+newline.
+.TP
 .BI println( expr )
-Print a value (int, float, or str) to standard output, with or without
-a trailing newline.
+Print a value (int, float, or str) to standard output followed by a
+trailing newline.
 .TP
 .BI readline()
 Read a line of input from standard input. Returns a
@@ -192,10 +199,14 @@ linearly interpolated (Gouraud-style) across the triangle's interior.
 .TP
 .BI fill_triangle_z( x0 , " y0" , " z0" ", ..." , " r" , " g" , " b" )
 Rasterize a flat-shaded triangle with per-pixel depth testing against
-the active z-buffer.
+the active z-buffer. Each vertex carries a floating-point depth
+.RI ( z );
+a pixel is drawn only when it is nearer (smaller
+.IR z )
+than the value already stored in the depth buffer.
 .TP
 .B zbuffer.clear()
-Reset the depth buffer prior to rendering a frame.
+Reset the depth buffer to a far value prior to rendering a frame.
 .TP
 .B time.now_ms()
 Returns milliseconds elapsed since system start, for frame timing and
@@ -239,8 +250,7 @@ input.in_bbox(mx, my)   // axis-aligned hit test
 The following are described in the language design but are not
 currently functional:
 .IP \(bu 2
-.B thread
-,
+.BR thread ,
 .BR sync ,
 and
 .B lock
@@ -270,7 +280,7 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime
 .nf
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
-x86_64-w64-mingw32-gcc program.obj -o program.exe \\
+x86_64-w64-mingw32-gcc program.obj -o program.exe \e
     -nostdlib -lkernel32 -luser32 -lgdi32 -e _start
 .fi
 .RE
@@ -304,13 +314,8 @@ Slag source files.
 NASM x86-64 Win64 assembly emitted by the compiler.
 .SH SEE ALSO
 .BR nasm (1)
+.PP
 The full language specification and project README are distributed
 with the source tree.
-.SH BUGS
-.B fill_triangle_z
-is currently known to corrupt its own stack frame during the per-pixel
-depth-test/write loop on some inputs, causing the scanline loop to
-fail to terminate correctly. See the project repository's issue
-history for details.
 .SH AUTHOR
 Nathaniel Spinks (Yokai).
