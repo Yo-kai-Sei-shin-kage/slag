@@ -23,6 +23,12 @@ Slag is under active development. The pipeline currently supports:
   - `readfile()` — reads file contents into a `str` via Win32 `CreateFileA`/`ReadFile`
   - `readline()` — reads a line from stdin via Win32 `ReadConsoleA`
   - User-defined function calls under the Win64 calling convention (int and float args/returns, mixed and nested calls), verified working with high argument counts (19- and 22-argument calls): the first four positional args go in `rcx`/`rdx`/`r8`/`r9` (or `xmm0`-`xmm3` for floats), and the rest are passed on the stack
+  - **CPU topology detection** — at startup the runtime calls `GetLogicalProcessorInformation`, walks the `SYSTEM_LOGICAL_PROCESSOR_INFORMATION` buffer, and populates the following read-only globals accessible via builtins:
+    - `cpu.physical_cores()` — physical core count
+    - `cpu.logical_cores()` — total logical processors (sum of per-core processor mask `popcnt`)
+    - `cpu.threads_per_core()` — logical / physical cores
+    - `cpu.safe_thread_limit()` — logical cores − 1 (minimum 1), a conservative upper bound for worker thread count
+    - `cpu.hyperthreaded()` — 1 if SMT/Hyper-Threading is active on any core (detected via `ProcessorCore.Flags`), 0 otherwise. Falls back to all-1s / hyperthreaded=0 if the API call fails
   - **Windowing and software-rendered graphics**:
     - `window.open(w, h, title)` — creates a window on its own thread with a BGRA DIB framebuffer
     - `pixel(x, y, r, g, b)` — writes a single pixel into the framebuffer; bounds-checks against the framebuffer dimensions and silently no-ops out-of-range writes (safe to draw off-screen)
@@ -49,7 +55,6 @@ Slag is under active development. The pipeline currently supports:
 - `match()` / regex engine (descoped — not planned)
 - Dynamic/regex-sized arrays
 - `thread` / `sync` / `lock` (currently stubbed)
-- CPU topology detection (`cpu.*` fields hardcoded to 1)
 - Per-vertex (Gouraud) lighting on meshes — the gradient rasterizer exists, but the cube demo currently uses flat per-face lighting
 - Depth buffering / back-face culling — the cube demos rely on draw order, which is correct for a single convex cube but not for general scenes
 - Built-in 3D math/rendering primitives (matrix types, z-buffering, texture mapping) — not strictly needed, since rotation/projection/rasterization pipelines can already be written in Slag itself (see the cube demos)
@@ -59,7 +64,15 @@ Slag is under active development. The pipeline currently supports:
 
 Slag's compiler is written in C and built with MinGW-w64 GCC, targeting `x86_64-w64-mingw32`. Output assembly is assembled with NASM (`-f win64`) and linked with the MinGW-w64 linker. No CRT is linked into Slag-compiled programs; only `kernel32.dll`, `user32.dll`, and `gdi32.dll` are imported as needed.
 
-## Building the compiler
+## Installation
+
+```bash
+./install.sh
+```
+
+The install script detects the host environment (Cygwin, MSYS2, or Linux), checks for required dependencies (`gcc`, `nasm`, `x86_64-w64-mingw32-gcc`, `git`), builds the compiler, installs the man page, and adds the compiler directory to `PATH`.
+
+## Building the compiler manually
 
 ```bash
 cd compiler
@@ -101,6 +114,18 @@ function main() {
         window.flush();
     }
 
+    return;
+}
+```
+
+## Example: CPU topology
+
+```c
+function main() {
+    println(cpu.physical_cores());
+    println(cpu.logical_cores());
+    println(cpu.threads_per_core());
+    println(cpu.hyperthreaded());
     return;
 }
 ```

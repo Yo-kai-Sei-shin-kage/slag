@@ -211,6 +211,43 @@ Reset the depth buffer to a far value prior to rendering a frame.
 .B time.now_ms()
 Returns milliseconds elapsed since system start, for frame timing and
 FPS measurement.
+.SS CPU topology
+At startup the runtime calls
+.B GetLogicalProcessorInformation
+and populates a set of read-only globals accessible via the
+.B cpu.*
+builtins:
+.TP
+.B cpu.physical_cores()
+Number of physical processor cores as reported by the OS.
+.TP
+.B cpu.logical_cores()
+Total number of logical processors (hardware threads), equal to
+physical cores times threads-per-core when SMT is active.
+.TP
+.B cpu.threads_per_core()
+Logical cores divided by physical cores. 2 when SMT/Hyper-Threading
+is active, 1 otherwise.
+.TP
+.B cpu.safe_thread_limit()
+.BR cpu.logical_cores() \ \-\ 1,
+with a minimum of 1. A conservative upper bound for the number of
+worker threads to spawn so that one logical core is left free for the
+OS and the window thread.
+.TP
+.B cpu.hyperthreaded()
+Returns 1 if SMT (Intel Hyper-Threading or AMD SMT) is detected on at
+least one physical core, 0 otherwise. Detected via the
+.B ProcessorCore.Flags
+field of
+.BR SYSTEM_LOGICAL_PROCESSOR_INFORMATION .
+If
+.B GetLogicalProcessorInformation
+fails, all
+.B cpu.*
+values fall back to 1 and
+.B cpu.hyperthreaded()
+returns 0.
 .SS Input event handlers
 Event handlers are declared with the
 .B on
@@ -256,10 +293,6 @@ and
 .B lock
 (multithreading constructs are stubbed)
 .IP \(bu 2
-CPU topology detection (
-.B cpu.*
-fields are currently hardcoded)
-.IP \(bu 2
 Dynamic or regex-sized arrays
 .IP \(bu 2
 A self-hosting compiler
@@ -301,6 +334,18 @@ function main() {
         window.flush();
     }
 
+    return;
+}
+.fi
+.RE
+.SS Querying CPU topology
+.RS
+.nf
+function main() {
+    println(cpu.physical_cores());
+    println(cpu.logical_cores());
+    println(cpu.threads_per_core());
+    println(cpu.hyperthreaded());
     return;
 }
 .fi
