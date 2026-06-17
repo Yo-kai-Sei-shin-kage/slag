@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # install.sh — Slag toolchain installer
 #
-# Detects the host environment (Cygwin or a standard Linux distro),
-# checks for and offers to install required dependencies, builds the
-# Slag compiler, and sets up the man page so `man slag` works from any
+# Detects the host environment (Cygwin, MSYS2/MinGW, or a standard Linux
+# distro), checks for and offers to install required dependencies, builds
+# the Slag compiler, and sets up the man page so `man slag` works from any
 # directory.
 #
 # Usage:
@@ -25,6 +25,13 @@ COMPILER_DIR="$REPO_DIR/compiler"
 DOC_DIR="$REPO_DIR/documentation"
 MAN1_DIR="$DOC_DIR/man1"
 
+# Resolve the shell rc file once, up front (used for PATH and MANPATH).
+RC_FILE="$HOME/.bashrc"
+case "$SHELL" in
+    *zsh)  RC_FILE="$HOME/.zshrc" ;;
+    *bash) RC_FILE="$HOME/.bashrc" ;;
+esac
+
 # -----------------------------------------------------------------------
 # Environment detection
 # -----------------------------------------------------------------------
@@ -32,23 +39,29 @@ MAN1_DIR="$DOC_DIR/man1"
 OS_KIND="unknown"
 PKG_MANAGER="none"
 
-if [ -n "$CYGWIN" ] || uname -s | grep -qi "cygwin"; then
-    OS_KIND="cygwin"
-elif [ -f /etc/os-release ]; then
-    OS_KIND="linux"
-    . /etc/os-release
-    if command -v apt-get >/dev/null 2>&1; then
-        PKG_MANAGER="apt"
-    elif command -v dnf >/dev/null 2>&1; then
-        PKG_MANAGER="dnf"
-    elif command -v yum >/dev/null 2>&1; then
-        PKG_MANAGER="yum"
-    elif command -v pacman >/dev/null 2>&1; then
-        PKG_MANAGER="pacman"
-    elif command -v zypper >/dev/null 2>&1; then
-        PKG_MANAGER="zypper"
-    fi
-fi
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+
+case "$UNAME_S" in
+    CYGWIN*)            OS_KIND="cygwin" ;;
+    MINGW*|MSYS*)       OS_KIND="msys" ;;
+    Linux*)
+        OS_KIND="linux"
+        if [ -f /etc/os-release ]; then
+            . /etc/os-release
+        fi
+        if command -v apt-get >/dev/null 2>&1; then
+            PKG_MANAGER="apt"
+        elif command -v dnf >/dev/null 2>&1; then
+            PKG_MANAGER="dnf"
+        elif command -v yum >/dev/null 2>&1; then
+            PKG_MANAGER="yum"
+        elif command -v pacman >/dev/null 2>&1; then
+            PKG_MANAGER="pacman"
+        elif command -v zypper >/dev/null 2>&1; then
+            PKG_MANAGER="zypper"
+        fi
+        ;;
+esac
 
 echo "Detected environment: $OS_KIND"
 if [ "$OS_KIND" = "linux" ]; then
@@ -93,12 +106,24 @@ This appears to be Cygwin. Cygwin packages must be installed through
 the Cygwin setup program (setup-x86_64.exe), not from this script.
 
 Re-run Cygwin's setup and ensure the following packages are selected:
-  - gcc-core, gcc-g++   (Devel category)
+  - gcc-core, gcc-g++        (Devel category)
   - mingw64-x86_64-gcc-core  (Devel category — provides x86_64-w64-mingw32-gcc)
-  - nasm                (Devel category)
-  - git                 (Devel category)
+  - nasm                     (Devel category)
+  - git                      (Devel category)
 
 After installing, re-run this script to verify and continue.
+EOF
+            exit 1
+            ;;
+        msys)
+            cat <<'EOF'
+This appears to be MSYS2 / MinGW. Install the required packages with
+pacman, then re-run this script:
+
+  pacman -S --needed gcc nasm git mingw-w64-x86_64-gcc
+
+(Run from the MSYS2 shell. The mingw-w64-x86_64-gcc package provides
+the cross toolchain used to link Win64 executables.)
 EOF
             exit 1
             ;;
@@ -131,7 +156,7 @@ EOF
                     ;;
             esac
             echo ""
-            read -r -p "Run the suggested install command now with sudo? [y/N] " REPLY
+            read -r -p "Run the suggested install command now with sudo? [y/N] " REPLY || REPLY=""
             if [[ "$REPLY" =~ ^[Yy]$ ]]; then
                 case "$PKG_MANAGER" in
                     apt)    sudo apt-get update && sudo apt-get install -y gcc nasm git mingw-w64 ;;
@@ -182,16 +207,8 @@ echo ""
 # Man page setup
 # -----------------------------------------------------------------------
 
-if [ -f "$DOC_DIR/slag.1" ]; then
-    mkdir -p "$MAN1_DIR"
-    cp "$DOC_DIR/slag.1" "$MAN1_DIR/slag.1"
-    echo "Installed man page at $MAN1_DIR/slag.1"
-
-    RC_FILE="$HOME/.bashrc"
-    case "$SHELL" in
-        *zsh)  RC_FILE="$HOME/.zshrc" ;;
-        *bash) RC_FILE="$HOME/.bashrc" ;;
-    esac
+if [ -f "$MAN1_DIR/slag.1" ]; then
+    echo "Found man page at $MAN1_DIR/slag.1"
 
     MANPATH_LINE="export MANPATH=\"$DOC_DIR:\$MANPATH\""
 
@@ -202,18 +219,12 @@ if [ -f "$DOC_DIR/slag.1" ]; then
         echo "Added MANPATH entry to $RC_FILE"
     fi
 else
-    echo "No man page found at $DOC_DIR/slag.1 — skipping man page setup."
+    echo "No man page found at $MAN1_DIR/slag.1 — skipping man page setup."
 fi
 
 # -----------------------------------------------------------------------
 # PATH setup for the slag binary itself
 # -----------------------------------------------------------------------
-
-RC_FILE="$HOME/.bashrc"
-case "$SHELL" in
-    *zsh)  RC_FILE="$HOME/.zshrc" ;;
-    *bash) RC_FILE="$HOME/.bashrc" ;;
-esac
 
 PATH_LINE="export PATH=\"$COMPILER_DIR:\$PATH\""
 if grep -qF "$PATH_LINE" "$RC_FILE" 2>/dev/null; then
