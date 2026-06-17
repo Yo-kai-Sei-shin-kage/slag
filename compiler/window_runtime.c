@@ -261,6 +261,22 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    add  rsp, 32");
     E("    add  rsp, 48                   ; free BITMAPINFOHEADER space");
     E("");
+    E("    ; --- allocate z-buffer: width*height*8 bytes (one double per pixel) ---");
+    E("    mov  rax, [_window_width]");
+    E("    imul rax, [_window_height]");
+    E("    shl  rax, 3                    ; * 8 bytes per double");
+    E("    mov  r14, rax                  ; save byte count");
+    E("    sub  rsp, 32");
+    E("    call GetProcessHeap");
+    E("    add  rsp, 32");
+    E("    mov  rcx, rax                  ; hHeap");
+    E("    xor  rdx, rdx                  ; flags = 0");
+    E("    mov  r8,  r14                  ; size in bytes");
+    E("    sub  rsp, 32");
+    E("    call HeapAlloc");
+    E("    add  rsp, 32");
+    E("    mov  [_zbuffer_ptr], rax       ; save depth buffer ptr");
+    E("");
 
     // Show window
     E("    ; ShowWindow");
@@ -928,6 +944,37 @@ static void emit_window_utils(Codegen *cg) {
     E("    ret");
     E("");
 
+    // -------------------------------------------------------------
+    // _slag_zbuffer_clear() : fill the depth buffer with a large
+    // "far" depth value so any real fragment passes the first test.
+    // No-ops safely if the window/buffer hasn't been created.
+    // -------------------------------------------------------------
+    E("; --- _slag_zbuffer_clear() ---");
+    E("_slag_zbuffer_clear:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    mov  r10, [_zbuffer_ptr]");
+    E("    test r10, r10");
+    E("    jz   .zbc_done             ; no buffer yet -> skip safely");
+    E("    mov  rcx, [_window_width]");
+    E("    imul rcx, [_window_height] ; rcx = pixel count");
+    E("    test rcx, rcx");
+    E("    jle  .zbc_done");
+    E("    mov  rax, 0x44A0000000000000 ; ~1.0e22 as double bits (far depth)");
+    E("    xor  r8, r8                ; index = 0");
+    E(".zbc_loop:");
+    E("    cmp  r8, rcx");
+    E("    jge  .zbc_done");
+    E("    mov  [r10 + r8*8], rax");
+    E("    inc  r8");
+    E("    jmp  .zbc_loop");
+    E(".zbc_done:");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // -------------------------------------------------------------
+
 
     // -------------------------------------------------------------
     // _slag_fill_triangle_gradient(x0,y0,r0,g0,b0,x1,y1,r1,g1,b1,x2,y2,r2,g2,b2)
@@ -1345,6 +1392,7 @@ void emit_window_bss(Codegen *cg) {
     E("_window_memdc:       resq 1");
     E("_window_hbitmap:     resq 1");
     E("_window_pixels:      resq 1   ; ptr filled by CreateDIBSection");
+    E("_zbuffer_ptr:        resq 1   ; ptr to depth buffer (HeapAlloc'd in window.open)");
     E("_window_ready_event: resq 1");
     E("_window_thread:      resq 1");
     E("_window_msg:         resb 48  ; MSG struct");
