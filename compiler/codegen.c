@@ -351,6 +351,8 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
         case EXPR_CALL: {
             // Built-in float-returning calls.
             if (strcmp(e->as.call.name, "sqrt") == 0) return TYPE_FLOAT;
+            if (strcmp(e->as.call.name, "sin") == 0)  return TYPE_FLOAT;
+            if (strcmp(e->as.call.name, "cos") == 0)  return TYPE_FLOAT;
             // Other calls: fall through to the hint-based default below.
             return hint != TYPE_UNKNOWN ? hint : TYPE_INT;
         }
@@ -566,12 +568,14 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
         }
 
         case EXPR_CALL: {
-            // sqrt() returns a float; if used in an int context, compute the
+            // Float-returning intrinsics used in an int context: compute the
             // float result then truncate to int.
-            if (strcmp(e->as.call.name, "sqrt") == 0 &&
+            if ((strcmp(e->as.call.name, "sqrt") == 0 ||
+                 strcmp(e->as.call.name, "sin") == 0 ||
+                 strcmp(e->as.call.name, "cos") == 0) &&
                 e->as.call.args.count >= 1) {
                 emit_float_expr(cg, e);
-                emit(cg, "    cvttsd2si rax, xmm0   ; (int)sqrt()");
+                emit(cg, "    cvttsd2si rax, xmm0   ; (int)float-intrinsic");
                 break;
             }
             // Built-in and user function calls that return int.
@@ -692,6 +696,26 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
                 e->as.call.args.count >= 1) {
                 emit_float_expr(cg, e->as.call.args.items[0]);
                 emit(cg, "    sqrtsd xmm0, xmm0   ; sqrt()");
+                break;
+            }
+            // Built-in sin(x) / cos(x): evaluate arg into xmm0, then use the
+            // x87 FPU (fsin/fcos). The value is bounced through an 8-byte
+            // stack slot to move it between the SSE and x87 register files.
+            if ((strcmp(e->as.call.name, "sin") == 0 ||
+                 strcmp(e->as.call.name, "cos") == 0) &&
+                e->as.call.args.count >= 1) {
+                emit_float_expr(cg, e->as.call.args.items[0]);
+                emit(cg, "    sub  rsp, 8");
+                emit(cg, "    movsd [rsp], xmm0     ; bounce arg to stack");
+                emit(cg, "    fld  qword [rsp]      ; load onto x87 stack");
+                if (strcmp(e->as.call.name, "sin") == 0) {
+                    emit(cg, "    fsin                  ; sin()");
+                } else {
+                    emit(cg, "    fcos                  ; cos()");
+                }
+                emit(cg, "    fstp qword [rsp]      ; store result back");
+                emit(cg, "    movsd xmm0, [rsp]");
+                emit(cg, "    add  rsp, 8");
                 break;
             }
             emit_call_expr(cg, e);
@@ -917,10 +941,12 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // For now emit a stub call.
             emit(cg, "    ; match() - regex engine not yet implemented");
             emit(cg, "    xor  rax, rax");
-        } else if (strcmp(name, "sqrt") == 0) {
-            // sqrt(x) is a float-returning intrinsic; normally handled in
-            // emit_float_expr. If it reaches here (e.g. result discarded in a
-            // statement), just evaluate it into xmm0 via the float path.
+        } else if (strcmp(name, "sqrt") == 0 ||
+                   strcmp(name, "sin") == 0 ||
+                   strcmp(name, "cos") == 0) {
+            // Float-returning intrinsics; normally handled in emit_float_expr.
+            // If one reaches here (e.g. result discarded in a statement), just
+            // evaluate it into xmm0 via the float path.
             emit_float_expr(cg, e);
         } else if (strcmp(name, "pixel") == 0) {
             // pixel(x, y, r, g, b)
@@ -1060,7 +1086,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    sub  rsp, 32");
             emit(cg, "    call GetTickCount");
             emit(cg, "    add  rsp, 32");
-            emit(cg, "    and  rax, 0xFFFFFFFF  ; zero-extend 32-bit result");
+            emit(cg, "    mov  eax, eax         ; zero-extend 32-bit result into rax");
         }
         else if (strcmp(member, "set_bbox") == 0) {
             emit(cg, "    ; input.set_bbox");
@@ -1657,12 +1683,26 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    mov  rbp, rsp");
     emit(cg, "    sub  rsp, 8             ; align rsp to 16 for calls");
     emit(cg, "    mov  r8,  rcx           ; output buffer");
+    emit(cg, "    xor  r9,  r9            ; r9 = chars written so far");
+    emit(cg, "    ; --- sign handling: if value is negative, emit '-' and");
+    emit(cg, "    ; work on the absolute value so |x|<1 cases keep their sign ---");
+    emit(cg, "    movq rax, xmm0          ; raw double bits");
+    emit(cg, "    test rax, rax           ; sign bit = bit 63 -> SF");
+    emit(cg, "    jns  .ftoa_nonneg");
+    emit(cg, "    mov  byte [r8], '-'");
+    emit(cg, "    inc  r8");
+    emit(cg, "    inc  r9");
+    emit(cg, "    btr  rax, 63            ; clear sign bit in the raw bits");
+    emit(cg, "    movq xmm0, rax          ; xmm0 = |value|");
+    emit(cg, ".ftoa_nonneg:");
     emit(cg, "    ; integer part");
     emit(cg, "    cvttsd2si rax, xmm0");
     emit(cg, "    mov  rcx, rax");
     emit(cg, "    mov  rdx, r8");
+    emit(cg, "    push r9");
     emit(cg, "    call _slag_itoa         ; rax = int part length");
-    emit(cg, "    mov  r9,  rax           ; r9 = chars written so far");
+    emit(cg, "    pop  r9");
+    emit(cg, "    add  r9,  rax           ; r9 = total chars so far");
     emit(cg, "    add  r8,  rax");
     emit(cg, "    ; decimal point");
     emit(cg, "    mov  byte [r8], '.'");
