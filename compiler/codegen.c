@@ -68,7 +68,20 @@ typedef struct Codegen {
     // String literals emitted in .data section.
     char *str_consts[1024];
     int str_const_count;
+
+    // thread {} blocks found in the function currently being emitted.
+    // Bodies are deferred and emitted as standalone procs right after
+    // the enclosing function, mirroring the on-handler pattern.
+    const StmtList *thread_bodies[64];
+    int             thread_ids[64];
+    int             thread_body_count;
+
+    // Slot index into _slag_thread_handles for the *next* thread {}
+    // encountered. Incremented by STMT_THREAD, reset to 0 by STMT_SYNC.
+    int thread_slot;
 } Codegen;
+
+#define MAX_THREADS 64
 
 // ---------------------------------------------------------------------
 // Helpers
@@ -338,6 +351,14 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
             return TYPE_BOOL;
         case EXPR_MEMBER: {
             if (strcmp(e->as.member.member, "len") == 0) return TYPE_INT;
+            // cpu.* topology fields and window.open (the bare-member
+            // read of the open/closed flag) are all int-typed globals.
+            if (e->as.member.base->kind == EXPR_IDENT ||
+                e->as.member.base->kind == EXPR_DOLLAR_IDENT) {
+                const char *base_name = e->as.member.base->as.str.value;
+                if (strcmp(base_name, "cpu") == 0) return TYPE_INT;
+                if (strcmp(base_name, "window") == 0) return TYPE_INT;
+            }
             return hint;
         }
         case EXPR_INDEX: {
@@ -1367,12 +1388,38 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         // thread { ... } — spawn a Win32 thread for the body
         // ------------------------------------------------------------------
         case STMT_THREAD: {
-            // Each thread block gets its own labeled helper function that
-            // we emit after the current function. For now we emit an inline
-            // stub that calls CreateThread.
+            if (cg->thread_body_count >= MAX_THREADS) {
+                fprintf(stderr, "codegen error: too many thread{} blocks "
+                        "in one function (max %d)\n", MAX_THREADS);
+                break;
+            }
             int tid = new_label(cg);
-            emit(cg, "    ; thread block %d (stub)", tid);
-            emit(cg, "    ; TODO: emit thread proc and CreateThread call");
+            // Defer the body — it's emitted as a standalone proc
+            // (_slag_thread_proc_N) right after the enclosing function,
+            // same pattern as on-handlers.
+            cg->thread_bodies[cg->thread_body_count] = &s->as.thread_stmt.body;
+            cg->thread_ids[cg->thread_body_count]    = tid;
+            cg->thread_body_count++;
+
+            int slot = cg->thread_slot++;
+            if (slot >= MAX_THREADS) {
+                fprintf(stderr, "codegen error: thread slot %d exceeds "
+                        "_slag_thread_handles capacity (%d); add a sync{} "
+                        "block to drain it\n", slot, MAX_THREADS);
+                slot = MAX_THREADS - 1;
+            }
+
+            emit(cg, "    ; thread block %d -> slot %d", tid, slot);
+            emit(cg, "    sub  rsp, 48                   ; 32 shadow + 2 stack args");
+            emit(cg, "    xor  rcx, rcx                  ; lpThreadAttributes = NULL");
+            emit(cg, "    xor  rdx, rdx                  ; dwStackSize = 0 (default)");
+            emit(cg, "    lea  r8,  [_slag_thread_proc_%d] ; lpStartAddress", tid);
+            emit(cg, "    xor  r9,  r9                   ; lpParameter = NULL");
+            emit(cg, "    mov  qword [rsp+32], 0          ; dwCreationFlags = 0");
+            emit(cg, "    mov  qword [rsp+40], 0          ; lpThreadId = NULL");
+            emit(cg, "    call CreateThread");
+            emit(cg, "    add  rsp, 48");
+            emit(cg, "    mov  [_slag_thread_handles + %d], rax", slot * 8);
             break;
         }
 
@@ -1382,7 +1429,30 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         case STMT_SYNC: {
             emit(cg, "    ; sync block");
             emit_stmtlist(cg, &s->as.sync_stmt.body);
-            emit(cg, "    ; TODO: WaitForMultipleObjects");
+
+            int n = cg->thread_slot;
+            if (n > 0) {
+                if (n > MAX_THREADS) n = MAX_THREADS;
+                emit(cg, "    ; WaitForMultipleObjects(%d, _slag_thread_handles, TRUE, INFINITE)", n);
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    mov  rcx, %d                   ; nCount", n);
+                emit(cg, "    lea  rdx, [_slag_thread_handles]");
+                emit(cg, "    mov  r8,  1                    ; bWaitAll = TRUE");
+                emit(cg, "    mov  r9,  0xFFFFFFFF            ; dwMilliseconds = INFINITE");
+                emit(cg, "    call WaitForMultipleObjects");
+                emit(cg, "    add  rsp, 32");
+
+                // Close handles now that they've signaled, then reset
+                // the slot counter so the array can be reused by any
+                // thread{} blocks that follow.
+                for (int i = 0; i < n; i++) {
+                    emit(cg, "    mov  rcx, [_slag_thread_handles + %d]", i * 8);
+                    emit(cg, "    sub  rsp, 32");
+                    emit(cg, "    call CloseHandle");
+                    emit(cg, "    add  rsp, 32");
+                }
+                cg->thread_slot = 0;
+            }
             break;
         }
 
@@ -1538,6 +1608,59 @@ static void emit_on_handlers(Codegen *cg, const Function *f) {
     }
 }
 
+// ---------------------------------------------------------------------
+// thread {} proc emission
+//
+// thread{} blocks are collected (not emitted in place) while the
+// enclosing function's body is generated — see STMT_THREAD in
+// emit_stmt(). Once the function body is fully emitted, this walks
+// the deferred list and emits each body as a standalone proc:
+//
+//   _slag_thread_proc_<id>:
+//       ... body ...
+//       xor rax, rax
+//       ret
+//
+// Win32 thread procs take a single lpParameter arg (rcx) and return a
+// DWORD; Slag threads currently take no parameters and the return
+// value is unused (CreateThread is called with lpParameter = NULL).
+// The proc gets its own fresh local symbol table sized for its body,
+// completely separate from the enclosing function's frame — captured
+// variables are not currently supported (file-scope shared data should
+// be used instead, per spec 11.4).
+// ---------------------------------------------------------------------
+static void emit_thread_proc(Codegen *cg, const StmtList *body, int tid) {
+    cg->local_count = 0;
+    cg->frame_size  = 0;
+
+    int body_size = calculate_frame_size(body);
+    int total = (body_size + 32 + 15) & ~15;
+    if (total < 64) total = 64;
+
+    emit(cg, "; --- thread proc %d ---", tid);
+    emit(cg, "_slag_thread_proc_%d:", tid);
+    emit(cg, "    push rbp");
+    emit(cg, "    mov  rbp, rsp");
+    emit(cg, "    sub  rsp, %d", total);
+
+    emit_stmtlist(cg, body);
+
+    emit(cg, "    xor  rax, rax        ; DWORD return value (unused)");
+    emit(cg, "    mov  rsp, rbp");
+    emit(cg, "    pop  rbp");
+    emit(cg, "    ret");
+    emit(cg, "");
+}
+
+// Emit all thread{} procs deferred while generating the function that
+// was just finished, then clear the deferral list for the next one.
+static void emit_thread_procs(Codegen *cg) {
+    for (int i = 0; i < cg->thread_body_count; i++) {
+        emit_thread_proc(cg, cg->thread_bodies[i], cg->thread_ids[i]);
+    }
+    cg->thread_body_count = 0;
+}
+
 static void emit_function(Codegen *cg, const Function *f) {
     // Reset per-function state.
     cg->local_count = 0;
@@ -1624,6 +1747,12 @@ static void emit_function(Codegen *cg, const Function *f) {
     emit(cg, "    pop  rbp");
     emit(cg, "    ret");
     emit(cg, "");
+
+    // Any thread{} blocks encountered while emitting this function's
+    // body are deferred until here, so their procs don't get spliced
+    // into the middle of the enclosing function's instruction stream.
+    emit_thread_procs(cg);
+    cg->thread_slot = 0;
 }
 
 // ---------------------------------------------------------------------
@@ -1932,6 +2061,7 @@ static void emit_data_section(Codegen *cg) {
     emit(cg, "_cpu_logical_cores:    dq 0");
     emit(cg, "_cpu_threads_per_core: dq 0");
     emit(cg, "_cpu_safe_thread_limit:dq 0");
+    emit(cg, "_cpu_hyperthreaded:    dq 0   ; 1 if any core reports LTP_PC_SMT, else 0");
     emit(cg, "");
 }
 
@@ -1944,6 +2074,7 @@ static void emit_bss_section(Codegen *cg) {
     emit(cg, "section .bss");
     emit(cg, "_written_bytes: resq 1     ; scratch for WriteConsoleA");
     emit(cg, "_readline_buf:  resb 1024  ; line input buffer for readline()");
+    emit(cg, "_slag_thread_handles: resq %d  ; HANDLEs from CreateThread, drained by sync{}", MAX_THREADS);
     emit(cg, "");
 }
 
@@ -1966,6 +2097,7 @@ static void emit_imports(Codegen *cg) {
     emit(cg, "extern CloseHandle");
     emit(cg, "extern GetProcessHeap");
     emit(cg, "extern HeapAlloc");
+    emit(cg, "extern HeapFree");
     emit(cg, "");
 }
 
@@ -1997,12 +2129,149 @@ static void emit_startup(Codegen *cg) {
     emit(cg, "    mov  [_stdin], rax");
     emit(cg, "");
     emit(cg, "");
-    emit(cg, "    ; TODO: GetLogicalProcessorInformation for CPU topology");
+    emit(cg, "    call _slag_detect_cpu_topology");
+    emit(cg, "");
+    emit(cg, "    mov  rsp, rbp");
+    emit(cg, "    pop  rbp");
+    emit(cg, "    ret");
+    emit(cg, "");
+}
+
+// ---------------------------------------------------------------------
+// _slag_detect_cpu_topology
+//
+// Calls GetLogicalProcessorInformation using the standard two-pass
+// pattern: first call with a 0-size buffer to learn the required size
+// (it fails with ERROR_INSUFFICIENT_BUFFER and writes the size into our
+// out-param), then allocate that much from the process heap and call
+// again to get the actual SYSTEM_LOGICAL_PROCESSOR_INFORMATION array.
+//
+// Each entry is 32 bytes on x64:
+//   BYTE  Relationship   (offset 0; 0 = RelationProcessorCore)
+//   BYTE  Reserved[21]
+//   WORD  Reserved2
+//   union { ProcessorMask (8 bytes) ... } (offset 24)
+//
+// For every entry with Relationship == 0 (RelationProcessorCore):
+//   physical_cores += 1
+//   logical_cores  += popcount(ProcessorMask)
+//
+// threads_per_core = logical_cores / physical_cores (integer divide;
+// safe since physical_cores >= 1 whenever the call succeeds).
+//
+// safe_thread_limit = logical_cores - 1, floored at 1, leaving one
+// logical core free for the OS/UI thread rather than oversubscribing.
+//
+// On any failure (heap alloc fails, API fails on the second call), all
+// four globals fall back to 1 so callers always see a sane value.
+// ---------------------------------------------------------------------
+static void emit_cpu_topology_helper(Codegen *cg) {
+    emit(cg, "; --- _slag_detect_cpu_topology ---");
+    emit(cg, "_slag_detect_cpu_topology:");
+    emit(cg, "    push rbp");
+    emit(cg, "    mov  rbp, rsp");
+    emit(cg, "    push rbx");
+    emit(cg, "    push rsi");
+    emit(cg, "    push rdi");
+    emit(cg, "    push r12              ; required size");
+    emit(cg, "    push r13              ; physical_cores accumulator");
+    emit(cg, "    push r14              ; logical_cores accumulator");
+    emit(cg, "    push r15              ; hyperthreaded accumulator (OR of LTP_PC_SMT)");
+    emit(cg, "    sub  rsp, 40          ; 32 shadow + local dword, 16-aligned");
+    emit(cg, "");
+    emit(cg, "    mov  dword [rsp+32], 0");
+    emit(cg, "    xor  rcx, rcx                    ; Buffer = NULL");
+    emit(cg, "    lea  rdx, [rsp+32]                ; &ReturnedLength");
+    emit(cg, "    call GetLogicalProcessorInformation");
+    emit(cg, "    mov  r12d, [rsp+32]");
+    emit(cg, "    test r12d, r12d");
+    emit(cg, "    jz   .cpu_fail");
+    emit(cg, "");
+    emit(cg, "    call GetProcessHeap");
+    emit(cg, "    mov  rbx, rax                     ; heap handle");
+    emit(cg, "    mov  rcx, rbx");
+    emit(cg, "    xor  rdx, rdx");
+    emit(cg, "    mov  r8,  r12");
+    emit(cg, "    call HeapAlloc");
+    emit(cg, "    test rax, rax");
+    emit(cg, "    jz   .cpu_fail");
+    emit(cg, "    mov  rsi, rax                     ; buffer ptr");
+    emit(cg, "");
+    emit(cg, "    mov  rcx, rsi");
+    emit(cg, "    lea  rdx, [rsp+32]");
+    emit(cg, "    call GetLogicalProcessorInformation");
+    emit(cg, "    test eax, eax");
+    emit(cg, "    jz   .cpu_free_fail");
+    emit(cg, "");
+    emit(cg, "    xor  r13, r13                     ; physical_cores = 0");
+    emit(cg, "    xor  r14, r14                     ; logical_cores = 0");
+    emit(cg, "    xor  r15, r15                     ; hyperthreaded = 0");
+    emit(cg, "    xor  rdi, rdi                     ; byte offset");
+    emit(cg, ".cpu_loop:");
+    emit(cg, "    cmp  edi, r12d");
+    emit(cg, "    jge  .cpu_free_ok");
+    emit(cg, "    mov  eax, [rsi + rdi + 8]         ; Relationship (DWORD at offset 8)");
+    emit(cg, "    test eax, eax");
+    emit(cg, "    jnz  .cpu_next                    ; not RelationProcessorCore, skip");
+    emit(cg, "    inc  r13");
+    emit(cg, "    mov  rax, [rsi + rdi]             ; ProcessorMask (offset 0)");
+    emit(cg, "    popcnt rax, rax");
+    emit(cg, "    add  r14, rax");
+    emit(cg, "    movzx eax, byte [rsi + rdi + 12]  ; ProcessorCore.Flags");
+    emit(cg, "    test eax, eax");
+    emit(cg, "    setnz al                          ; normalize to clean 0/1 boolean");
+    emit(cg, "    movzx eax, al");
+    emit(cg, "    or   r15d, eax                    ; hyperthreaded |= IsTRUE(flags)");
+    emit(cg, ".cpu_next:");
+    emit(cg, "    add  rdi, 32                      ; sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION)");
+    emit(cg, "    jmp  .cpu_loop");
+    emit(cg, "");
+    emit(cg, ".cpu_free_ok:");
+    emit(cg, "    mov  rcx, rbx");
+    emit(cg, "    xor  rdx, rdx");
+    emit(cg, "    mov  r8,  rsi");
+    emit(cg, "    call HeapFree");
+    emit(cg, "    cmp  r13, 0");
+    emit(cg, "    jle  .cpu_fail            ; no core entries found, fall back");
+    emit(cg, "    mov  [_cpu_physical_cores], r13");
+    emit(cg, "    mov  [_cpu_logical_cores],  r14");
+    emit(cg, "    mov  rax, r14");
+    emit(cg, "    xor  rdx, rdx");
+    emit(cg, "    div  r13                          ; logical / physical");
+    emit(cg, "    mov  [_cpu_threads_per_core], rax");
+    emit(cg, "    mov  rax, r14");
+    emit(cg, "    sub  rax, 1");
+    emit(cg, "    cmp  rax, 1");
+    emit(cg, "    jge  .cpu_limit_ok");
+    emit(cg, "    mov  rax, 1");
+    emit(cg, ".cpu_limit_ok:");
+    emit(cg, "    mov  [_cpu_safe_thread_limit], rax");
+    emit(cg, "    mov  [_cpu_hyperthreaded], r15");
+    emit(cg, "    jmp  .cpu_done");
+    emit(cg, "");
+    emit(cg, ".cpu_free_fail:");
+    emit(cg, "    mov  rcx, rbx");
+    emit(cg, "    xor  rdx, rdx");
+    emit(cg, "    mov  r8,  rsi");
+    emit(cg, "    call HeapFree");
+    emit(cg, "    jmp  .cpu_fail");
+    emit(cg, "");
+    emit(cg, ".cpu_fail:");
     emit(cg, "    mov  qword [_cpu_physical_cores],    1");
     emit(cg, "    mov  qword [_cpu_logical_cores],     1");
     emit(cg, "    mov  qword [_cpu_threads_per_core],  1");
     emit(cg, "    mov  qword [_cpu_safe_thread_limit], 1");
+    emit(cg, "    mov  qword [_cpu_hyperthreaded],     0");
     emit(cg, "");
+    emit(cg, ".cpu_done:");
+    emit(cg, "    add  rsp, 40");
+    emit(cg, "    pop  r15");
+    emit(cg, "    pop  r14");
+    emit(cg, "    pop  r13");
+    emit(cg, "    pop  r12");
+    emit(cg, "    pop  rdi");
+    emit(cg, "    pop  rsi");
+    emit(cg, "    pop  rbx");
     emit(cg, "    mov  rsp, rbp");
     emit(cg, "    pop  rbp");
     emit(cg, "    ret");
@@ -2096,6 +2365,7 @@ void codegen_program(const Program *prog, FILE *out) {
 
     // Runtime helpers.
     emit_runtime_helpers(&cg);
+    emit_cpu_topology_helper(&cg);
     emit_window_runtime(&cg, &ev_flags);
 
     // User functions.
