@@ -16,3 +16,5 @@ slag
 .DS_Store
 slag.nanorc
 *.slag
+compiler/working_*.c
+slag.nanorc
