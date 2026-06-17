@@ -200,7 +200,22 @@ fi
 echo "Building the Slag compiler..."
 cd "$COMPILER_DIR"
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime.c
-echo "Built: $COMPILER_DIR/slag"
+
+# Decide the expected binary name per platform. On Cygwin/MSYS, GCC always
+# emits a .exe regardless of the -o name; on Linux it is extensionless.
+case "$OS_KIND" in
+    cygwin|msys) SLAG_BIN="slag.exe" ;;
+    *)           SLAG_BIN="slag" ;;
+esac
+
+if [ ! -f "$SLAG_BIN" ]; then
+    echo "Build error: expected compiler binary '$SLAG_BIN' was not produced."
+    echo "Check the gcc output above for errors."
+    exit 1
+fi
+
+chmod +x "$SLAG_BIN"
+echo "Built: $COMPILER_DIR/$SLAG_BIN"
 echo ""
 
 # -----------------------------------------------------------------------
@@ -209,6 +224,13 @@ echo ""
 
 if [ -f "$MAN1_DIR/slag.1" ]; then
     echo "Found man page at $MAN1_DIR/slag.1"
+
+    # Ensure man can read the page and traverse the directories leading to
+    # it. Files copied or checked out can land without world/owner read bits
+    # (e.g. via odd Cygwin ACLs), which makes `man slag` fail with
+    # "Permission denied" even when the path resolves correctly.
+    chmod 644 "$MAN1_DIR/slag.1" 2>/dev/null || true
+    chmod 755 "$DOC_DIR" "$MAN1_DIR" 2>/dev/null || true
 
     MANPATH_LINE="export MANPATH=\"$DOC_DIR:\$MANPATH\""
 
