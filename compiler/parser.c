@@ -112,6 +112,7 @@ static int is_type_keyword(Parser *p) {
 
 static Expr *parse_expr(Parser *p, int in_arith);
 static Stmt *parse_stmt(Parser *p);
+static Stmt *parse_lock(Parser *p);
 static void parse_block(Parser *p, StmtList *out);
 
 // ---------------------------------------------------------------------
@@ -719,6 +720,20 @@ static Stmt *parse_sync(Parser *p) {
     return s;
 }
 
+static Stmt *parse_lock(Parser *p) {
+    int line = p->current.line, col = p->current.col;
+    advance(p); // consume 'lock'
+
+    expect(p, TOK_LBRACE, "expected '{' to open lock block");
+    StmtList body;
+    parse_block(p, &body);
+    expect(p, TOK_RBRACE, "expected '}' to close lock block");
+
+    Stmt *s = stmt_new(STMT_LOCK, line, col);
+    s->as.lock_stmt.body = body;
+    return s;
+}
+
 // ---------------------------------------------------------------------
 // on handler
 //
@@ -789,6 +804,7 @@ static Stmt *parse_stmt(Parser *p) {
         case TOK_KW_RETURN: return parse_return(p);
         case TOK_KW_THREAD: return parse_thread(p);
         case TOK_KW_SYNC:   return parse_sync(p);
+        case TOK_KW_LOCK:   return parse_lock(p);
         case TOK_KW_ON:     return parse_on_handler(p);
 
         case TOK_LBRACE: {
