@@ -12,7 +12,7 @@ The full language design is documented in [`slag_spec.md`](slag_spec.md).
 Slag is under active development. The pipeline currently supports:
 
 - **Lexer** — full tokenization including `$((...))` arithmetic blocks, `$variable` references, regex literals, and all core keywords/operators.
-- **Parser** — complete recursive descent parser producing a full AST: functions, typed variable and array declarations, if/else/else-if, while, typed returns, thread/sync blocks, and `on` event handlers.
+- **Parser** — complete recursive descent parser producing a full AST: functions, typed variable and array declarations, if/else/else-if, while, typed returns, thread/sync/lock blocks, and `on` event handlers.
 - **Code generator** — emits NASM x86-64 Win64 assembly. Working:
   - Integer and float arithmetic, comparisons, logical short-circuit operators
   - Mixed int/float expressions auto-promote (int operands are converted with `cvtsi2sd`); assigning a float expression to an `int` truncates via `cvttsd2si`. No cast syntax is required
@@ -29,6 +29,10 @@ Slag is under active development. The pipeline currently supports:
     - `cpu.threads_per_core()` — logical / physical cores
     - `cpu.safe_thread_limit()` — logical cores − 1 (minimum 1), a conservative upper bound for worker thread count
     - `cpu.hyperthreaded()` — 1 if SMT/Hyper-Threading is active on any core (detected via `ProcessorCore.Flags`), 0 otherwise. Falls back to all-1s / hyperthreaded=0 if the API call fails
+  - **Concurrency — `thread` / `sync` / `lock`**:
+    - `thread { ... }` — spawns a real Win32 thread; the block body is compiled to a standalone thread proc and launched via `CreateThread`, with the handle stored in an internal table (up to 64 outstanding threads between syncs)
+    - `sync { ... }` — waits for all threads spawned since the last sync via `WaitForMultipleObjects(..., TRUE, INFINITE)`, closes their handles, and resets the table; the sync body runs after the wait
+    - `lock { ... }` — mutual exclusion via a single global `CRITICAL_SECTION` (initialized at startup); only one thread executes inside any `lock` block at a time, reentrant on the owning thread
   - **Windowing and software-rendered graphics**:
     - `window.open(w, h, title)` — creates a window on its own thread with a BGRA DIB framebuffer
     - `pixel(x, y, r, g, b)` — writes a single pixel into the framebuffer; bounds-checks against the framebuffer dimensions and silently no-ops out-of-range writes (safe to draw off-screen)
@@ -54,7 +58,6 @@ Slag is under active development. The pipeline currently supports:
 
 - `match()` / regex engine (descoped — not planned)
 - Dynamic/regex-sized arrays
-- `thread` / `sync` / `lock` (currently stubbed)
 - Per-vertex (Gouraud) lighting on meshes — the gradient rasterizer exists, but the cube demo currently uses flat per-face lighting
 - Depth buffering / back-face culling — the cube demos rely on draw order, which is correct for a single convex cube but not for general scenes
 - Built-in 3D math/rendering primitives (matrix types, z-buffering, texture mapping) — not strictly needed, since rotation/projection/rasterization pipelines can already be written in Slag itself (see the cube demos)
@@ -129,3 +132,34 @@ function main() {
     return;
 }
 ```
+
+## Example: threads, sync, and lock
+
+```c
+function main() {
+    println("main: spawning threads");
+
+    thread {
+        lock {
+            println("A line 1");
+            println("A line 2");
+        }
+    }
+    thread {
+        lock {
+            println("B line 1");
+            println("B line 2");
+        }
+    }
+
+    sync {
+    }
+
+    println("main: all threads done");
+    return;
+}
+```
+
+Each `thread` block runs concurrently. The `lock` block guarantees that A's
+lines and B's lines never interleave, and `sync` blocks until both threads
+finish before "all threads done" prints.
