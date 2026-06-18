@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-06-16" "slag" "Slag Programming Language"
+.TH SLAG 1 "2026-06-18" "slag 0.5" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -248,6 +248,28 @@ fails, all
 values fall back to 1 and
 .B cpu.hyperthreaded()
 returns 0.
+.SS Concurrency
+.B "thread { ... }"
+spawns a Win32 thread running the block body; the body is compiled to a
+standalone thread procedure and launched with
+.BR CreateThread .
+Multiple thread blocks may be spawned before a sync (up to 64 outstanding).
+.PP
+.B "sync { ... }"
+waits for all threads spawned since the last sync using
+.BR WaitForMultipleObjects ,
+closes their handles, and resets the handle table. Statements inside the
+sync body run after the wait completes.
+.PP
+.B "lock { ... }"
+provides mutual exclusion via a single global
+.B CRITICAL_SECTION
+initialized at startup, bracketing the body with
+.B EnterCriticalSection
+and
+.BR LeaveCriticalSection .
+Only one thread runs inside any lock block at a time; the section is
+reentrant on the owning thread.
 .SS Input event handlers
 Event handlers are declared with the
 .B on
@@ -286,12 +308,6 @@ input.in_bbox(mx, my)   // axis-aligned hit test
 .SH NOT YET IMPLEMENTED
 The following are described in the language design but are not
 currently functional:
-.IP \(bu 2
-.BR thread ,
-.BR sync ,
-and
-.B lock
-(multithreading constructs are stubbed)
 .IP \(bu 2
 Dynamic or regex-sized arrays
 .IP \(bu 2

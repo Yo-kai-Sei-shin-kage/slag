@@ -298,13 +298,24 @@ thread {
 }
 ```
 
+Each `thread { ... }` block spawns a real Win32 thread. The block body is
+compiled to a standalone thread procedure (`_slag_thread_proc_N`) and launched
+with `CreateThread`; the returned handle is stored in an internal handle table.
+Multiple `thread` blocks may be spawned before a `sync`. A maximum of 64
+outstanding threads is supported between syncs.
+
 ### 11.3 Sync Blocks
 
 ```
 sync {
-    // wait for all threads spawned above
+    // runs after all threads spawned above have finished
 }
 ```
+
+`sync` waits for every thread spawned since the last sync via
+`WaitForMultipleObjects(count, handles, TRUE, INFINITE)`, then closes each
+thread handle and resets the handle table so it can be reused. Any statements
+inside the `sync` body run after the wait completes.
 
 ### 11.4 Lock
 
@@ -314,7 +325,11 @@ lock {
 }
 ```
 
-> **Note:** `thread`, `sync`, and `lock` are parsed and appear in the AST but are not yet emitted as functional assembly. Stub implementation only.
+`lock` provides mutual exclusion via a single global `CRITICAL_SECTION`,
+initialized at startup. Entering a `lock` block calls `EnterCriticalSection`
+and leaving it calls `LeaveCriticalSection`, so only one thread executes inside
+any `lock` block at a time. The critical section is reentrant on the owning
+thread. All `lock` blocks currently share one global lock.
 
 ---
 
