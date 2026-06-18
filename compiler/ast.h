@@ -126,6 +126,7 @@ typedef enum {
     STMT_BLOCK,         // { ... } - used for if/while bodies
     STMT_THREAD,        // thread { ... }
     STMT_SYNC,          // sync { ... }
+    STMT_LOCK,          // lock { ... }
     STMT_ON_HANDLER     // on key_down(int k) { ... }
 } StmtKind;
 
@@ -207,6 +208,10 @@ struct Stmt {
         struct {
             StmtList body;
         } sync_stmt;
+
+        struct {
+            StmtList body;
+        } lock_stmt;
 
         struct {
             char *event_name;     // e.g. "key_down", "mouse_move"

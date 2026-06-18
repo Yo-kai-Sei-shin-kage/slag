@@ -1457,6 +1457,24 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         }
 
         // ------------------------------------------------------------------
+        // lock { ... } — global critical section (mutual exclusion)
+        // ------------------------------------------------------------------
+        case STMT_LOCK: {
+            emit(cg, "    ; lock { — enter global critical section");
+            emit(cg, "    lea  rcx, [_slag_lock_cs]");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call EnterCriticalSection");
+            emit(cg, "    add  rsp, 32");
+            emit_stmtlist(cg, &s->as.lock_stmt.body);
+            emit(cg, "    lea  rcx, [_slag_lock_cs]");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call LeaveCriticalSection");
+            emit(cg, "    add  rsp, 32");
+            emit(cg, "    ; } lock — left critical section");
+            break;
+        }
+
+        // ------------------------------------------------------------------
         // on key_down / mouse_move etc. — register event handler
         // ------------------------------------------------------------------
         case STMT_ON_HANDLER: {
@@ -1522,6 +1540,9 @@ static int calculate_frame_size(const StmtList *list) {
                 break;
             case STMT_SYNC:
                 size += calculate_frame_size(&s->as.sync_stmt.body);
+                break;
+            case STMT_LOCK:
+                size += calculate_frame_size(&s->as.lock_stmt.body);
                 break;
             default:
                 break;
@@ -2074,6 +2095,7 @@ static void emit_bss_section(Codegen *cg) {
     emit(cg, "section .bss");
     emit(cg, "_written_bytes: resq 1     ; scratch for WriteConsoleA");
     emit(cg, "_readline_buf:  resb 1024  ; line input buffer for readline()");
+    emit(cg, "_slag_lock_cs:  resb 40   ; CRITICAL_SECTION (40 bytes x64) for lock{}");
     emit(cg, "_slag_thread_handles: resq %d  ; HANDLEs from CreateThread, drained by sync{}", MAX_THREADS);
     emit(cg, "");
 }
@@ -2098,6 +2120,9 @@ static void emit_imports(Codegen *cg) {
     emit(cg, "extern GetProcessHeap");
     emit(cg, "extern HeapAlloc");
     emit(cg, "extern HeapFree");
+    emit(cg, "extern InitializeCriticalSection");
+    emit(cg, "extern EnterCriticalSection");
+    emit(cg, "extern LeaveCriticalSection");
     emit(cg, "");
 }
 
@@ -2128,6 +2153,12 @@ static void emit_startup(Codegen *cg) {
     emit(cg, "    add  rsp, 32");
     emit(cg, "    mov  [_stdin], rax");
     emit(cg, "");
+    emit(cg, "");
+    emit(cg, "    ; init global critical section for lock{}");
+    emit(cg, "    lea  rcx, [_slag_lock_cs]");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    call InitializeCriticalSection");
+    emit(cg, "    add  rsp, 32");
     emit(cg, "");
     emit(cg, "    call _slag_detect_cpu_topology");
     emit(cg, "");
