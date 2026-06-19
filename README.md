@@ -33,6 +33,22 @@ Slag is under active development. The pipeline currently supports:
     - `thread { ... }` — spawns a real Win32 thread; the block body is compiled to a standalone thread proc and launched via `CreateThread`, with the handle stored in an internal table (up to 64 outstanding threads between syncs)
     - `sync { ... }` — waits for all threads spawned since the last sync via `WaitForMultipleObjects(..., TRUE, INFINITE)`, closes their handles, and resets the table; the sync body runs after the wait
     - `lock { ... }` — mutual exclusion via a single global `CRITICAL_SECTION` (initialized at startup); only one thread executes inside any `lock` block at a time, reentrant on the owning thread
+  - **Memory / buffer primitives — `mem.*`** (raw heap buffers addressed by plain-int pointers; unchecked single-instruction accessors for speed):
+    - `mem.alloc(nbytes)` — `HeapAlloc` (zero-initialized); returns the buffer address as an int, or 0 on failure
+    - `mem.free(ptr)` — `HeapFree`
+    - `mem.poke8(ptr, byteoff, val)` / `mem.peek8(ptr, byteoff)` — single-byte store/load at a byte offset (for network/crypto byte streams)
+    - `mem.poke64(ptr, wordoff, val)` / `mem.peek64(ptr, wordoff)` — 8-byte store/load at a word offset (`wordoff*8` bytes; for bulk moves and bignum limbs)
+  - **Networking — `net.*`** (TCP via `ws2_32`; supports persistent peer-to-peer sessions between two machines running the same program):
+    - `net.start()` / `net.end()` — `WSAStartup` / close sockets + `WSACleanup`
+    - `net.bind(port)` — create socket, bind, and listen (no block)
+    - `net.accept()` — block until a peer connects to the bound socket; call in a loop for a persistent listener
+    - `net.listen(port)` — convenience: bind + listen + accept in one blocking call
+    - `net.connect(host, port)` — connect to a peer (host as a string literal, e.g. `"127.0.0.1"`)
+    - `net.send(byte)` / `net.recv()` — send/receive a single byte (recv returns int, −1 on failure)
+    - `net.send_buf(ptr, len)` — send `len` bytes from a buffer, looping until all are sent
+    - `net.recv_buf(ptr, maxlen)` — receive up to `maxlen` bytes into a buffer; returns the count (0 when the peer closes)
+    - `net.ack()` — returns 1/0: did the last network op succeed
+    - `net.connected()` — returns 1/0: is the active connection still alive (clears on peer disconnect)
   - **Windowing and software-rendered graphics**:
     - `window.open(w, h, title)` — creates a window on its own thread with a BGRA DIB framebuffer
     - `pixel(x, y, r, g, b)` — writes a single pixel into the framebuffer; bounds-checks against the framebuffer dimensions and silently no-ops out-of-range writes (safe to draw off-screen)
@@ -57,15 +73,16 @@ Slag is under active development. The pipeline currently supports:
 ### Not yet implemented
 
 - `match()` / regex engine (descoped — not planned)
-- Dynamic/regex-sized arrays
+- Dynamic/regex-sized arrays; passing arrays into functions (use `mem.alloc` + pointers to share buffers across functions instead)
 - Per-vertex (Gouraud) lighting on meshes — the gradient rasterizer exists, but the cube demo currently uses flat per-face lighting
 - Depth buffering / back-face culling — the cube demos rely on draw order, which is correct for a single convex cube but not for general scenes
 - Built-in 3D math/rendering primitives (matrix types, z-buffering, texture mapping) — not strictly needed, since rotation/projection/rasterization pipelines can already be written in Slag itself (see the cube demos)
+- Encrypted P2P via Windows CNG (`bcrypt.dll`) Diffie-Hellman key exchange + AES — planned next; the networking and buffer primitives it depends on are now in place
 - Self-hosting compiler
 
 ## Toolchain requirements
 
-Slag's compiler is written in C and built with MinGW-w64 GCC, targeting `x86_64-w64-mingw32`. Output assembly is assembled with NASM (`-f win64`) and linked with the MinGW-w64 linker. No CRT is linked into Slag-compiled programs; only `kernel32.dll`, `user32.dll`, and `gdi32.dll` are imported as needed.
+Slag's compiler is written in C and built with MinGW-w64 GCC, targeting `x86_64-w64-mingw32`. Output assembly is assembled with NASM (`-f win64`) and linked with the MinGW-w64 linker. No CRT is linked into Slag-compiled programs; only `kernel32.dll`, `user32.dll`, `gdi32.dll`, and `ws2_32.dll` (networking) are imported as needed.
 
 ## Installation
 
@@ -79,7 +96,7 @@ The install script detects the host environment (Cygwin, MSYS2, or Linux), check
 
 ```bash
 cd compiler
-gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime.c
+gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime.c net_runtime.c mem_runtime.c
 ```
 
 ## Compiling a Slag program
@@ -87,7 +104,7 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime
 ```bash
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
-x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -e _start
+x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -e _start
 ```
 
 ## Example: window + pixels + input
@@ -163,3 +180,45 @@ function main() {
 Each `thread` block runs concurrently. The `lock` block guarantees that A's
 lines and B's lines never interleave, and `sync` blocks until both threads
 finish before "all threads done" prints.
+
+## Example: peer-to-peer messaging
+
+Listener (binds, accepts one peer, receives a message into a buffer):
+
+```c
+function main() {
+    net.start();
+    net.bind(5555);
+    net.accept();
+    if (net.ack() == 0) { println("accept failed"); net.end(); return; }
+
+    var int buf = mem.alloc(64);
+    var int n = net.recv_buf(buf, 64);
+    var int i = 0;
+    while (i < n) {
+        println(mem.peek8(buf, i));
+        i = $(( $i + 1 ));
+    }
+    mem.free(buf);
+    net.end();
+    return;
+}
+```
+
+Sender (connects, builds a message in a buffer, sends it):
+
+```c
+function main() {
+    net.start();
+    net.connect("127.0.0.1", 5555);
+    if (net.ack() == 0) { println("connect failed"); net.end(); return; }
+
+    var int buf = mem.alloc(64);
+    mem.poke8(buf, 0, 72);   // H
+    mem.poke8(buf, 1, 73);   // I
+    net.send_buf(buf, 2);
+    mem.free(buf);
+    net.end();
+    return;
+}
+```
