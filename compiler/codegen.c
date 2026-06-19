@@ -1213,6 +1213,29 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_net_end");
             emit_call_epilogue(cg, 0);
         }
+        // net.bind(port) — socket+bind+listen (no block)
+        else if (strcmp(member, "bind") == 0) {
+            emit(cg, "    ; net.bind");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_net_bind");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.accept() — block for a peer on the bound socket
+        else if (strcmp(member, "accept") == 0) {
+            emit(cg, "    ; net.accept");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_net_accept");
+            emit_call_epilogue(cg, 0);
+        }
+        // net.connected() -> int 1/0
+        else if (strcmp(member, "connected") == 0) {
+            emit(cg, "    ; net.connected");
+            emit(cg, "    mov  rax, [_net_connected]");
+        }
         else {
             emit(cg, "    ; unhandled member call .%s", member);
         }

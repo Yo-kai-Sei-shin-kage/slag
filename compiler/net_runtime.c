@@ -35,6 +35,7 @@ void emit_net_bss(Codegen *cg) {
     E("_net_last_ok:     resq 1   ; 1 if last net op succeeded, else 0");
     E("_net_sockaddr:  resb 16    ; sockaddr_in scratch (16 bytes)");
     E("_net_bytebuf:   resb 8     ; one-byte send/recv scratch");
+    E("_net_connected:   resq 1   ; 1 while active connection is alive");
 }
 
 // ----- runtime procs ----------------------------------------------------
@@ -126,6 +127,84 @@ void emit_net_runtime(Codegen *cg) {
     E("    ret");
     E("");
 
+    // _slag_net_bind(port in rcx) : socket + bind + listen (no accept, no block)
+    E("; --- _slag_net_bind (rcx = port) ---");
+    E("_slag_net_bind:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    sub  rsp, 48");
+    E("    mov  [rbp-8], rcx          ; save port");
+    E("    mov  rcx, 2                ; AF_INET");
+    E("    mov  rdx, 1                ; SOCK_STREAM");
+    E("    xor  r8, r8");
+    E("    sub  rsp, 32");
+    E("    call socket");
+    E("    add  rsp, 32");
+    E("    mov  [_net_listen_sock], rax");
+    E("    cmp  rax, -1");
+    E("    je   .nb_fail");
+    E("    mov  word [_net_sockaddr], 2");
+    E("    mov  rcx, [rbp-8]");
+    E("    sub  rsp, 32");
+    E("    call htons");
+    E("    add  rsp, 32");
+    E("    mov  word [_net_sockaddr+2], ax");
+    E("    mov  dword [_net_sockaddr+4], 0   ; INADDR_ANY");
+    E("    mov  dword [_net_sockaddr+8], 0");
+    E("    mov  dword [_net_sockaddr+12], 0");
+    E("    mov  rcx, [_net_listen_sock]");
+    E("    lea  rdx, [_net_sockaddr]");
+    E("    mov  r8, 16");
+    E("    sub  rsp, 32");
+    E("    call bind");
+    E("    add  rsp, 32");
+    E("    test eax, eax");
+    E("    jnz  .nb_fail");
+    E("    mov  rcx, [_net_listen_sock]");
+    E("    mov  rdx, 5");
+    E("    sub  rsp, 32");
+    E("    call listen");
+    E("    add  rsp, 32");
+    E("    test eax, eax");
+    E("    jnz  .nb_fail");
+    E("    mov  qword [_net_last_ok], 1");
+    E("    jmp  .nb_done");
+    E(".nb_fail:");
+    E("    mov  qword [_net_last_ok], 0");
+    E(".nb_done:");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // _slag_net_accept() : block until a peer connects to the bound socket
+    E("; --- _slag_net_accept (uses _net_listen_sock) ---");
+    E("_slag_net_accept:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    sub  rsp, 32");
+    E("    mov  rcx, [_net_listen_sock]");
+    E("    test rcx, rcx");
+    E("    jz   .na_fail            ; not bound");
+    E("    xor  rdx, rdx");
+    E("    xor  r8, r8");
+    E("    sub  rsp, 32");
+    E("    call accept");
+    E("    add  rsp, 32");
+    E("    cmp  rax, -1");
+    E("    je   .na_fail");
+    E("    mov  [_net_conn_sock], rax");
+    E("    mov  qword [_net_connected], 1");
+    E("    mov  qword [_net_last_ok], 1");
+    E("    jmp  .na_done");
+    E(".na_fail:");
+    E("    mov  qword [_net_last_ok], 0");
+    E(".na_done:");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
     // _slag_net_connect(host_ptr in rcx, port in rdx) : connect to peer
     E("; --- _slag_net_connect (rcx=host cstr ptr, rdx=port) ---");
     E("_slag_net_connect:");
@@ -167,6 +246,7 @@ void emit_net_runtime(Codegen *cg) {
     E("    test eax, eax");
     E("    jnz  .nc_fail");
     E("    mov  qword [_net_last_ok], 1");
+    E("    mov  qword [_net_connected], 1");
     E("    jmp  .nc_done");
     E(".nc_fail:");
     E("    mov  qword [_net_last_ok], 0");
@@ -219,6 +299,7 @@ void emit_net_runtime(Codegen *cg) {
     E("    jmp  .nrb_done");
     E(".nrb_fail:");
     E("    mov  qword [_net_last_ok], 0");
+    E("    mov  qword [_net_connected], 0");
     E("    mov  rax, -1");
     E(".nrb_done:");
     E("    mov  rsp, rbp");
@@ -229,6 +310,7 @@ void emit_net_runtime(Codegen *cg) {
     // _slag_net_end() : close sockets + WSACleanup
     E("; --- _slag_net_end ---");
     E("_slag_net_end:");
+    E("    mov  qword [_net_connected], 0");
     E("    push rbp");
     E("    mov  rbp, rsp");
     E("    sub  rsp, 32");
@@ -253,6 +335,12 @@ void emit_net_runtime(Codegen *cg) {
     E("    add  rsp, 32");
     E("    mov  rsp, rbp");
     E("    pop  rbp");
+    E("    ret");
+    E("");
+    // _slag_net_connected() -> rax : 1 if active connection alive
+    E("; --- _slag_net_connected -> rax ---");
+    E("_slag_net_connected:");
+    E("    mov  rax, [_net_connected]");
     E("    ret");
     E("");
 }
