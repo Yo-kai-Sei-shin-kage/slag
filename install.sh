@@ -199,7 +199,8 @@ fi
 
 echo "Building the Slag compiler..."
 cd "$COMPILER_DIR"
-gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime.c
+gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \
+    window_runtime.c net_runtime.c mem_runtime.c
 
 # Decide the expected binary name per platform. On Cygwin/MSYS, GCC always
 # emits a .exe regardless of the -o name; on Linux it is extensionless.
@@ -256,7 +257,34 @@ else
     echo "Added PATH entry to $RC_FILE"
 fi
 
+# -----------------------------------------------------------------------
+# Generate the slagrun helper (compile + assemble + link + run in one step)
+# -----------------------------------------------------------------------
+#
+# This is the canonical build pipeline for Slag PROGRAMS (not the compiler).
+# Keeping it generated here means the link flags — including -lws2_32 for the
+# networking runtime — stay correct and version-controlled with the repo.
+
+SLAGRUN="$COMPILER_DIR/slagrun"
+cat > "$SLAGRUN" <<'SLAGRUN_EOF'
+#!/usr/bin/env bash
+# slagrun — compile, assemble, link, and run a Slag program.
+# Usage: slagrun program[.slag]
+set -e
+base="${1%.slag}"
+slag "$base.slag"
+nasm -f win64 "$base.asm" -o "$base.obj"
+gcc "$base.obj" -o "$base.exe" \
+    -nostartfiles -e _start \
+    -lkernel32 -luser32 -lgdi32 -lws2_32
+"./$base.exe"
+SLAGRUN_EOF
+chmod +x "$SLAGRUN"
+echo "Installed slagrun helper: $SLAGRUN"
+echo ""
+
 echo ""
 echo "Installation complete."
 echo "Run 'source $RC_FILE' (or open a new terminal) to pick up PATH/MANPATH changes."
-echo "Then: 'slag yourprogram.slag' to compile, and 'man slag' for documentation."
+echo "Then: 'slagrun yourprogram' to build+run, 'slag yourprogram.slag' to compile only,"
+echo "and 'man slag' for documentation."
