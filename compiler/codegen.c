@@ -35,6 +35,7 @@
 #include "ast.h"
 #include "codegen.h"
 #include "window_runtime.h"
+#include "net_runtime.h"
 
 // ---------------------------------------------------------------------
 // Codegen state
@@ -1154,6 +1155,62 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    ; zbuffer.clear");
             emit_call_prologue(cg);
             emit(cg, "    call _slag_zbuffer_clear");
+            emit_call_epilogue(cg, 0);
+        }
+        // net.start()
+        else if (strcmp(member, "start") == 0) {
+            emit(cg, "    ; net.start");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_net_start");
+            emit_call_epilogue(cg, 0);
+        }
+        else if (strcmp(member, "listen") == 0) {
+            emit(cg, "    ; net.listen");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_net_listen");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        else if (strcmp(member, "connect") == 0) {
+            emit(cg, "    ; net.connect");
+            if (args->count >= 2) {
+                emit_str_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_net_connect");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        else if (strcmp(member, "send") == 0) {
+            emit(cg, "    ; net.send (single byte)");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_net_send_byte");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        else if (strcmp(member, "recv") == 0) {
+            emit(cg, "    ; net.recv (single byte)");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_net_recv_byte");
+            emit_call_epilogue(cg, 0);
+        }
+        else if (strcmp(member, "ack") == 0) {
+            emit(cg, "    ; net.ack");
+            emit(cg, "    mov  rax, [_net_last_ok]");
+        }
+        else if (strcmp(member, "end") == 0) {
+            emit(cg, "    ; net.end");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_net_end");
             emit_call_epilogue(cg, 0);
         }
         else {
@@ -2349,6 +2406,7 @@ void codegen_program(const Program *prog, FILE *out) {
     // Imports.
     emit_imports(&cg);
     emit_window_imports(&cg);
+    emit_net_imports(&cg);
 
     // .text section.
     emit(&cg, "section .text");
@@ -2398,6 +2456,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_runtime_helpers(&cg);
     emit_cpu_topology_helper(&cg);
     emit_window_runtime(&cg, &ev_flags);
+    emit_net_runtime(&cg);
 
     // User functions.
     for (int i = 0; i < prog->functions.count; i++) {
@@ -2411,6 +2470,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_window_data(&cg);
     emit_bss_section(&cg);
     emit_window_bss(&cg);
+    emit_net_bss(&cg);
 
     // Free string constant pool.
     for (int i = 0; i < cg.str_const_count; i++) {
