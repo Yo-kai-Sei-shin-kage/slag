@@ -36,6 +36,7 @@
 #include "codegen.h"
 #include "window_runtime.h"
 #include "net_runtime.h"
+#include "mem_runtime.h"
 
 // ---------------------------------------------------------------------
 // Codegen state
@@ -361,6 +362,12 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
                 if (strcmp(base_name, "window") == 0) return TYPE_INT;
             }
             return hint;
+        }
+        case EXPR_MEMBER_CALL: {
+            // All member-call builtins that return a value return int:
+            // mem.alloc/peek8/peek64, net.recv/ack/connected, input.*,
+            // window.is_open, time.now_ms, etc. (void ones are unused here).
+            return TYPE_INT;
         }
         case EXPR_INDEX: {
             if (e->as.index.base->kind == EXPR_IDENT ||
@@ -1235,6 +1242,90 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "connected") == 0) {
             emit(cg, "    ; net.connected");
             emit(cg, "    mov  rax, [_net_connected]");
+        }
+        // mem.alloc(nbytes) -> int pointer (0 on fail)
+        else if (strcmp(member, "alloc") == 0) {
+            emit(cg, "    ; mem.alloc");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mem_alloc");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mem.free(ptr)
+        else if (strcmp(member, "free") == 0) {
+            emit(cg, "    ; mem.free");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mem_free");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mem.poke8(ptr, byteoff, val)
+        else if (strcmp(member, "poke8") == 0) {
+            emit(cg, "    ; mem.poke8");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mem_poke8");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mem.peek8(ptr, byteoff) -> int
+        else if (strcmp(member, "peek8") == 0) {
+            emit(cg, "    ; mem.peek8");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mem_peek8");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mem.poke64(ptr, wordoff, val)
+        else if (strcmp(member, "poke64") == 0) {
+            emit(cg, "    ; mem.poke64");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mem_poke64");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mem.peek64(ptr, wordoff) -> int
+        else if (strcmp(member, "peek64") == 0) {
+            emit(cg, "    ; mem.peek64");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mem_peek64");
+                emit_call_epilogue(cg, 0);
+            }
         }
         else {
             emit(cg, "    ; unhandled member call .%s", member);
@@ -2430,6 +2521,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_imports(&cg);
     emit_window_imports(&cg);
     emit_net_imports(&cg);
+    emit_mem_imports(&cg);
 
     // .text section.
     emit(&cg, "section .text");
@@ -2480,6 +2572,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_cpu_topology_helper(&cg);
     emit_window_runtime(&cg, &ev_flags);
     emit_net_runtime(&cg);
+    emit_mem_runtime(&cg);
 
     // User functions.
     for (int i = 0; i < prog->functions.count; i++) {
@@ -2494,6 +2587,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_bss_section(&cg);
     emit_window_bss(&cg);
     emit_net_bss(&cg);
+    emit_mem_bss(&cg);
 
     // Free string constant pool.
     for (int i = 0; i < cg.str_const_count; i++) {
