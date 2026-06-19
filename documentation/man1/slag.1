@@ -208,6 +208,10 @@ than the value already stored in the depth buffer.
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.
 .TP
+.B time.now_us()
+Microseconds via QueryPerformanceCounter/QueryPerformanceFrequency;
+high-resolution timing for benchmarks and precise frame timing.
+.TP
 .B time.now_ms()
 Returns milliseconds elapsed since system start, for frame timing and
 FPS measurement.
@@ -271,8 +275,8 @@ and
 Only one thread runs inside any lock block at a time; the section is
 reentrant on the owning thread.
 .SS Memory and buffers
-Raw heap buffers, addressed by plain-integer pointers. Accessors are
-unchecked single instructions for speed; bounds are the programmer's
+Raw heap buffers, addressed by plain-integer pointers. Accessors are unchecked and inlined to a single machine instruction at
+the call site (no function-call overhead); bounds are the programmer's
 responsibility.
 .TP
 .B mem.alloc(nbytes)
