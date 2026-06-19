@@ -1210,6 +1210,34 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_net_recv_byte");
             emit_call_epilogue(cg, 0);
         }
+        // net.send_buf(ptr, len) — send len bytes from buffer
+        else if (strcmp(member, "send_buf") == 0) {
+            emit(cg, "    ; net.send_buf");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_net_send_buf");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.recv_buf(ptr, maxlen) -> int bytes received
+        else if (strcmp(member, "recv_buf") == 0) {
+            emit(cg, "    ; net.recv_buf");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_net_recv_buf");
+                emit_call_epilogue(cg, 0);
+            }
+        }
         else if (strcmp(member, "ack") == 0) {
             emit(cg, "    ; net.ack");
             emit(cg, "    mov  rax, [_net_last_ok]");

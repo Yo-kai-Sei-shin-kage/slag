@@ -307,6 +307,79 @@ void emit_net_runtime(Codegen *cg) {
     E("    ret");
     E("");
 
+    // _slag_net_send_buf(ptr=rcx, len=rdx) : send len bytes from ptr.
+    // Loops until all sent. Sets _net_last_ok=1 on full send, 0 on error.
+    E("; --- _slag_net_send_buf (rcx=ptr, rdx=len) ---");
+    E("_slag_net_send_buf:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    push rsi");
+    E("    push rdi");
+    E("    sub  rsp, 40");
+    E("    mov  rsi, rcx              ; buf ptr");
+    E("    mov  rdi, rdx              ; remaining len");
+    E("    xor  rbx, rbx             ; bytes-sent offset");
+    E(".nsb_loop:");
+    E("    test rdi, rdi");
+    E("    jz   .nsb_ok              ; nothing left -> success");
+    E("    mov  rcx, [_net_conn_sock]");
+    E("    lea  rdx, [rsi + rbx]      ; buf + offset");
+    E("    mov  r8,  rdi              ; remaining length");
+    E("    xor  r9,  r9              ; flags = 0");
+    E("    sub  rsp, 32");
+    E("    call send");
+    E("    add  rsp, 32");
+    E("    cmp  rax, 0");
+    E("    jle  .nsb_fail            ; <=0 -> error / closed");
+    E("    add  rbx, rax             ; advance offset");
+    E("    sub  rdi, rax             ; reduce remaining");
+    E("    jmp  .nsb_loop");
+    E(".nsb_ok:");
+    E("    mov  qword [_net_last_ok], 1");
+    E("    jmp  .nsb_done");
+    E(".nsb_fail:");
+    E("    mov  qword [_net_last_ok], 0");
+    E("    mov  qword [_net_connected], 0");
+    E(".nsb_done:");
+    E("    add  rsp, 40");
+    E("    pop  rdi");
+    E("    pop  rsi");
+    E("    pop  rbx");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // _slag_net_recv_buf(ptr=rcx, maxlen=rdx) -> rax = bytes received.
+    // One recv call (may return fewer than maxlen). 0 => peer closed
+    // (clears _net_connected). -1/negative => error. Sets _net_last_ok.
+    E("; --- _slag_net_recv_buf (rcx=ptr, rdx=maxlen) -> rax bytes ---");
+    E("_slag_net_recv_buf:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    sub  rsp, 32");
+    E("    mov  r8,  rdx              ; len");
+    E("    mov  rdx, rcx              ; buf ptr");
+    E("    mov  rcx, [_net_conn_sock]");
+    E("    xor  r9,  r9              ; flags = 0");
+    E("    sub  rsp, 32");
+    E("    call recv");
+    E("    add  rsp, 32");
+    E("    cmp  rax, 0");
+    E("    jg   .nrcb_ok             ; >0 bytes -> success");
+    E("    ; 0 (closed) or <0 (error): mark disconnected");
+    E("    mov  qword [_net_last_ok], 0");
+    E("    mov  qword [_net_connected], 0");
+    E("    jmp  .nrcb_done");
+    E(".nrcb_ok:");
+    E("    mov  qword [_net_last_ok], 1");
+    E(".nrcb_done:");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
     // _slag_net_end() : close sockets + WSACleanup
     E("; --- _slag_net_end ---");
     E("_slag_net_end:");
