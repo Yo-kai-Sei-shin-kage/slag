@@ -1117,6 +1117,24 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    add  rsp, 32");
             emit(cg, "    mov  eax, eax         ; zero-extend 32-bit result into rax");
         }
+        // time.now_us() -> int microseconds (QueryPerformanceCounter-based)
+        else if (strcmp(member, "now_us") == 0) {
+            emit(cg, "    ; time.now_us");
+            emit(cg, "    lea  rcx, [_qpc_now]");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call QueryPerformanceCounter");
+            emit(cg, "    add  rsp, 32");
+            emit(cg, "    lea  rcx, [_qpc_freq]");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call QueryPerformanceFrequency");
+            emit(cg, "    add  rsp, 32");
+            emit(cg, "    mov  rax, [_qpc_now]");
+            emit(cg, "    mov  rcx, 1000000");
+            emit(cg, "    xor  rdx, rdx");
+            emit(cg, "    mul  rcx              ; rdx:rax = counter * 1e6");
+            emit(cg, "    mov  rcx, [_qpc_freq]");
+            emit(cg, "    div  rcx              ; rax = (counter*1e6)/freq = microseconds");
+        }
         else if (strcmp(member, "set_bbox") == 0) {
             emit(cg, "    ; input.set_bbox");
             if (args->count >= 4) {
@@ -1295,64 +1313,46 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         }
         // mem.poke8(ptr, byteoff, val)
         else if (strcmp(member, "poke8") == 0) {
-            emit(cg, "    ; mem.poke8");
+            emit(cg, "    ; mem.poke8 (inlined)");
             if (args->count >= 3) {
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    mov  r12, rax");
+                emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    mov  r13, rax");
+                emit(cg, "    mov  r13, rax        ; byteoff");
                 emit_int_expr(cg, args->items[2]);
-                emit(cg, "    mov  r8, rax");
-                emit(cg, "    mov  rcx, r12");
-                emit(cg, "    mov  rdx, r13");
-                emit_call_prologue(cg);
-                emit(cg, "    call _slag_mem_poke8");
-                emit_call_epilogue(cg, 0);
+                emit(cg, "    mov  byte [r12 + r13], al");
             }
         }
         // mem.peek8(ptr, byteoff) -> int
         else if (strcmp(member, "peek8") == 0) {
-            emit(cg, "    ; mem.peek8");
+            emit(cg, "    ; mem.peek8 (inlined)");
             if (args->count >= 2) {
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    mov  r12, rax");
+                emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    mov  rdx, rax");
-                emit(cg, "    mov  rcx, r12");
-                emit_call_prologue(cg);
-                emit(cg, "    call _slag_mem_peek8");
-                emit_call_epilogue(cg, 0);
+                emit(cg, "    movzx rax, byte [r12 + rax]");
             }
         }
         // mem.poke64(ptr, wordoff, val)
         else if (strcmp(member, "poke64") == 0) {
-            emit(cg, "    ; mem.poke64");
+            emit(cg, "    ; mem.poke64 (inlined)");
             if (args->count >= 3) {
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    mov  r12, rax");
+                emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    mov  r13, rax");
+                emit(cg, "    mov  r13, rax        ; wordoff");
                 emit_int_expr(cg, args->items[2]);
-                emit(cg, "    mov  r8, rax");
-                emit(cg, "    mov  rcx, r12");
-                emit(cg, "    mov  rdx, r13");
-                emit_call_prologue(cg);
-                emit(cg, "    call _slag_mem_poke64");
-                emit_call_epilogue(cg, 0);
+                emit(cg, "    mov  [r12 + r13*8], rax");
             }
         }
         // mem.peek64(ptr, wordoff) -> int
         else if (strcmp(member, "peek64") == 0) {
-            emit(cg, "    ; mem.peek64");
+            emit(cg, "    ; mem.peek64 (inlined)");
             if (args->count >= 2) {
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    mov  r12, rax");
+                emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    mov  rdx, rax");
-                emit(cg, "    mov  rcx, r12");
-                emit_call_prologue(cg);
-                emit(cg, "    call _slag_mem_peek64");
-                emit_call_epilogue(cg, 0);
+                emit(cg, "    mov  rax, [r12 + rax*8]");
             }
         }
         else {
@@ -2294,6 +2294,8 @@ static void emit_bss_section(Codegen *cg) {
     emit(cg, "section .bss");
     emit(cg, "_written_bytes: resq 1     ; scratch for WriteConsoleA");
     emit(cg, "_readline_buf:  resb 1024  ; line input buffer for readline()");
+    emit(cg, "_qpc_now:  resq 1   ; QueryPerformanceCounter scratch");
+    emit(cg, "_qpc_freq: resq 1   ; QueryPerformanceFrequency scratch");
     emit(cg, "_slag_lock_cs:  resb 40   ; CRITICAL_SECTION (40 bytes x64) for lock{}");
     emit(cg, "_slag_thread_handles: resq %d  ; HANDLEs from CreateThread, drained by sync{}", MAX_THREADS);
     emit(cg, "");
@@ -2322,6 +2324,8 @@ static void emit_imports(Codegen *cg) {
     emit(cg, "extern InitializeCriticalSection");
     emit(cg, "extern EnterCriticalSection");
     emit(cg, "extern LeaveCriticalSection");
+    emit(cg, "extern QueryPerformanceCounter");
+    emit(cg, "extern QueryPerformanceFrequency");
     emit(cg, "");
 }
 
