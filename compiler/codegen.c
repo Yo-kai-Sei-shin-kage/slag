@@ -989,6 +989,10 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // fill_triangle_gradient(x0,y0,r0,g0,b0,x1,y1,r1,g1,b1,x2,y2,r2,g2,b2)
             emit(cg, "    ; fill_triangle_gradient()");
             emit_user_call(cg, "slag_fill_triangle_gradient", args);
+        } else if (strcmp(name, "fill_triangle_z") == 0) {
+            // fill_triangle_z(x0,y0,z0,x1,y1,z1,x2,y2,z2,r,g,b)
+            emit(cg, "    ; fill_triangle_z()");
+            emit_user_call(cg, "slag_fill_triangle_z", args);
         } else if (strcmp(name, "zbuffer") == 0) {
             emit(cg, "    ; zbuffer stub");
         } else {

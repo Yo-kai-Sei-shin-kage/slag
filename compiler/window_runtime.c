@@ -974,6 +974,384 @@ static void emit_window_utils(Codegen *cg) {
     E("");
 
     // -------------------------------------------------------------
+    // _slag_fill_triangle_z(x0,y0,z0,x1,y1,z1,x2,y2,z2,r,g,b)
+    // Flat-shaded scanline triangle rasterizer with per-pixel depth
+    // testing against _zbuffer_ptr (one double per pixel, "far" wins).
+    //
+    // Win64 positional arg/reg assignment (ints -> rcx/rdx/r8/r9 by
+    // position, floats -> xmm0-3 by position; same position can't be
+    // used by both register files, so a float arg "steals" its slot's
+    // integer register, e.g. arg2 (z0, float) lives in xmm2, not r8):
+    //   arg0 x0 (int)   -> rcx
+    //   arg1 y0 (int)   -> rdx
+    //   arg2 z0 (float) -> xmm2
+    //   arg3 x1 (int)   -> r9
+    //   arg4 y1 (int)   -> [rbp+48]
+    //   arg5 z1 (float) -> [rbp+56]
+    //   arg6 x2 (int)   -> [rbp+64]
+    //   arg7 y2 (int)   -> [rbp+72]
+    //   arg8 z2 (float) -> [rbp+80]
+    //   arg9 r  (int)   -> [rbp+88]
+    //   arg10 g (int)   -> [rbp+96]
+    //   arg11 b (int)   -> [rbp+104]
+    //
+    // Local frame layout ([rbp-N], all qwords unless noted "f" = double):
+    //   -8  x0   -16 y0   -24 z0(f)  -32 x1   -40 y1   -48 z1(f)
+    //   -56 x2   -64 y2   -72 z2(f)  -80 r    -88 g    -96 b
+    //  -104 ya  -112 yb  -120 yc        (sorted y, ascending)
+    //  -128 xa  -136 xb  -144 xc        (x at sorted verts)
+    //  -152 za(f) -160 zb(f) -168 zc(f) (z at sorted verts)
+    //  -176 y                            (current scanline)
+    //  -184 xleft   -192 xright
+    //  -200 zleft(f) -208 zright(f)      (interpolated z at span ends)
+    //  -216 zLong(f) -224 zShort(f)      (scratch, before left/right sort)
+    // -------------------------------------------------------------
+    E("; --- _slag_fill_triangle_z(x0,y0,z0,x1,y1,z1,x2,y2,z2,r,g,b) ---");
+    E("_slag_fill_triangle_z:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    sub  rsp, 272");
+    E("    mov  [rbp-240], r12       ; save callee-saved regs (ABI)");
+    E("    mov  [rbp-248], r13");
+    E("    mov  [rbp-256], r14");
+    E("    mov  [rbp-264], r15");
+    E("    mov  [rbp-8],  rcx        ; x0");
+    E("    mov  [rbp-16], rdx        ; y0");
+    E("    movsd [rbp-24], xmm2      ; z0");
+    E("    mov  [rbp-32], r9         ; x1");
+    E("    mov  rax, [rbp+48]");
+    E("    mov  [rbp-40], rax        ; y1");
+    E("    movsd xmm0, [rbp+56]");
+    E("    movsd [rbp-48], xmm0      ; z1");
+    E("    mov  rax, [rbp+64]");
+    E("    mov  [rbp-56], rax        ; x2");
+    E("    mov  rax, [rbp+72]");
+    E("    mov  [rbp-64], rax        ; y2");
+    E("    movsd xmm0, [rbp+80]");
+    E("    movsd [rbp-72], xmm0      ; z2");
+    E("    mov  rax, [rbp+88]");
+    E("    mov  [rbp-80], rax        ; r");
+    E("    mov  rax, [rbp+96]");
+    E("    mov  [rbp-88], rax        ; g");
+    E("    mov  rax, [rbp+104]");
+    E("    mov  [rbp-96], rax        ; b");
+    E("");
+    E("    ; bail out safely if there is no depth buffer yet");
+    E("    mov  r10, [_zbuffer_ptr]");
+    E("    test r10, r10");
+    E("    jz   .ftz_done");
+    E("");
+    E("    ; --- load (x,y,z) into a,b,c then sort by y ascending ---");
+    E("    mov  rax, [rbp-8]");
+    E("    mov  [rbp-128], rax       ; xa = x0");
+    E("    mov  rax, [rbp-16]");
+    E("    mov  [rbp-104], rax       ; ya = y0");
+    E("    movsd xmm0, [rbp-24]");
+    E("    movsd [rbp-152], xmm0     ; za = z0");
+    E("    mov  rax, [rbp-32]");
+    E("    mov  [rbp-136], rax       ; xb = x1");
+    E("    mov  rax, [rbp-40]");
+    E("    mov  [rbp-112], rax       ; yb = y1");
+    E("    movsd xmm0, [rbp-48]");
+    E("    movsd [rbp-160], xmm0     ; zb = z1");
+    E("    mov  rax, [rbp-56]");
+    E("    mov  [rbp-144], rax       ; xc = x2");
+    E("    mov  rax, [rbp-64]");
+    E("    mov  [rbp-120], rax       ; yc = y2");
+    E("    movsd xmm0, [rbp-72]");
+    E("    movsd [rbp-168], xmm0     ; zc = z2");
+    E("");
+    E("    ; if ya > yb: swap (a,b) including z");
+    E("    mov  rax, [rbp-104]");
+    E("    cmp  rax, [rbp-112]");
+    E("    jle  .ftz_sort_ab_done");
+    E("    mov  rax, [rbp-104]");
+    E("    mov  rcx, [rbp-112]");
+    E("    mov  [rbp-104], rcx");
+    E("    mov  [rbp-112], rax");
+    E("    mov  rax, [rbp-128]");
+    E("    mov  rcx, [rbp-136]");
+    E("    mov  [rbp-128], rcx");
+    E("    mov  [rbp-136], rax");
+    E("    movsd xmm0, [rbp-152]");
+    E("    movsd xmm1, [rbp-160]");
+    E("    movsd [rbp-152], xmm1");
+    E("    movsd [rbp-160], xmm0");
+    E(".ftz_sort_ab_done:");
+    E("    ; if yb > yc: swap (b,c) including z");
+    E("    mov  rax, [rbp-112]");
+    E("    cmp  rax, [rbp-120]");
+    E("    jle  .ftz_sort_bc_done");
+    E("    mov  rax, [rbp-112]");
+    E("    mov  rcx, [rbp-120]");
+    E("    mov  [rbp-112], rcx");
+    E("    mov  [rbp-120], rax");
+    E("    mov  rax, [rbp-136]");
+    E("    mov  rcx, [rbp-144]");
+    E("    mov  [rbp-136], rcx");
+    E("    mov  [rbp-144], rax");
+    E("    movsd xmm0, [rbp-160]");
+    E("    movsd xmm1, [rbp-168]");
+    E("    movsd [rbp-160], xmm1");
+    E("    movsd [rbp-168], xmm0");
+    E(".ftz_sort_bc_done:");
+    E("    ; if ya > yb (again): swap (a,b) including z");
+    E("    mov  rax, [rbp-104]");
+    E("    cmp  rax, [rbp-112]");
+    E("    jle  .ftz_sort_ab2_done");
+    E("    mov  rax, [rbp-104]");
+    E("    mov  rcx, [rbp-112]");
+    E("    mov  [rbp-104], rcx");
+    E("    mov  [rbp-112], rax");
+    E("    mov  rax, [rbp-128]");
+    E("    mov  rcx, [rbp-136]");
+    E("    mov  [rbp-128], rcx");
+    E("    mov  [rbp-136], rax");
+    E("    movsd xmm0, [rbp-152]");
+    E("    movsd xmm1, [rbp-160]");
+    E("    movsd [rbp-152], xmm1");
+    E("    movsd [rbp-160], xmm0");
+    E(".ftz_sort_ab2_done:");
+    E("");
+    E("    ; clamp scanline range to framebuffer height");
+    E("    mov  rax, [rbp-104]       ; ya");
+    E("    cmp  rax, 0");
+    E("    jge  .ftz_ystart_ok");
+    E("    mov  rax, 0");
+    E(".ftz_ystart_ok:");
+    E("    mov  [rbp-176], rax       ; y = max(ya, 0)");
+    E("");
+    E("    mov  r12, [rbp-120]       ; yc");
+    E("    mov  rax, [_window_height]");
+    E("    dec  rax");
+    E("    cmp  r12, rax");
+    E("    jle  .ftz_yend_ok");
+    E("    mov  r12, rax");
+    E(".ftz_yend_ok:");
+    E("");
+    E(".ftz_scanline_loop:");
+    E("    mov  rax, [rbp-176]");
+    E("    cmp  rax, r12");
+    E("    jg   .ftz_done");
+    E("");
+    E("    ; --- xLong/zLong: edge (xa,ya,za)-(xc,yc,zc) at current y ---");
+    E("    mov  rax, [rbp-120]");
+    E("    sub  rax, [rbp-104]       ; denom = yc - ya");
+    E("    cmp  rax, 0");
+    E("    je   .ftz_long_eq");
+    E("    cvtsi2sd xmm3, rax        ; xmm3 = denom (f)");
+    E("    mov  rcx, [rbp-144]");
+    E("    sub  rcx, [rbp-128]       ; xc - xa (int)");
+    E("    mov  r10, [rbp-176]");
+    E("    sub  r10, [rbp-104]       ; y - ya (int)");
+    E("    imul rcx, r10");
+    E("    mov  r11, rax             ; save int denom for idiv");
+    E("    mov  rax, rcx");
+    E("    cqo");
+    E("    idiv r11");
+    E("    add  rax, [rbp-128]       ; xLong = xa + result");
+    E("    ; t = (y-ya)/(yc-ya) as double, for z interpolation");
+    E("    mov  r10, [rbp-176]");
+    E("    sub  r10, [rbp-104]");
+    E("    cvtsi2sd xmm0, r10        ; (y-ya)");
+    E("    divsd xmm0, xmm3          ; t");
+    E("    movsd xmm1, [rbp-168]     ; zc");
+    E("    movsd xmm2, [rbp-152]     ; za");
+    E("    subsd xmm1, xmm2          ; zc - za");
+    E("    mulsd xmm1, xmm0          ; (zc-za)*t");
+    E("    addsd xmm1, xmm2          ; za + (zc-za)*t");
+    E("    movsd [rbp-216], xmm1     ; zLong");
+    E("    jmp  .ftz_long_done");
+    E(".ftz_long_eq:");
+    E("    mov  rax, [rbp-128]       ; degenerate: xLong = xa");
+    E("    movsd xmm1, [rbp-152]");
+    E("    movsd [rbp-216], xmm1     ; zLong = za");
+    E(".ftz_long_done:");
+    E("    mov  [rbp-184], rax       ; stash xLong in xleft slot");
+    E("");
+    E("    ; --- xShort/zShort: upper edge (a-b) or lower edge (b-c) ---");
+    E("    mov  rax, [rbp-176]");
+    E("    cmp  rax, [rbp-112]");
+    E("    jl   .ftz_short_upper");
+    E("");
+    E("    ; lower segment: edge (xb,yb,zb)-(xc,yc,zc)");
+    E("    mov  rax, [rbp-120]");
+    E("    sub  rax, [rbp-112]       ; denom = yc - yb");
+    E("    cmp  rax, 0");
+    E("    je   .ftz_short_lower_eq");
+    E("    cvtsi2sd xmm3, rax");
+    E("    mov  rcx, [rbp-144]");
+    E("    sub  rcx, [rbp-136]       ; xc - xb");
+    E("    mov  r10, [rbp-176]");
+    E("    sub  r10, [rbp-112]       ; y - yb");
+    E("    imul rcx, r10");
+    E("    mov  r11, rax");
+    E("    mov  rax, rcx");
+    E("    cqo");
+    E("    idiv r11");
+    E("    add  rax, [rbp-136]       ; xShort = xb + result");
+    E("    mov  r10, [rbp-176]");
+    E("    sub  r10, [rbp-112]");
+    E("    cvtsi2sd xmm0, r10");
+    E("    divsd xmm0, xmm3          ; t");
+    E("    movsd xmm1, [rbp-168]     ; zc");
+    E("    movsd xmm2, [rbp-160]     ; zb");
+    E("    subsd xmm1, xmm2");
+    E("    mulsd xmm1, xmm0");
+    E("    addsd xmm1, xmm2          ; zb + (zc-zb)*t");
+    E("    movsd [rbp-224], xmm1     ; zShort");
+    E("    jmp  .ftz_short_done");
+    E(".ftz_short_lower_eq:");
+    E("    mov  rax, [rbp-136]");
+    E("    movsd xmm1, [rbp-160]");
+    E("    movsd [rbp-224], xmm1");
+    E("    jmp  .ftz_short_done");
+    E("");
+    E(".ftz_short_upper:");
+    E("    ; upper segment: edge (xa,ya,za)-(xb,yb,zb)");
+    E("    mov  rax, [rbp-112]");
+    E("    sub  rax, [rbp-104]       ; denom = yb - ya");
+    E("    cmp  rax, 0");
+    E("    je   .ftz_short_upper_eq");
+    E("    cvtsi2sd xmm3, rax");
+    E("    mov  rcx, [rbp-136]");
+    E("    sub  rcx, [rbp-128]       ; xb - xa");
+    E("    mov  r10, [rbp-176]");
+    E("    sub  r10, [rbp-104]       ; y - ya");
+    E("    imul rcx, r10");
+    E("    mov  r11, rax");
+    E("    mov  rax, rcx");
+    E("    cqo");
+    E("    idiv r11");
+    E("    add  rax, [rbp-128]       ; xShort = xa + result");
+    E("    mov  r10, [rbp-176]");
+    E("    sub  r10, [rbp-104]");
+    E("    cvtsi2sd xmm0, r10");
+    E("    divsd xmm0, xmm3          ; t");
+    E("    movsd xmm1, [rbp-160]     ; zb");
+    E("    movsd xmm2, [rbp-152]     ; za");
+    E("    subsd xmm1, xmm2");
+    E("    mulsd xmm1, xmm0");
+    E("    addsd xmm1, xmm2          ; za + (zb-za)*t");
+    E("    movsd [rbp-224], xmm1     ; zShort");
+    E("    jmp  .ftz_short_done");
+    E(".ftz_short_upper_eq:");
+    E("    mov  rax, [rbp-128]");
+    E("    movsd xmm1, [rbp-152]");
+    E("    movsd [rbp-224], xmm1");
+    E(".ftz_short_done:");
+    E("    mov  [rbp-192], rax       ; xShort");
+    E("");
+    E("    ; xleft = min(xLong,xShort) with matching z; xright = max with z");
+    E("    mov  rax, [rbp-184]       ; xLong");
+    E("    mov  rcx, [rbp-192]       ; xShort");
+    E("    movsd xmm0, [rbp-216]     ; zLong");
+    E("    movsd xmm1, [rbp-224]     ; zShort");
+    E("    cmp  rax, rcx");
+    E("    jle  .ftz_minmax_ok");
+    E("    ; swap so rax=min x (->left), rcx=max x (->right); swap z to match");
+    E("    mov  r10, rax");
+    E("    mov  rax, rcx");
+    E("    mov  rcx, r10");
+    E("    movsd xmm2, xmm0");
+    E("    movsd xmm0, xmm1");
+    E("    movsd xmm1, xmm2");
+    E(".ftz_minmax_ok:");
+    E("    mov  [rbp-184], rax       ; xleft");
+    E("    mov  [rbp-192], rcx       ; xright");
+    E("    movsd [rbp-200], xmm0     ; zleft");
+    E("    movsd [rbp-208], xmm1     ; zright");
+    E("");
+    E("    ; clamp x range to [0, width-1]");
+    E("    mov  rax, [rbp-184]");
+    E("    cmp  rax, 0");
+    E("    jge  .ftz_xleft_ok");
+    E("    mov  rax, 0");
+    E("    mov  [rbp-184], rax");
+    E(".ftz_xleft_ok:");
+    E("    mov  rax, [rbp-192]");
+    E("    mov  rcx, [_window_width]");
+    E("    dec  rcx");
+    E("    cmp  rax, rcx");
+    E("    jle  .ftz_xright_ok");
+    E("    mov  [rbp-192], rcx");
+    E(".ftz_xright_ok:");
+    E("");
+    E("    ; fill span [xleft,xright] on row y, interpolating z per pixel");
+    E("    ; and depth-testing against _zbuffer_ptr");
+    E("    mov  rax, [rbp-176]       ; y");
+    E("    imul rax, [_window_width]");
+    E("    mov  r13, rax             ; r13 = y*width (pixel row base)");
+    E("");
+    E("    ; span_dx = xright - xleft (int, used as the z-lerp denominator)");
+    E("    mov  rax, [rbp-192]");
+    E("    sub  rax, [rbp-184]");
+    E("    mov  r14, rax             ; r14 = span_dx");
+    E("");
+    E("    mov  rax, [rbp-184]       ; x = xleft");
+    E("");
+    E(".ftz_span_loop:");
+    E("    mov  rcx, [rbp-192]       ; xright");
+    E("    cmp  rax, rcx");
+    E("    jg   .ftz_span_done");
+    E("");
+    E("    ; interpolate z at this x: t = (x-xleft)/span_dx (0 if span_dx==0)");
+    E("    mov  rcx, rax");
+    E("    sub  rcx, [rbp-184]       ; x - xleft");
+    E("    movsd xmm0, [rbp-200]     ; zleft");
+    E("    test r14, r14");
+    E("    jz   .ftz_pix_z_done      ; degenerate span: z = zleft");
+    E("    cvtsi2sd xmm1, rcx");
+    E("    cvtsi2sd xmm2, r14");
+    E("    divsd xmm1, xmm2          ; t");
+    E("    movsd xmm3, [rbp-208]     ; zright");
+    E("    subsd xmm3, xmm0          ; zright - zleft");
+    E("    mulsd xmm3, xmm1");
+    E("    addsd xmm0, xmm3          ; z = zleft + (zright-zleft)*t");
+    E(".ftz_pix_z_done:");
+    E("    ; xmm0 = interpolated z for this pixel");
+    E("");
+    E("    ; depth test: pixel_index = r13 + x; compare against zbuffer");
+    E("    mov  r10, r13");
+    E("    add  r10, rax             ; pixel index = y*width + x");
+    E("    mov  r15, [_zbuffer_ptr]");
+    E("    movsd xmm1, [r15 + r10*8]");
+    E("    comisd xmm0, xmm1");
+    E("    jae  .ftz_pix_skip        ; new z >= stored z -> farther/equal, skip");
+    E("");
+    E("    ; passes depth test: write z, then write pixel color");
+    E("    movsd [r15 + r10*8], xmm0");
+    E("    shl  r10, 2");
+    E("    add  r10, [_window_pixels]");
+    E("    mov  rcx, [rbp-96]        ; b");
+    E("    mov  byte [r10+0], cl");
+    E("    mov  rcx, [rbp-88]        ; g");
+    E("    mov  byte [r10+1], cl");
+    E("    mov  rcx, [rbp-80]        ; r");
+    E("    mov  byte [r10+2], cl");
+    E("    mov  byte [r10+3], 0xFF");
+    E(".ftz_pix_skip:");
+    E("");
+    E("    inc  rax");
+    E("    jmp  .ftz_span_loop");
+    E(".ftz_span_done:");
+    E("");
+    E("    mov  rax, [rbp-176]");
+    E("    inc  rax");
+    E("    mov  [rbp-176], rax");
+    E("    jmp  .ftz_scanline_loop");
+    E("");
+    E(".ftz_done:");
+    E("    mov  r12, [rbp-240]       ; restore callee-saved regs");
+    E("    mov  r13, [rbp-248]");
+    E("    mov  r14, [rbp-256]");
+    E("    mov  r15, [rbp-264]");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // -------------------------------------------------------------
 
 
     // -------------------------------------------------------------
