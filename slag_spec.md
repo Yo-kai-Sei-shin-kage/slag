@@ -333,6 +333,43 @@ thread. All `lock` blocks currently share one global lock.
 
 ---
 
+## 11A. Networking
+
+Slag provides TCP networking via `ws2_32.dll`, sufficient for persistent
+peer-to-peer sessions between two machines running the same program. Programs
+that use networking must link `ws2_32` (`-lws2_32`).
+
+All connection state is held in runtime globals; one active connection is
+tracked at a time. The builtins:
+
+```
+net.start()              // WSAStartup — begin a networking session
+net.bind(port)           // create socket, bind, listen (does not block)
+net.accept()             // block until a peer connects to the bound socket
+net.listen(port)         // convenience: bind + listen + accept in one call
+net.connect(host, port)  // connect to a peer; host is a string literal
+net.send(byte)           // send one byte
+net.recv()               // receive one byte -> int (-1 on failure)
+net.send_buf(ptr, len)   // send len bytes from a buffer, looping until done
+net.recv_buf(ptr, max)   // receive up to max bytes into a buffer -> count
+net.ack()                // -> 1/0: did the last network op succeed
+net.connected()          // -> 1/0: is the active connection still alive
+net.end()                // close sockets + WSACleanup
+```
+
+A persistent listener binds once and calls `net.accept()` (then loops on
+`net.recv_buf` while `net.connected()` is true). A symmetric peer may attempt
+`net.connect` and fall back to `net.bind`/`net.accept` if no peer is present.
+Multi-byte transfer pairs with the `mem.*` primitives: build a message with
+`mem.poke8`, send with `net.send_buf`, receive with `net.recv_buf`, read with
+`mem.peek8`.
+
+> **Note:** `net.recv_buf` performs a single `recv`, which over TCP may return
+> fewer bytes than requested. For length-delimited protocols, loop until the
+> expected byte count has been collected.
+
+---
+
 ## 12. Windowing and Graphics
 
 ### 12.1 Window Lifecycle
@@ -491,12 +528,23 @@ Per-face Lambertian lighting can be implemented in Slag: compute each face norma
 
 ## 14. Memory Model
 
-- No garbage collector
-- No heap allocator exposed to the programmer
-- All variables are stack-allocated or statically allocated
-- Array sizes must be compile-time constants
-- Dynamic heap allocation is used internally by the runtime for the pixel buffer, z-buffer, and file I/O only
-- Explicit manual memory management may be added in a future version
+- No garbage collector; memory management is manual and explicit
+- Local variables are stack-allocated; array sizes must be compile-time constants
+- Arrays cannot be passed into functions. To share a buffer across functions
+  (or with the networking/threading runtimes), use the `mem.*` heap primitives
+- Raw heap buffers are available via `mem.*`, addressed by plain-int pointers:
+  - `mem.alloc(nbytes)` — `HeapAlloc` with zero-initialized memory; returns the
+    buffer address as an `int`, or `0` on failure
+  - `mem.free(ptr)` — `HeapFree`
+  - `mem.poke8(ptr, byteoff, val)` / `mem.peek8(ptr, byteoff)` — single-byte
+    store/load at a byte offset
+  - `mem.poke64(ptr, wordoff, val)` / `mem.peek64(ptr, wordoff)` — 8-byte
+    store/load at a word offset (byte offset = `wordoff * 8`)
+- Accessors are **unchecked** — each compiles to a single `mov` for speed.
+  Bounds are the programmer's responsibility (as in C). `alloc` returning `0`
+  is the only built-in safety signal
+- The runtime also uses heap allocation internally for the pixel buffer,
+  z-buffer, and file I/O
 
 ---
 
@@ -537,14 +585,12 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `pixel(x,y,r,g,b)`             | Write pixel to framebuffer                         |
 | `fill_triangle(...)`            | Flat-shaded scanline triangle                      |
 | `fill_triangle_gradient(...)`   | Gouraud-shaded scanline triangle                   |
-| `fill_triangle_z(...)`          | Depth-tested flat-shaded triangle                  |
 | `window.open(w,h,title)`        | Open graphical window on its own thread            |
 | `window.close()`                | Post WM_CLOSE to window                            |
 | `window.is_open()`              | Returns 1 if window is open                        |
 | `window.flush()`                | Blit framebuffer to window (~60fps cap)            |
 | `zbuffer.clear()`               | Reset depth buffer                                 |
 | `time.now_ms()`                 | Milliseconds since system start                    |
-| `project(x,y,z,focal)`         | Perspective project 3D point to screen             |
 | `cpu.physical_cores()`          | Physical core count                                |
 | `cpu.logical_cores()`           | Logical processor count                            |
 | `cpu.threads_per_core()`        | Logical / physical cores                           |
@@ -560,6 +606,22 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `input.add_wheel(delta)`        | Accumulate wheel delta                             |
 | `input.set_bbox(x0,y0,x1,y1)`  | Set hit-test bounding box                          |
 | `input.in_bbox(mx,my)`          | Returns 1 if point is inside bounding box          |
+| `mem.alloc(n)`                  | Heap-allocate n zeroed bytes -> ptr (0 on fail)    |
+| `mem.free(ptr)`                 | Free a heap buffer                                 |
+| `mem.poke8(ptr,off,v)`          | Store byte v at ptr[off]                           |
+| `mem.peek8(ptr,off)`            | Load byte at ptr[off] -> int                       |
+| `mem.poke64(ptr,woff,v)`        | Store 8 bytes at ptr + woff*8                      |
+| `mem.peek64(ptr,woff)`          | Load 8 bytes at ptr + woff*8 -> int                |
+| `net.start()` / `net.end()`     | Begin / end a networking session (ws2_32)          |
+| `net.bind(port)`                | Socket + bind + listen (no block)                  |
+| `net.accept()`                  | Block for a peer on the bound socket               |
+| `net.listen(port)`              | Convenience: bind + listen + accept                |
+| `net.connect(host,port)`        | Connect to a peer (host is a string literal)       |
+| `net.send(byte)` / `net.recv()` | Send / receive a single byte                       |
+| `net.send_buf(ptr,len)`         | Send len bytes from a buffer (loops until done)    |
+| `net.recv_buf(ptr,max)`         | Receive up to max bytes -> count                   |
+| `net.ack()`                     | 1/0: did the last network op succeed               |
+| `net.connected()`               | 1/0: is the active connection alive                |
 
 ---
 
@@ -661,12 +723,14 @@ function main() {
 | 0.2     | Functions, arrays, string literals, string ptr+len tracking | ✅ Complete |
 | 0.3     | File I/O (readfile, readline)                               | ✅ Complete |
 | 0.4     | Win32 window, pixel write, triangle rasterizer, keyboard/mouse events, input state, CPU topology detection | ✅ Complete |
-| 0.5     | Multithreading (thread/sync/lock), threaded tile renderer   | 🔲 Planned  |
-| 0.6     | Depth buffer, back-face culling, z-tested triangles         | 🔲 Planned  |
-| 0.7     | Texture mapping, matrix stack                               | 🔲 Planned  |
-| 0.8     | Lighting model, perspective correction                      | 🔲 Planned  |
+| 0.5     | Multithreading (thread/sync/lock), CPU topology             | ✅ Complete |
+| 0.6     | Memory primitives (mem.*), TCP networking (net.*), multi-byte P2P messaging | ✅ Complete |
+| 0.7     | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
+| 0.8     | Depth buffer, back-face culling, z-tested triangles         | 🔲 Planned  |
+| 0.9     | Texture mapping, matrix stack                               | 🔲 Planned  |
+| 0.95    | Lighting model, perspective correction                      | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ---
 
-*Slag Language Specification v0.4 — Subject to revision*
+*Slag Language Specification v0.6 — Subject to revision*

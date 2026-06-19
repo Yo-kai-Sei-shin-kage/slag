@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-06-18" "slag 0.5" "Slag Programming Language"
+.TH SLAG 1 "2026-06-19" "slag 0.6" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -270,6 +270,61 @@ and
 .BR LeaveCriticalSection .
 Only one thread runs inside any lock block at a time; the section is
 reentrant on the owning thread.
+.SS Memory and buffers
+Raw heap buffers, addressed by plain-integer pointers. Accessors are
+unchecked single instructions for speed; bounds are the programmer's
+responsibility.
+.TP
+.B mem.alloc(nbytes)
+Allocate zero-initialized heap memory; returns the buffer address as an
+integer, or 0 on failure.
+.TP
+.B mem.free(ptr)
+Free a buffer obtained from mem.alloc.
+.TP
+.BR mem.poke8(ptr,byteoff,val) ", " mem.peek8(ptr,byteoff)
+Store / load a single byte at a byte offset.
+.TP
+.BR mem.poke64(ptr,wordoff,val) ", " mem.peek64(ptr,wordoff)
+Store / load 8 bytes at a word offset (byte offset = wordoff times 8).
+.SS Networking
+TCP networking via ws2_32; supports persistent peer-to-peer sessions
+between two machines running the same program. Programs using networking
+must link
+.B ws2_32
+.RB ( \-lws2_32 ).
+.TP
+.BR net.start() ", " net.end()
+Begin a networking session (WSAStartup) / close sockets and clean up.
+.TP
+.B net.bind(port)
+Create a socket, bind, and listen on a port (does not block).
+.TP
+.B net.accept()
+Block until a peer connects to the bound socket; call in a loop for a
+persistent listener.
+.TP
+.B net.listen(port)
+Convenience call: bind, listen, and accept in one blocking step.
+.TP
+.B net.connect(host, port)
+Connect to a peer; host is a string literal such as "127.0.0.1".
+.TP
+.BR net.send(byte) ", " net.recv()
+Send / receive a single byte (recv returns an int, \-1 on failure).
+.TP
+.B net.send_buf(ptr, len)
+Send len bytes from a buffer, looping until all are sent.
+.TP
+.B net.recv_buf(ptr, maxlen)
+Receive up to maxlen bytes into a buffer; returns the count (0 when the
+peer closes). A single recv may return fewer bytes than requested.
+.TP
+.B net.ack()
+Returns 1/0: did the last network operation succeed.
+.TP
+.B net.connected()
+Returns 1/0: is the active connection still alive (clears on disconnect).
 .SS Input event handlers
 Event handlers are declared with the
 .B on
@@ -311,6 +366,10 @@ currently functional:
 .IP \(bu 2
 Dynamic or regex-sized arrays
 .IP \(bu 2
+Encrypted peer-to-peer via Windows CNG (bcrypt) Diffie\-Hellman key
+exchange and AES (planned; the networking and memory primitives it
+depends on are in place)
+.IP \(bu 2
 A self-hosting compiler
 .PP
 Regex literals and
@@ -321,7 +380,8 @@ are descoped and not planned.
 .RS
 .nf
 cd compiler
-gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime.c
+gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
+    window_runtime.c net_runtime.c mem_runtime.c
 .fi
 .RE
 .SS Compiling and running a Slag program
@@ -330,7 +390,7 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe \e
-    -nostdlib -lkernel32 -luser32 -lgdi32 -e _start
+    -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -e _start
 .fi
 .RE
 .SS A minimal windowed program
