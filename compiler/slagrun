@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
 # slagrun — compile, assemble, link, and run a Slag program.
-# Usage: slagrun program[.slag]
+# Usage: slagrun [-d] program[.slag]
+#   -d  Debug mode: keep .asm and .obj files
 set -e
+
+debug=0
+if [[ "$1" == "-d" ]]; then
+    debug=1
+    shift
+fi
+
 base="${1%.slag}"
 slag "$base.slag"
 nasm -f win64 "$base.asm" -o "$base.obj"
 gcc "$base.obj" -o "$base.exe" \
     -nostartfiles -e _start \
     -lkernel32 -luser32 -lgdi32 -lws2_32
+
 "./$base.exe"
+
+if [[ $debug -eq 0 ]]; then
+    rm -f "$base.asm" "$base.obj"
+fi
