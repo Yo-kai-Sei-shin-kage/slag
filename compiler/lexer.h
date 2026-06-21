@@ -33,6 +33,8 @@ typedef enum {
     TOK_KW_FLUSH,
     TOK_KW_ON,
     TOK_KW_VOID,
+    TOK_KW_GLOBAL,
+    TOK_KW_LOCAL,
 
     // $(( opener for arithmetic blocks
     TOK_DOLLAR_LPAREN_LPAREN,  // $((

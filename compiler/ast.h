@@ -127,7 +127,9 @@ typedef enum {
     STMT_THREAD,        // thread { ... }
     STMT_SYNC,          // sync { ... }
     STMT_LOCK,          // lock { ... }
-    STMT_ON_HANDLER     // on key_down(int k) { ... }
+    STMT_ON_HANDLER,     // on key_down(int k) { ... }
+    STMT_GLOBAL_DECL,   // global TYPE name = expr;
+    STMT_LOCAL_DECL,    // local TYPE name = expr;
 } StmtKind;
 
 typedef struct Stmt Stmt;
@@ -241,6 +243,7 @@ typedef struct {
 
 typedef struct {
     FunctionList functions;
+    StmtList globals;
 } Program;
 
 // ---------------------------------------------------------------------

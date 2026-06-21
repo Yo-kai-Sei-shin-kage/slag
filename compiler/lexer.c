@@ -114,6 +114,8 @@ static TokenType keyword_type(const char *text) {
     if (strcmp(text, "flush") == 0)    return TOK_KW_FLUSH;
     if (strcmp(text, "on") == 0)       return TOK_KW_ON;
     if (strcmp(text, "void") == 0)     return TOK_KW_VOID;
+    if (strcmp(text, "global") == 0)   return TOK_KW_GLOBAL;
+    if (strcmp(text, "local") == 0)    return TOK_KW_LOCAL;
     return TOK_IDENT;
 }
 
