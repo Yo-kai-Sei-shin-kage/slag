@@ -1,0 +1,176 @@
+function main() {
+    window.open(640, 480, "3D Cube with Z-Buffer");
+
+    var int cx = 320;
+    var int cy = 240;
+    var int scale = 120;
+    
+    // Sin lookup table: 0, 10, 20, ... 350 degrees (36 entries)
+    var float[36] sinT = {
+        0.000, 0.174, 0.342, 0.500, 0.643, 0.766,
+        0.866, 0.940, 0.985, 1.000, 0.985, 0.940,
+        0.866, 0.766, 0.643, 0.500, 0.342, 0.174,
+        0.000, -0.174, -0.342, -0.500, -0.643, -0.766,
+        -0.866, -0.940, -0.985, -1.000, -0.985, -0.940,
+        -0.866, -0.766, -0.643, -0.500, -0.342, -0.174
+    };
+    
+    var int frame = 0;
+    var int delay = 0;
+    
+    while (window.is_open()) {
+        // Clear screen with black background
+        fill_triangle(0, 0, 640, 0, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 480, 0, 480, 0, 0, 0);
+        
+        zbuffer.clear();
+        
+        var int idx = frame;
+        
+        delay = $(($delay + 1));
+        if (delay > 3) {
+            delay = 0;
+            frame = $(($frame + 1));
+            if (frame > 35) {
+                frame = 0;
+            }
+        }
+        
+        var float sinA = sinT[idx];
+        var int cosIdx = $(($idx + 9));
+        if (cosIdx > 35) {
+            cosIdx = $(($cosIdx - 36));
+        }
+        var float cosA = sinT[cosIdx];
+        
+        var int idxB = $(($idx * 2));
+        while (idxB > 35) {
+            idxB = $(($idxB - 36));
+        }
+        var float sinB = sinT[idxB];
+        var int cosIdxB = $(($idxB + 9));
+        if (cosIdxB > 35) {
+            cosIdxB = $(($cosIdxB - 36));
+        }
+        var float cosB = sinT[cosIdxB];
+        
+        var float x0 = -1.0;
+        var float y0 = -1.0;
+        var float z0 = -1.0;
+        var float x1 =  1.0;
+        var float y1 = -1.0;
+        var float z1 = -1.0;
+        var float x2 =  1.0;
+        var float y2 =  1.0;
+        var float z2 = -1.0;
+        var float x3 = -1.0;
+        var float y3 =  1.0;
+        var float z3 = -1.0;
+        var float x4 = -1.0;
+        var float y4 = -1.0;
+        var float z4 =  1.0;
+        var float x5 =  1.0;
+        var float y5 = -1.0;
+        var float z5 =  1.0;
+        var float x6 =  1.0;
+        var float y6 =  1.0;
+        var float z6 =  1.0;
+        var float x7 = -1.0;
+        var float y7 =  1.0;
+        var float z7 =  1.0;
+        
+        var float rx0 = $(($x0 * $cosA - $z0 * $sinA));
+        var float rz0 = $(($x0 * $sinA + $z0 * $cosA));
+        var float ry0 = $(($y0 * $cosB - $rz0 * $sinB));
+        var float fz0 = $(($y0 * $sinB + $rz0 * $cosB));
+        
+        var float rx1 = $(($x1 * $cosA - $z1 * $sinA));
+        var float rz1 = $(($x1 * $sinA + $z1 * $cosA));
+        var float ry1 = $(($y1 * $cosB - $rz1 * $sinB));
+        var float fz1 = $(($y1 * $sinB + $rz1 * $cosB));
+        
+        var float rx2 = $(($x2 * $cosA - $z2 * $sinA));
+        var float rz2 = $(($x2 * $sinA + $z2 * $cosA));
+        var float ry2 = $(($y2 * $cosB - $rz2 * $sinB));
+        var float fz2 = $(($y2 * $sinB + $rz2 * $cosB));
+        
+        var float rx3 = $(($x3 * $cosA - $z3 * $sinA));
+        var float rz3 = $(($x3 * $sinA + $z3 * $cosA));
+        var float ry3 = $(($y3 * $cosB - $rz3 * $sinB));
+        var float fz3 = $(($y3 * $sinB + $rz3 * $cosB));
+        
+        var float rx4 = $(($x4 * $cosA - $z4 * $sinA));
+        var float rz4 = $(($x4 * $sinA + $z4 * $cosA));
+        var float ry4 = $(($y4 * $cosB - $rz4 * $sinB));
+        var float fz4 = $(($y4 * $sinB + $rz4 * $cosB));
+        
+        var float rx5 = $(($x5 * $cosA - $z5 * $sinA));
+        var float rz5 = $(($x5 * $sinA + $z5 * $cosA));
+        var float ry5 = $(($y5 * $cosB - $rz5 * $sinB));
+        var float fz5 = $(($y5 * $sinB + $rz5 * $cosB));
+        
+        var float rx6 = $(($x6 * $cosA - $z6 * $sinA));
+        var float rz6 = $(($x6 * $sinA + $z6 * $cosA));
+        var float ry6 = $(($y6 * $cosB - $rz6 * $sinB));
+        var float fz6 = $(($y6 * $sinB + $rz6 * $cosB));
+        
+        var float rx7 = $(($x7 * $cosA - $z7 * $sinA));
+        var float rz7 = $(($x7 * $sinA + $z7 * $cosA));
+        var float ry7 = $(($y7 * $cosB - $rz7 * $sinB));
+        var float fz7 = $(($y7 * $sinB + $rz7 * $cosB));
+        
+        var int sx0 = $(($cx + $rx0 * $scale));
+        var int sy0 = $(($cy + $ry0 * $scale));
+        var float dz0 = $(($fz0 + 3.0));
+        
+        var int sx1 = $(($cx + $rx1 * $scale));
+        var int sy1 = $(($cy + $ry1 * $scale));
+        var float dz1 = $(($fz1 + 3.0));
+        
+        var int sx2 = $(($cx + $rx2 * $scale));
+        var int sy2 = $(($cy + $ry2 * $scale));
+        var float dz2 = $(($fz2 + 3.0));
+        
+        var int sx3 = $(($cx + $rx3 * $scale));
+        var int sy3 = $(($cy + $ry3 * $scale));
+        var float dz3 = $(($fz3 + 3.0));
+        
+        var int sx4 = $(($cx + $rx4 * $scale));
+        var int sy4 = $(($cy + $ry4 * $scale));
+        var float dz4 = $(($fz4 + 3.0));
+        
+        var int sx5 = $(($cx + $rx5 * $scale));
+        var int sy5 = $(($cy + $ry5 * $scale));
+        var float dz5 = $(($fz5 + 3.0));
+        
+        var int sx6 = $(($cx + $rx6 * $scale));
+        var int sy6 = $(($cy + $ry6 * $scale));
+        var float dz6 = $(($fz6 + 3.0));
+        
+        var int sx7 = $(($cx + $rx7 * $scale));
+        var int sy7 = $(($cy + $ry7 * $scale));
+        var float dz7 = $(($fz7 + 3.0));
+        
+        fill_triangle_z(sx0, sy0, dz0, sx1, sy1, dz1, sx2, sy2, dz2, 255, 0, 0);
+        fill_triangle_z(sx0, sy0, dz0, sx2, sy2, dz2, sx3, sy3, dz3, 200, 0, 0);
+        
+        fill_triangle_z(sx4, sy4, dz4, sx6, sy6, dz6, sx5, sy5, dz5, 0, 255, 0);
+        fill_triangle_z(sx4, sy4, dz4, sx7, sy7, dz7, sx6, sy6, dz6, 0, 200, 0);
+        
+        fill_triangle_z(sx0, sy0, dz0, sx4, sy4, dz4, sx5, sy5, dz5, 0, 0, 255);
+        fill_triangle_z(sx0, sy0, dz0, sx5, sy5, dz5, sx1, sy1, dz1, 0, 0, 200);
+        
+        fill_triangle_z(sx2, sy2, dz2, sx6, sy6, dz6, sx7, sy7, dz7, 255, 255, 0);
+        fill_triangle_z(sx2, sy2, dz2, sx7, sy7, dz7, sx3, sy3, dz3, 200, 200, 0);
+        
+        fill_triangle_z(sx0, sy0, dz0, sx3, sy3, dz3, sx7, sy7, dz7, 255, 0, 255);
+        fill_triangle_z(sx0, sy0, dz0, sx7, sy7, dz7, sx4, sy4, dz4, 200, 0, 200);
+        
+        fill_triangle_z(sx1, sy1, dz1, sx5, sy5, dz5, sx6, sy6, dz6, 0, 255, 255);
+        fill_triangle_z(sx1, sy1, dz1, sx6, sy6, dz6, sx2, sy2, dz2, 0, 200, 200);
+        
+        window.flush();
+    }
+    
+    return int 0;
+}
