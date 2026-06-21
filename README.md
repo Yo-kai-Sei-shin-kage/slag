@@ -11,8 +11,8 @@ The full language design is documented in [`slag_spec.md`](slag_spec.md).
 
 Slag is under active development. The pipeline currently supports:
 
-- **Lexer** — full tokenization including `$((...))` arithmetic blocks, `$variable` references, regex literals, and all core keywords/operators.
-- **Parser** — complete recursive descent parser producing a full AST: functions, typed variable and array declarations, if/else/else-if, while, typed returns, thread/sync/lock blocks, and `on` event handlers.
+- **Lexer** — full tokenization including `$((...))` arithmetic blocks, `$variable` references, and all core keywords/operators.
+- **Parser** — complete recursive descent parser producing a full AST: functions, typed variable and array declarations (with global/local scope modifiers), if/else/else-if, while, typed returns, thread/sync/lock blocks, and `on` event handlers.
 - **Code generator** — emits NASM x86-64 Win64 assembly. Working:
   - Integer and float arithmetic, comparisons, logical short-circuit operators
   - Mixed int/float expressions auto-promote (int operands are converted with `cvtsi2sd`); assigning a float expression to an `int` truncates via `cvttsd2si`. No cast syntax is required
@@ -73,8 +73,7 @@ Slag is under active development. The pipeline currently supports:
 
 ### Not yet implemented
 
-- `match()` / regex engine (descoped — not planned)
-- Dynamic/regex-sized arrays; passing arrays into functions (use `mem.alloc` + pointers to share buffers across functions instead)
+- Dynamic arrays; passing arrays into functions (use `mem.alloc` + pointers to share buffers across functions instead)
 - Per-vertex (Gouraud) lighting on meshes — the gradient rasterizer exists, but the cube demo currently uses flat per-face lighting
 - Depth buffering / back-face culling — the cube demos rely on draw order, which is correct for a single convex cube but not for general scenes
 - Built-in 3D math/rendering primitives (matrix types, z-buffering, texture mapping) — not strictly needed, since rotation/projection/rasterization pipelines can already be written in Slag itself (see the cube demos)

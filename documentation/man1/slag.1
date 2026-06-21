@@ -90,6 +90,33 @@ Arrays are fixed-size and 1-dimensional. Indexing uses
 .BR arr[i] ,
 and the element count is available via
 .BR arr.len .
+.SS Variable scope
+Variables may be declared with scope modifiers:
+.TP
+.B global
+Declares a file-scope variable stored in the .data section, accessible
+from any function:
+.PP
+.RS
+.nf
+global int counter = 0;
+global str appName = "MyApp";
+.fi
+.RE
+.TP
+.B local
+Declares a block-scoped variable (stack-allocated, same as
+.BR var ):
+.PP
+.RS
+.nf
+local int x = 10;
+.fi
+.RE
+.PP
+The
+.B var
+keyword remains available for standard function-local variables.
 .SS Arithmetic: the $(( )) construct
 All numeric (int and float) expressions used in an arithmetic context
 are written inside
@@ -368,19 +395,13 @@ input.in_bbox(mx, my)   // axis-aligned hit test
 The following are described in the language design but are not
 currently functional:
 .IP \(bu 2
-Dynamic or regex-sized arrays
+Dynamic arrays
 .IP \(bu 2
 Encrypted peer-to-peer via Windows CNG (bcrypt) Diffie\-Hellman key
 exchange and AES (planned; the networking and memory primitives it
 depends on are in place)
 .IP \(bu 2
 A self-hosting compiler
-.PP
-Regex literals and
-.B match()
-are descoped and not planned.
-.SH EXAMPLES
-.SS Building the compiler
 .RS
 .nf
 cd compiler
