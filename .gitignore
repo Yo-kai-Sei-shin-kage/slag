@@ -14,7 +14,9 @@ slag
 *.swp
 *~
 .DS_Store
-slag.nanorc
+
+# AI assistant files
+CLAUDE.md
 *.slag
 compiler/working_*.c
 slag.nanorc
