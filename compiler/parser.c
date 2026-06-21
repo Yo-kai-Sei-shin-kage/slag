@@ -537,6 +537,78 @@ static Stmt *parse_var_decl(Parser *p) {
 }
 
 // ---------------------------------------------------------------------
+// global declaration
+//
+// global TYPE name = expr;
+// ---------------------------------------------------------------------
+static Stmt *parse_global_decl(Parser *p) {
+    int line = p->current.line, col = p->current.col;
+    advance(p); // consume 'global'
+
+    if (!is_type_keyword(p)) {
+        error_at(p, "expected type keyword after 'global'");
+        return NULL;
+    }
+
+    SlagType base_type = slag_type_from_token(p->current.type);
+    advance(p); // consume type keyword
+
+    if (!check(p, TOK_IDENT)) {
+        error_at(p, "expected variable name");
+        return NULL;
+    }
+    char *name = copy_text(&p->current);
+    advance(p);
+
+    expect(p, TOK_ASSIGN, "expected '=' in global declaration");
+
+    Expr *init = parse_expr(p, 0);
+    expect(p, TOK_SEMICOLON, "expected ';' after global declaration");
+
+    Stmt *s = stmt_new(STMT_GLOBAL_DECL, line, col);
+    s->as.var_decl.type = base_type;
+    s->as.var_decl.name = name;
+    s->as.var_decl.init = init;
+    return s;
+}
+
+// ---------------------------------------------------------------------
+// local declaration
+//
+// local TYPE name = expr;
+// ---------------------------------------------------------------------
+static Stmt *parse_local_decl(Parser *p) {
+    int line = p->current.line, col = p->current.col;
+    advance(p); // consume 'local'
+
+    if (!is_type_keyword(p)) {
+        error_at(p, "expected type keyword after 'local'");
+        return NULL;
+    }
+
+    SlagType base_type = slag_type_from_token(p->current.type);
+    advance(p); // consume type keyword
+
+    if (!check(p, TOK_IDENT)) {
+        error_at(p, "expected variable name");
+        return NULL;
+    }
+    char *name = copy_text(&p->current);
+    advance(p);
+
+    expect(p, TOK_ASSIGN, "expected '=' in local declaration");
+
+    Expr *init = parse_expr(p, 0);
+    expect(p, TOK_SEMICOLON, "expected ';' after local declaration");
+
+    Stmt *s = stmt_new(STMT_LOCAL_DECL, line, col);
+    s->as.var_decl.type = base_type;
+    s->as.var_decl.name = name;
+    s->as.var_decl.init = init;
+    return s;
+}
+
+// ---------------------------------------------------------------------
 // Assignment or expression statement
 //
 // After seeing an identifier (or window/pixel), we may have:
@@ -799,6 +871,8 @@ static Stmt *parse_on_handler(Parser *p) {
 static Stmt *parse_stmt(Parser *p) {
     switch (p->current.type) {
         case TOK_KW_VAR:    return parse_var_decl(p);
+        case TOK_KW_GLOBAL: return parse_global_decl(p);
+        case TOK_KW_LOCAL:  return parse_local_decl(p);
         case TOK_KW_IF:     return parse_if(p);
         case TOK_KW_WHILE:  return parse_while(p);
         case TOK_KW_RETURN: return parse_return(p);
@@ -921,6 +995,7 @@ Program parse_program(const char *src, size_t len) {
 
     Program prog;
     functionlist_init(&prog.functions);
+    stmtlist_init(&prog.globals);
 
     while (!check(&p, TOK_EOF)) {
         if (check(&p, TOK_KW_FUNCTION)) {
@@ -928,8 +1003,13 @@ Program parse_program(const char *src, size_t len) {
             if (parse_function(&p, &func)) {
                 functionlist_push(&prog.functions, func);
             }
+        } else if (check(&p, TOK_KW_GLOBAL)) {
+            Stmt *glob = parse_global_decl(&p);
+            if (glob) {
+                stmtlist_push(&prog.globals, glob);
+            }
         } else {
-            error_at(&p, "expected 'function' at top level");
+            error_at(&p, "expected 'function' or 'global' at top level");
             advance(&p); // recover
         }
     }

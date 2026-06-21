@@ -52,6 +52,16 @@ typedef struct Local {
     int offset;           // negative offset from rbp, e.g. -8, -16, ...
 } Local;
 
+// A global variable entry.
+typedef struct Global {
+    char *name;
+    SlagType type;
+    int label_id;         // global is at _glob<label_id>
+    Expr *init;           // initializer expression
+} Global;
+
+#define MAX_GLOBALS 256
+
 #define MAX_LOCALS 256
 
 typedef struct Codegen {
@@ -62,6 +72,10 @@ typedef struct Codegen {
     Local locals[MAX_LOCALS];
     int local_count;
     int frame_size;       // total bytes allocated for locals (multiple of 16)
+
+    // Global variables (file-scope)
+    Global globals[MAX_GLOBALS];
+    int global_count;
 
     // Float literals need to be emitted in .data section; we collect them.
     double float_consts[1024];
@@ -148,6 +162,18 @@ static Local *find_local(Codegen *cg, const char *name) {
     return NULL;
 }
 
+// Look up a global variable by name. Returns NULL if not found.
+static Global *find_global(Codegen *cg, const char *name) {
+    // Strip leading $ if present
+    if (name[0] == '$') name++;
+    for (int i = 0; i < cg->global_count; i++) {
+        if (strcmp(cg->globals[i].name, name) == 0) {
+            return &cg->globals[i];
+        }
+    }
+    return NULL;
+}
+
 // Allocate a new local. Returns its stack offset (negative from rbp).
 //
 // For non-array TYPE_STR locals, two 8-byte slots are reserved: the
@@ -182,6 +208,22 @@ static Local *alloc_local(Codegen *cg, const char *name, SlagType type,
     loc->size      = size;
     loc->offset    = -(cg->frame_size); // grows downward; offset = ptr slot
     return loc;
+}
+
+// Allocate a new global variable. Returns the global entry.
+static Global *alloc_global(Codegen *cg, const char *name, SlagType type, Expr *init) {
+    if (cg->global_count >= MAX_GLOBALS) {
+        fprintf(stderr, "codegen error: too many globals\n");
+        exit(1);
+    }
+    Global *g = &cg->globals[cg->global_count];
+    g->name = malloc(strlen(name) + 1);
+    strcpy(g->name, name);
+    g->type = type;
+    g->label_id = cg->global_count;
+    g->init = init;
+    cg->global_count++;
+    return g;
 }
 
 // For a TYPE_STR local, returns the stack offset of its length slot
@@ -245,13 +287,19 @@ static void emit_str_expr(Codegen *cg, const Expr *e) {
         case EXPR_IDENT:
         case EXPR_DOLLAR_IDENT: {
             Local *loc = find_local(cg, e->as.str.value);
-            if (!loc) {
-                fprintf(stderr, "codegen error: undefined string variable '%s'\n",
-                        e->as.str.value);
-                emit(cg, "    xor  rax, rax");
-                emit(cg, "    xor  rdx, rdx");
-            } else {
+            if (loc) {
                 emit_load_str_local(cg, loc);
+            } else {
+                Global *g = find_global(cg, e->as.str.value);
+                if (g && g->type == TYPE_STR) {
+                    emit(cg, "    mov  rax, [_glob%d]", g->label_id);
+                    emit(cg, "    mov  rdx, [_glob%d_len]", g->label_id);
+                } else {
+                    fprintf(stderr, "codegen error: undefined string variable '%s'\n",
+                            e->as.str.value);
+                    emit(cg, "    xor  rax, rax");
+                    emit(cg, "    xor  rdx, rdx");
+                }
             }
             break;
         }
@@ -336,6 +384,8 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
         case EXPR_DOLLAR_IDENT: {
             Local *loc = find_local(cg, e->as.str.value);
             if (loc) return loc->type;
+            Global *g = find_global(cg, e->as.str.value);
+            if (g) return g->type;
             return hint;
         }
         case EXPR_ARITH:
@@ -406,14 +456,26 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
         case EXPR_IDENT:
         case EXPR_DOLLAR_IDENT: {
             Local *loc = find_local(cg, e->as.str.value);
-            if (!loc) {
-                fprintf(stderr, "codegen error: undefined variable '%s'\n", e->as.str.value);
-                emit(cg, "    xor  rax, rax");
-            } else if (loc->type == TYPE_FLOAT) {
-                emit(cg, "    movsd xmm0, [rbp%+d]", loc->offset);
-                emit(cg, "    cvttsd2si rax, xmm0");
+            if (loc) {
+                if (loc->type == TYPE_FLOAT) {
+                    emit(cg, "    movsd xmm0, [rbp%+d]", loc->offset);
+                    emit(cg, "    cvttsd2si rax, xmm0");
+                } else {
+                    emit(cg, "    mov  rax, [rbp%+d]", loc->offset);
+                }
             } else {
-                emit(cg, "    mov  rax, [rbp%+d]", loc->offset);
+                Global *g = find_global(cg, e->as.str.value);
+                if (g) {
+                    if (g->type == TYPE_FLOAT) {
+                        emit(cg, "    movsd xmm0, [_glob%d]", g->label_id);
+                        emit(cg, "    cvttsd2si rax, xmm0");
+                    } else {
+                        emit(cg, "    mov  rax, [_glob%d]", g->label_id);
+                    }
+                } else {
+                    fprintf(stderr, "codegen error: undefined variable '%s'\n", e->as.str.value);
+                    emit(cg, "    xor  rax, rax");
+                }
             }
             break;
         }
@@ -644,14 +706,26 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
         case EXPR_IDENT:
         case EXPR_DOLLAR_IDENT: {
             Local *loc = find_local(cg, e->as.str.value);
-            if (!loc) {
-                fprintf(stderr, "codegen error: undefined variable '%s'\n", e->as.str.value);
-                emit(cg, "    xorpd xmm0, xmm0");
-            } else if (loc->type == TYPE_INT) {
-                emit(cg, "    mov  rax, [rbp%+d]", loc->offset);
-                emit(cg, "    cvtsi2sd xmm0, rax");
+            if (loc) {
+                if (loc->type == TYPE_INT) {
+                    emit(cg, "    mov  rax, [rbp%+d]", loc->offset);
+                    emit(cg, "    cvtsi2sd xmm0, rax");
+                } else {
+                    emit(cg, "    movsd xmm0, [rbp%+d]", loc->offset);
+                }
             } else {
-                emit(cg, "    movsd xmm0, [rbp%+d]", loc->offset);
+                Global *g = find_global(cg, e->as.str.value);
+                if (g) {
+                    if (g->type == TYPE_INT) {
+                        emit(cg, "    mov  rax, [_glob%d]", g->label_id);
+                        emit(cg, "    cvtsi2sd xmm0, rax");
+                    } else {
+                        emit(cg, "    movsd xmm0, [_glob%d]", g->label_id);
+                    }
+                } else {
+                    fprintf(stderr, "codegen error: undefined variable '%s'\n", e->as.str.value);
+                    emit(cg, "    xorpd xmm0, xmm0");
+                }
             }
             break;
         }
@@ -1408,6 +1482,43 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         }
 
         // ------------------------------------------------------------------
+        // global TYPE name = expr;
+        // ------------------------------------------------------------------
+        case STMT_GLOBAL_DECL: {
+            Global *g = alloc_global(cg,
+                s->as.var_decl.name,
+                s->as.var_decl.type,
+                s->as.var_decl.init);
+            (void)g; // Global init handled in emit_data_section via AST pass
+            break;
+        }
+
+        // ------------------------------------------------------------------
+        // local TYPE name = expr; (block-scoped, same as var for now)
+        // ------------------------------------------------------------------
+        case STMT_LOCAL_DECL: {
+            Local *loc = alloc_local(cg,
+                s->as.var_decl.name,
+                s->as.var_decl.type,
+                0, TYPE_UNKNOWN, 0);
+
+            SlagType t = s->as.var_decl.type;
+            emit(cg, "    ; local %s %s", slag_type_name(t), s->as.var_decl.name);
+
+            if (t == TYPE_FLOAT) {
+                emit_float_expr(cg, s->as.var_decl.init);
+                emit(cg, "    movsd [rbp%+d], xmm0", loc->offset);
+            } else if (t == TYPE_STR) {
+                emit_str_expr(cg, s->as.var_decl.init);
+                emit_store_str_local(cg, loc);
+            } else {
+                emit_int_expr(cg, s->as.var_decl.init);
+                emit(cg, "    mov  [rbp%+d], rax", loc->offset);
+            }
+            break;
+        }
+
+        // ------------------------------------------------------------------
         // var TYPE[n] name = { ... } or var TYPE[] name = call(...)
         // ------------------------------------------------------------------
         case STMT_ARRAY_DECL: {
@@ -1461,21 +1572,37 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
             if (target->kind == EXPR_IDENT ||
                 target->kind == EXPR_DOLLAR_IDENT) {
                 Local *loc = find_local(cg, target->as.str.value);
-                if (!loc) {
-                    fprintf(stderr, "codegen error: assign to undeclared '%s'\n",
-                            target->as.str.value);
-                    break;
-                }
-                emit(cg, "    ; assign %s", loc->name);
-                if (loc->type == TYPE_FLOAT) {
-                    emit_float_expr(cg, value);
-                    emit(cg, "    movsd [rbp%+d], xmm0", loc->offset);
-                } else if (loc->type == TYPE_STR) {
-                    emit_str_expr(cg, value);
-                    emit_store_str_local(cg, loc);
+                if (loc) {
+                    emit(cg, "    ; assign %s", loc->name);
+                    if (loc->type == TYPE_FLOAT) {
+                        emit_float_expr(cg, value);
+                        emit(cg, "    movsd [rbp%+d], xmm0", loc->offset);
+                    } else if (loc->type == TYPE_STR) {
+                        emit_str_expr(cg, value);
+                        emit_store_str_local(cg, loc);
+                    } else {
+                        emit_int_expr(cg, value);
+                        emit(cg, "    mov  [rbp%+d], rax", loc->offset);
+                    }
                 } else {
-                    emit_int_expr(cg, value);
-                    emit(cg, "    mov  [rbp%+d], rax", loc->offset);
+                    Global *g = find_global(cg, target->as.str.value);
+                    if (g) {
+                        emit(cg, "    ; assign global %s", g->name);
+                        if (g->type == TYPE_FLOAT) {
+                            emit_float_expr(cg, value);
+                            emit(cg, "    movsd [_glob%d], xmm0", g->label_id);
+                        } else if (g->type == TYPE_STR) {
+                            emit_str_expr(cg, value);
+                            emit(cg, "    mov  [_glob%d], rax", g->label_id);
+                            emit(cg, "    mov  [_glob%d_len], rdx", g->label_id);
+                        } else {
+                            emit_int_expr(cg, value);
+                            emit(cg, "    mov  [_glob%d], rax", g->label_id);
+                        }
+                    } else {
+                        fprintf(stderr, "codegen error: assign to undeclared '%s'\n",
+                                target->as.str.value);
+                    }
                 }
 
             } else if (target->kind == EXPR_INDEX) {
@@ -1714,6 +1841,12 @@ static int calculate_frame_size(const StmtList *list) {
            switch (s->kind) {
             case STMT_VAR_DECL:
                 size += (s->as.var_decl.type == TYPE_STR) ? 16 : 8;
+                break;
+            case STMT_LOCAL_DECL:
+                size += (s->as.var_decl.type == TYPE_STR) ? 16 : 8;
+                break;
+            case STMT_GLOBAL_DECL:
+                // Globals are in .data section, not stack
                 break;
             case STMT_ARRAY_DECL: {
                 int n = 0;
@@ -2287,6 +2420,46 @@ static void emit_data_section(Codegen *cg) {
     emit(cg, "_cpu_safe_thread_limit:dq 0");
     emit(cg, "_cpu_hyperthreaded:    dq 0   ; 1 if any core reports LTP_PC_SMT, else 0");
     emit(cg, "");
+
+    // User-defined global variables.
+    if (cg->global_count > 0) {
+        emit(cg, "; User-defined globals");
+        for (int i = 0; i < cg->global_count; i++) {
+            Global *g = &cg->globals[i];
+            Expr *init = g->init;
+            if (g->type == TYPE_INT || g->type == TYPE_BOOL) {
+                long val = 0;
+                if (init && init->kind == EXPR_INT_LIT) {
+                    val = init->as.int_val;
+                } else if (init && init->kind == EXPR_BOOL_LIT) {
+                    val = init->as.bool_val ? 1 : 0;
+                }
+                emit(cg, "_glob%d:  dq %ld   ; global %s", g->label_id, val, g->name);
+            } else if (g->type == TYPE_FLOAT) {
+                double val = 0.0;
+                if (init && init->kind == EXPR_FLOAT_LIT) {
+                    val = init->as.float_val;
+                } else if (init && init->kind == EXPR_INT_LIT) {
+                    val = (double)init->as.int_val;
+                }
+                union { double d; unsigned long long u; } v;
+                v.d = val;
+                emit(cg, "_glob%d:  dq 0x%016llx   ; global %s = %f", g->label_id, v.u, g->name, val);
+            } else if (g->type == TYPE_STR) {
+                // For strings, emit pointer to string constant and length
+                if (init && init->kind == EXPR_STR_LIT) {
+                    int str_id = add_str_const(cg, init->as.str.value);
+                    int len = (int)strlen(init->as.str.value);
+                    emit(cg, "_glob%d:  dq _str%d   ; global %s (ptr)", g->label_id, str_id, g->name);
+                    emit(cg, "_glob%d_len:  dq %d   ; global %s (len)", g->label_id, len, g->name);
+                } else {
+                    emit(cg, "_glob%d:  dq 0   ; global %s (uninitialized ptr)", g->label_id, g->name);
+                    emit(cg, "_glob%d_len:  dq 0   ; global %s (len)", g->label_id, g->name);
+                }
+            }
+        }
+        emit(cg, "");
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -2583,6 +2756,21 @@ void codegen_program(const Program *prog, FILE *out) {
 
     // Startup helper.
     emit_startup(&cg);
+
+    // Process global declarations (populate global symbol table).
+    // Also pre-add string constants so they're emitted before global references.
+    for (int i = 0; i < prog->globals.count; i++) {
+        const Stmt *s = prog->globals.items[i];
+        if (s && s->kind == STMT_GLOBAL_DECL) {
+            // Pre-add string constants for global strings
+            if (s->as.var_decl.type == TYPE_STR && 
+                s->as.var_decl.init && 
+                s->as.var_decl.init->kind == EXPR_STR_LIT) {
+                add_str_const(&cg, s->as.var_decl.init->as.str.value);
+            }
+            alloc_global(&cg, s->as.var_decl.name, s->as.var_decl.type, s->as.var_decl.init);
+        }
+    }
 
     // Scan all functions for top-level `on` handlers so we know which
     // default stubs window_runtime.c should skip.
