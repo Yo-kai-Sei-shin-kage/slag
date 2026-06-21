@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.4 — Draft**
+**Version 0.6 — Draft**
 
 ---
 
@@ -22,7 +22,7 @@ Slag is a statically typed, compiled systems programming language targeting nati
 - First-class multithreading with hardware topology awareness
 - Integrated graphical output with raw pixel access
 - PS2-era software 3D rendering capability
-- Regex-native string handling
+- String handling with ptr/len tracking
 - Terminal-default execution with optional graphical window contexts
 - Self-hosting compiler as long-term target
 
@@ -64,7 +64,7 @@ int   float   str   bool
 if    else    while
 true  false
 function    return
-var
+var   global   local
 thread  sync  lock
 window  pixel  flush
 ```
@@ -86,12 +86,12 @@ Slag is statically typed. All variables must be declared with an explicit type. 
 
 ### 4.2 Arrays
 
-All arrays are one-dimensional. Array size is fixed at declaration time. Dynamic sizing is permitted only when initialized from string/regex data, in which case length is capped to the actual data length — never larger.
+All arrays are one-dimensional. Array size is fixed at declaration time. Dynamic sizing is permitted only when initialized from string data, in which case length is capped to the actual data length — never larger.
 
 ```
 int[8] counts;
 float[16] vertices;
-str[n] tokens;        // n resolved at parse/regex time, capped to match count
+str[n] tokens;        // n resolved at parse time, capped to match count
 ```
 
 Array indexing is zero-based:
@@ -125,6 +125,35 @@ var int[4] data = {1, 2, 3, 4};
 
 All variables must be initialized at declaration. Type inference is not supported — the type must always be stated explicitly.
 
+
+### 5.1 Variable Scope Modifiers
+
+Variables can be declared with scope modifiers to control their visibility and storage:
+
+#### Global Variables
+
+```
+global int counter = 0;
+global str appName = "MyApp";
+```
+
+Global variables are declared at file scope (outside any function) and are:
+- Stored in the `.data` section of the executable
+- Accessible from any function in the program
+- Initialized at compile-time with literal values
+
+#### Local Variables
+
+```
+local int x = 10;
+local float temp = 0.0;
+```
+
+Local variables are declared inside functions or blocks and are:
+- Stack-allocated (same as `var`)
+- Scoped to the enclosing block
+
+The `var` keyword remains available for standard function-local variables.
 ---
 
 ## 6. Arithmetic Expressions
@@ -236,7 +265,7 @@ function greet(str name) {
 
 ---
 
-## 9. String Handling and Regex
+## 9. String Handling
 
 ### 9.1 String Literals
 
@@ -244,9 +273,7 @@ function greet(str name) {
 var str path = "/var/log/app.log";
 ```
 
-### 9.2 Regex Matching
 
-> **Note:** The regex engine (`match()`) is descoped and not planned for implementation. String processing is performed via `readfile()`, `readline()`, indexing, and `.len`.
 
 ### 9.3 File Reading
 
