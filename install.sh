@@ -25,11 +25,21 @@ COMPILER_DIR="$REPO_DIR/compiler"
 DOC_DIR="$REPO_DIR/documentation"
 MAN1_DIR="$DOC_DIR/man1"
 
+# Resolve the real user's home directory and shell. When run via sudo,
+# $HOME is /root but the real user is in $SUDO_USER.
+if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+    REAL_HOME=$(eval echo "~$SUDO_USER")
+    REAL_SHELL=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f7 || echo "/bin/bash")
+else
+    REAL_HOME="$HOME"
+    REAL_SHELL="$SHELL"
+fi
+
 # Resolve the shell rc file once, up front (used for PATH and MANPATH).
-RC_FILE="$HOME/.bashrc"
-case "$SHELL" in
-    *zsh)  RC_FILE="$HOME/.zshrc" ;;
-    *bash) RC_FILE="$HOME/.bashrc" ;;
+RC_FILE="$REAL_HOME/.bashrc"
+case "$REAL_SHELL" in
+    *zsh)  RC_FILE="$REAL_HOME/.zshrc" ;;
+    *bash) RC_FILE="$REAL_HOME/.bashrc" ;;
 esac
 
 # -----------------------------------------------------------------------
@@ -297,8 +307,23 @@ chmod +x "$SLAGRUN"
 echo "Installed slagrun helper: $SLAGRUN"
 echo ""
 
+# -----------------------------------------------------------------------
+# Create tests directory for Linux testing
+# -----------------------------------------------------------------------
+
+TESTS_DIR="$REPO_DIR/tests"
+if [ ! -d "$TESTS_DIR" ]; then
+    mkdir -p "$TESTS_DIR"
+    echo "Created tests directory: $TESTS_DIR"
+fi
+
 echo ""
-echo "Installation complete."
-echo "Run 'source $RC_FILE' (or open a new terminal) to pick up PATH/MANPATH changes."
-echo "Then: 'slagrun yourprogram' to build+run, 'slag yourprogram.slag' to compile only,"
-echo "and 'man slag' for documentation."
+echo "Installation complete. RC file updated: $RC_FILE"
+echo ""
+echo "To use slag commands in this terminal, run:"
+echo "  . $RC_FILE"
+echo ""
+echo "Commands (available after sourcing or in new terminals):"
+echo "  slagrun yourprogram    - build and run a Slag program"
+echo "  slag yourprogram.slag  - compile only"
+echo "  man slag               - view documentation"
