@@ -49,7 +49,7 @@ case "$UNAME_S" in
         if [ -f /etc/os-release ]; then
             . /etc/os-release
         fi
-        if command -v apt-get >/dev/null 2>&1; then
+        if command -v apt >/dev/null 2>&1; then
             PKG_MANAGER="apt"
         elif command -v dnf >/dev/null 2>&1; then
             PKG_MANAGER="dnf"
@@ -131,7 +131,7 @@ EOF
             case "$PKG_MANAGER" in
                 apt)
                     echo "Suggested install command (Debian/Ubuntu):"
-                    echo "  sudo apt-get update && sudo apt-get install -y gcc nasm git mingw-w64"
+                    echo "  sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install -y gcc nasm git mingw-w64 wine32:i386 wine32-tools"
                     ;;
                 dnf)
                     echo "Suggested install command (Fedora):"
@@ -159,7 +159,7 @@ EOF
             read -r -p "Run the suggested install command now with sudo? [y/N] " REPLY || REPLY=""
             if [[ "$REPLY" =~ ^[Yy]$ ]]; then
                 case "$PKG_MANAGER" in
-                    apt)    sudo apt-get update && sudo apt-get install -y gcc nasm git mingw-w64 ;;
+                    apt)    sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install -y gcc nasm git mingw-w64 wine32:i386 wine32-tools ;;
                     dnf)    sudo dnf install -y gcc nasm git mingw64-gcc ;;
                     yum)    sudo yum install -y gcc nasm git mingw64-gcc ;;
                     pacman) sudo pacman -S --needed gcc nasm git mingw-w64-gcc ;;
@@ -274,10 +274,24 @@ set -e
 base="${1%.slag}"
 slag "$base.slag"
 nasm -f win64 "$base.asm" -o "$base.obj"
-gcc "$base.obj" -o "$base.exe" \
-    -nostartfiles -e _start \
-    -lkernel32 -luser32 -lgdi32 -lws2_32
-"./$base.exe"
+
+# On Linux, use -B to ensure MinGW binutils (not native ld) is used
+case "$(uname -s)" in
+    Linux*)
+        x86_64-w64-mingw32-gcc "$base.obj" -o "$base.exe" \
+            -B/usr/x86_64-w64-mingw32/bin/ \
+            -nostdlib -e _start \
+            -lkernel32 -luser32 -lgdi32 -lws2_32
+        echo "Built: $base.exe"
+        echo "Run with: wine $base.exe"
+        ;;
+    *)
+        x86_64-w64-mingw32-gcc "$base.obj" -o "$base.exe" \
+            -nostdlib -e _start \
+            -lkernel32 -luser32 -lgdi32 -lws2_32
+        "./$base.exe"
+        ;;
+esac
 SLAGRUN_EOF
 chmod +x "$SLAGRUN"
 echo "Installed slagrun helper: $SLAGRUN"
