@@ -498,16 +498,21 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
         case EXPR_BINARY: {
             SlagType lt = expr_type(cg, e->as.binary.left, TYPE_INT);
             SlagType rt = expr_type(cg, e->as.binary.right, TYPE_INT);
-            (void)rt;
 
-            if (lt == TYPE_FLOAT) {
+            if (lt == TYPE_FLOAT || rt == TYPE_FLOAT) {
+                int op = e->as.binary.op;
+                // If arithmetic op with float operand, evaluate as float then convert to int
+                if (op == TOK_PLUS || op == TOK_MINUS || op == TOK_STAR || op == TOK_SLASH) {
+                    emit_float_expr(cg, e);
+                    emit(cg, "    cvttsd2si rax, xmm0");
+                    break;
+                }
                 // Comparison between floats — result is int (0/1)
                 emit_float_expr(cg, e->as.binary.left);
                 PUSH_XMM0(cg);
                 emit_float_expr(cg, e->as.binary.right);
                 emit(cg, "    movsd xmm1, [rsp]");
                 emit(cg, "    add  rsp, 8");
-                // xmm1 = left, xmm0 = right  (we compare xmm1 op xmm0)
                 emit(cg, "    ucomisd xmm1, xmm0");
                 switch (e->as.binary.op) {
                     case TOK_LT:  emit(cg, "    setb  al"); break;
