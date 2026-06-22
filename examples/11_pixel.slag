@@ -1,0 +1,58 @@
+// Example: Pixel Drawing
+// Demonstrates: pixel(x, y, r, g, b) for individual pixel access
+
+function main() {
+    window.open(400, 300, "Pixel Example");
+
+    var int frame = 0;
+
+    while (window.is_open()) {
+        // Clear
+        fill_triangle(0, 0, 400, 0, 400, 300, 0, 0, 0);
+        fill_triangle(0, 0, 400, 300, 0, 300, 0, 0, 0);
+
+        // Draw pixel patterns
+        var int y = 0;
+        while (y < 300) {
+            var int x = 0;
+            while (x < 400) {
+                // Create pattern based on position and frame
+                var int r = $(($x + $frame) % 256);
+                var int g = $(($y + $frame / 2) % 256);
+                var int b = $(($x + $y + $frame) % 256);
+
+                // Only draw some pixels for pattern effect
+                var int draw = $(($x + $y + $frame) % 8);
+                if (draw == 0) {
+                    pixel(x, y, r, g, b);
+                }
+
+                x = $(($x + 4));
+            }
+            y = $(($y + 4));
+        }
+
+        // Draw a solid pixel circle in center
+        var int cy = 0;
+        while (cy < 60) {
+            var int cx = 0;
+            while (cx < 60) {
+                var int dx = $(($cx - 30));
+                var int dy = $(($cy - 30));
+                var int dist = $(($dx * $dx + $dy * $dy));
+                if (dist < 900) {
+                    var int px = $((170 + $cx));
+                    var int py = $((120 + $cy));
+                    pixel(px, py, 255, 255, 255);
+                }
+                cx = $(($cx + 1));
+            }
+            cy = $(($cy + 1));
+        }
+
+        window.flush();
+        frame = $(($frame + 1));
+    }
+
+    return int 0;
+}

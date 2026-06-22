@@ -1501,6 +1501,31 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  rax, [r12 + rax*8]");
             }
         }
+        // cpu.physical_cores() -> int
+        else if (strcmp(member, "physical_cores") == 0) {
+            emit(cg, "    ; cpu.physical_cores");
+            emit(cg, "    mov  rax, [_cpu_physical_cores]");
+        }
+        // cpu.logical_cores() -> int
+        else if (strcmp(member, "logical_cores") == 0) {
+            emit(cg, "    ; cpu.logical_cores");
+            emit(cg, "    mov  rax, [_cpu_logical_cores]");
+        }
+        // cpu.threads_per_core() -> int
+        else if (strcmp(member, "threads_per_core") == 0) {
+            emit(cg, "    ; cpu.threads_per_core");
+            emit(cg, "    mov  rax, [_cpu_threads_per_core]");
+        }
+        // cpu.safe_thread_limit() -> int
+        else if (strcmp(member, "safe_thread_limit") == 0) {
+            emit(cg, "    ; cpu.safe_thread_limit");
+            emit(cg, "    mov  rax, [_cpu_safe_thread_limit]");
+        }
+        // cpu.hyperthreaded() -> int (0 or 1)
+        else if (strcmp(member, "hyperthreaded") == 0) {
+            emit(cg, "    ; cpu.hyperthreaded");
+            emit(cg, "    mov  rax, [_cpu_hyperthreaded]");
+        }
         else {
             emit(cg, "    ; unhandled member call .%s", member);
         }

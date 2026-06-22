@@ -1,0 +1,38 @@
+// Example: Window Management
+// Demonstrates: window.open(), window.is_open(), window.flush()
+
+function main() {
+    // Open a window with specific dimensions and title
+    window.open(400, 300, "Window Example");
+
+    var int frame = 0;
+
+    // Main loop - runs while window is open
+    while (window.is_open()) {
+        // Clear with animated background
+        var int bg = $((30 + $frame / 10 % 30));
+        fill_triangle(0, 0, 400, 0, 400, 300, bg, bg, $(($bg + 20)));
+        fill_triangle(0, 0, 400, 300, 0, 300, bg, bg, $(($bg + 20)));
+
+        // Draw a pulsing square
+        var int pulse = $((80 + $frame / 5 % 40));
+        var int cx = 200;
+        var int cy = 150;
+        var int half = $(($pulse / 2));
+
+        var int x1 = $(($cx - $half));
+        var int y1 = $(($cy - $half));
+        var int x2 = $(($cx + $half));
+        var int y2 = $(($cy + $half));
+
+        fill_triangle(x1, y1, x2, y1, x2, y2, 200, 100, 255);
+        fill_triangle(x1, y1, x2, y2, x1, y2, 200, 100, 255);
+
+        // Flush to display the frame
+        window.flush();
+
+        frame = $(($frame + 1));
+    }
+
+    return int 0;
+}

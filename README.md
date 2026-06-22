@@ -7,6 +7,17 @@ graphics (with a PS2-era rendering ceiling as a long-term target).
 
 The full language design is documented in [`slag_spec.md`](slag_spec.md).
 
+## Quick Start
+
+After installation, explore the language with the interactive examples browser:
+
+```bash
+cd examples
+./run_examples.sh
+```
+
+This launches a terminal interface where you can view source code and run any of the 17 included examples covering variables, arrays, functions, graphics, threading, networking, and more.
+
 ## Status
 
 Slag is under active development. The pipeline currently supports:
@@ -73,6 +84,7 @@ Slag is under active development. The pipeline currently supports:
     - `input.add_wheel(delta)` — accumulate wheel delta (called from `on mouse_wheel`)
     - `input.set_bbox(minx, miny, maxx, maxy)` / `input.in_bbox(mx, my)` — axis-aligned bounding box check, used for hit-testing draggable objects
   - **3D pipeline (demonstrated, written entirely in Slag)** — Bresenham line drawing, flat-shaded filled triangles, perspective projection, and per-axis rotation matrices using precomputed sin/cos constants. Per-face Lambertian lighting is also implemented in Slag: each face's normal is computed as the cross product of two rotated edge vectors, dotted with a fixed light direction, remapped to a `[0.3, 1.0]` brightness, and applied to the face color. Demos include a wireframe rotating cube, a mouse-drag + scroll-wheel-rotation cube, a solid 6-face flat-shaded rotating cube (~60fps at 640x800), and a per-face-lit shaded cube whose faces brighten and dim as it rotates
+  - **Config file reading** — Text configuration files can be parsed using `readfile()` combined with `mem.peek8()` for byte-by-byte parsing. The `config_tests/` directory contains examples of config-driven animations where parameters (positions, colors, paths) are read from external `.txt` files at runtime
 
 ### Not yet implemented
 
@@ -225,3 +237,39 @@ function main() {
     return;
 }
 ```
+
+## Examples Directory
+
+The `examples/` directory contains 17 complete, runnable Slag programs demonstrating language features:
+
+| # | Example | Description |
+|---|---------|-------------|
+| 01 | variables | Variable declarations and types |
+| 02 | arrays | Fixed-size array operations |
+| 03 | global_arrays | File-scope shared arrays |
+| 04 | functions | User-defined functions and calls |
+| 05 | arithmetic | The `$((...))` expression syntax |
+| 06 | control_flow | if/else and while loops |
+| 07 | strings | String handling and manipulation |
+| 08 | cpu_info | CPU topology detection |
+| 09 | memory | Heap allocation with `mem.*` |
+| 10 | window | Basic window creation |
+| 11 | pixel | Pixel drawing |
+| 12 | fill_triangle | Triangle rasterization |
+| 13 | fill_triangle_z | Z-buffered depth testing |
+| 14 | keyboard_input | Keyboard event handlers |
+| 15 | mouse_input | Mouse event handlers |
+| 16 | net_client | TCP networking API demo |
+| 17 | threads | Multi-threaded concurrency |
+
+Run the interactive browser with `./examples/run_examples.sh`, or compile individual examples with `slagrun examples/01_variables.slag`.
+
+## Config-Driven Demos
+
+The `config_tests/` directory contains animation demos that read parameters from external text files, demonstrating runtime configuration:
+
+- `config_square.slag` + `square.txt` — Position and color from config
+- `config_heart.slag` + `heart.txt` — Multi-point path rendering
+- `config_bounce.slag` + `bounce.txt` — Bouncing animation parameters
+- `config_orbit.slag` + `orbit.txt` — Orbital motion demo
+- `config_orbit_3d.slag` + `orbit_3d.txt` — 3D perspective orbit
