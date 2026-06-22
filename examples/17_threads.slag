@@ -1,0 +1,199 @@
+// Example: Threads and Synchronization
+// Minimal test to debug threading
+
+global int[] font = {
+    0,0,0,0,0, 0,0,95,0,0, 0,7,0,7,0, 20,127,20,127,20, 36,42,127,42,18,
+    35,19,8,100,98, 54,73,85,34,80, 0,5,3,0,0, 0,28,34,65,0, 0,65,34,28,0,
+    20,8,62,8,20, 8,8,62,8,8, 0,80,48,0,0, 8,8,8,8,8, 0,96,96,0,0, 32,16,8,4,2,
+    62,81,73,69,62, 0,66,127,64,0, 66,97,81,73,70, 33,65,69,75,49, 24,20,18,127,16,
+    39,69,69,69,57, 60,74,73,73,48, 1,113,9,5,3, 54,73,73,73,54, 6,73,73,41,30,
+    0,54,54,0,0, 0,86,54,0,0, 8,20,34,65,0, 20,20,20,20,20, 0,65,34,20,8,
+    2,1,81,9,6, 50,73,121,65,62, 126,17,17,17,126, 127,73,73,73,54, 62,65,65,65,34,
+    127,65,65,34,28, 127,73,73,73,65, 127,9,9,9,1, 62,65,73,73,122, 127,8,8,8,127,
+    0,65,127,65,0, 32,64,65,63,1, 127,8,20,34,65, 127,64,64,64,64, 127,2,12,2,127,
+    127,4,8,16,127, 62,65,65,65,62, 127,9,9,9,6, 62,65,81,33,94, 127,9,25,41,70,
+    38,73,73,73,50, 1,1,127,1,1, 63,64,64,64,63, 31,32,64,32,31, 63,64,56,64,63,
+    99,20,8,20,99, 7,8,112,8,7, 97,81,73,69,67, 0,127,65,65,0, 2,4,8,16,32,
+    0,65,65,127,0, 4,2,1,2,4, 64,64,64,64,64
+};
+global int[] pow2 = {1, 2, 4, 8, 16, 32, 64};
+
+global int prog1 = 0;
+global int prog2 = 0;
+global int prog3 = 0;
+global int done1 = 0;
+global int done2 = 0;
+global int done3 = 0;
+
+function draw_char(int x, int y, int ch, int r, int g, int b) {
+    if (ch < 32) { return int 0; }
+    if (ch > 95) { if (ch >= 97) { if (ch <= 122) { ch = $(($ch - 32)); } } }
+    if (ch > 95) { return int 0; }
+    var int idx = $((($ch - 32) * 5));
+    var int col = 0;
+    while (col < 5) {
+        var int bits = font[$(($idx + $col))];
+        var int row = 0;
+        while (row < 7) {
+            var int bit = $((($bits / pow2[$row]) % 2));
+            if (bit == 1) {
+                pixel($(($x + $col)), $(($y + $row)), r, g, b);
+            }
+            row = $(($row + 1));
+        }
+        col = $(($col + 1));
+    }
+    return int 0;
+}
+
+function draw_str(int x, int y, int ptr, int r, int g, int b) {
+    var int i = 0;
+    var int cx = x;
+    while (i < 100) {
+        var int ch = mem.peek8(ptr, i);
+        if (ch == 0) { return int i; }
+        draw_char(cx, y, ch, r, g, b);
+        cx = $(($cx + 6));
+        i = $(($i + 1));
+    }
+    return int i;
+}
+
+function draw_int(int x, int y, int val, int r, int g, int b) {
+    var int cx = x;
+    if (val == 0) { draw_char(cx, y, 48, r, g, b); return int 6; }
+    var int[] digits = {0,0,0,0,0,0,0,0,0,0};
+    var int count = 0;
+    while (val > 0) {
+        digits[count] = $(($val % 10));
+        val = $(($val / 10));
+        count = $(($count + 1));
+    }
+    var int i = $(($count - 1));
+    while (i >= 0) {
+        draw_char(cx, y, $((48 + digits[$i])), r, g, b);
+        cx = $(($cx + 6));
+        i = $(($i - 1));
+    }
+    return int $(($cx - $x));
+}
+
+function draw_bar(int x, int y, int progress, int r, int g, int b) {
+    // Draw bar outline (200 pixels wide, 12 pixels tall)
+    var int bx = 0;
+    while (bx < 200) {
+        pixel($(($x + $bx)), y, 100, 100, 100);
+        pixel($(($x + $bx)), $(($y + 11)), 100, 100, 100);
+        bx = $(($bx + 1));
+    }
+    var int by = 0;
+    while (by < 12) {
+        pixel(x, $(($y + $by)), 100, 100, 100);
+        pixel($(($x + 199)), $(($y + $by)), 100, 100, 100);
+        by = $(($by + 1));
+    }
+    // Fill bar based on progress (0-100)
+    var int fill = $(($progress * 2));
+    if (fill > 198) { fill = 198; }
+    var int fx = 1;
+    while (fx < fill) {
+        var int fy = 1;
+        while (fy < 11) {
+            pixel($(($x + $fx)), $(($y + $fy)), r, g, b);
+            fy = $(($fy + 1));
+        }
+        fx = $(($fx + 1));
+    }
+    return int 0;
+}
+
+function main() {
+    window.open(400, 300, "Multi-thread Concurrency Example");
+
+    var str t1 = "THREAD 1:";
+    var str t2 = "THREAD 2:";
+    var str t3 = "THREAD 3:";
+    var str done_txt = "DONE";
+
+    // Thread 1: count to 500 million, update progress every 5M
+    thread {
+        var int i = 0;
+        var int next = 5000000;
+        while (i < 500000000) {
+            i = $(($i + 1));
+            if (i >= next) {
+                prog1 = $(($prog1 + 1));
+                next = $(($next + 5000000));
+            }
+        }
+        prog1 = 100;
+        done1 = 1;
+    }
+
+    // Thread 2: count to 1 billion, update progress every 10M
+    thread {
+        var int i = 0;
+        var int next = 10000000;
+        while (i < 1000000000) {
+            i = $(($i + 1));
+            if (i >= next) {
+                prog2 = $(($prog2 + 1));
+                next = $(($next + 10000000));
+            }
+        }
+        prog2 = 100;
+        done2 = 1;
+    }
+
+    // Thread 3: count to 1.5 billion, update progress every 15M
+    thread {
+        var int i = 0;
+        var int next = 15000000;
+        while (i < 1500000000) {
+            i = $(($i + 1));
+            if (i >= next) {
+                prog3 = $(($prog3 + 1));
+                next = $(($next + 15000000));
+            }
+        }
+        prog3 = 100;
+        done3 = 1;
+    }
+
+    while (window.is_open()) {
+        fill_triangle(0, 0, 400, 0, 400, 300, 25, 30, 40);
+        fill_triangle(0, 0, 400, 300, 0, 300, 25, 30, 40);
+
+        // Thread 1
+        draw_str(20, 50, t1, 200, 200, 200);
+        if (done1 == 1) {
+            draw_bar(120, 48, prog1, 100, 255, 100);
+            draw_str(330, 50, done_txt, 100, 255, 100);
+        } else {
+            draw_bar(120, 48, prog1, 255, 200, 100);
+        }
+
+        // Thread 2
+        draw_str(20, 100, t2, 200, 200, 200);
+        if (done2 == 1) {
+            draw_bar(120, 98, prog2, 100, 255, 100);
+            draw_str(330, 100, done_txt, 100, 255, 100);
+        } else {
+            draw_bar(120, 98, prog2, 255, 200, 100);
+        }
+
+        // Thread 3
+        draw_str(20, 150, t3, 200, 200, 200);
+        if (done3 == 1) {
+            draw_bar(120, 148, prog3, 100, 255, 100);
+            draw_str(330, 150, done_txt, 100, 255, 100);
+        } else {
+            draw_bar(120, 148, prog3, 255, 200, 100);
+        }
+
+        window.flush();
+    }
+
+    sync { }
+    return int 0;
+}

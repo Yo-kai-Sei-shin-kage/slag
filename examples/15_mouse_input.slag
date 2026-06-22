@@ -1,0 +1,78 @@
+// Example: Mouse Input
+// Demonstrates: on mouse_move, on mouse_down, on mouse_up, on mouse_wheel
+
+global int mouse_x = 200;
+global int mouse_y = 150;
+global int is_clicking = 0;
+global int box_size = 50;
+global int box_color_r = 100;
+global int box_color_g = 150;
+global int box_color_b = 255;
+
+function main() {
+    window.open(400, 300, "Mouse Input - Click, drag, scroll");
+
+    on mouse_move(int x, int y) {
+        mouse_x = x;
+        mouse_y = y;
+    }
+
+    on mouse_down(int button) {
+        is_clicking = 1;
+        // Change color on click
+        if (button == 1) {
+            box_color_r = 255;
+            box_color_g = 100;
+            box_color_b = 100;
+        }
+        if (button == 2) {
+            box_color_r = 100;
+            box_color_g = 255;
+            box_color_b = 100;
+        }
+    }
+
+    on mouse_up(int button) {
+        is_clicking = 0;
+        box_color_r = 100;
+        box_color_g = 150;
+        box_color_b = 255;
+    }
+
+    on mouse_wheel(int delta) {
+        // Resize box with scroll wheel
+        box_size = $(($box_size + $delta * 5));
+        if (box_size < 20) {
+            box_size = 20;
+        }
+        if (box_size > 150) {
+            box_size = 150;
+        }
+    }
+
+    while (window.is_open()) {
+        // Clear
+        fill_triangle(0, 0, 400, 0, 400, 300, 30, 30, 40);
+        fill_triangle(0, 0, 400, 300, 0, 300, 30, 30, 40);
+
+        // Draw box at mouse position
+        var int half = $(($box_size / 2));
+        var int x1 = $(($mouse_x - $half));
+        var int y1 = $(($mouse_y - $half));
+        var int x2 = $(($mouse_x + $half));
+        var int y2 = $(($mouse_y + $half));
+
+        fill_triangle(x1, y1, x2, y1, x2, y2, box_color_r, box_color_g, box_color_b);
+        fill_triangle(x1, y1, x2, y2, x1, y2, box_color_r, box_color_g, box_color_b);
+
+        // Draw click indicator
+        if (is_clicking == 1) {
+            fill_triangle(10, 10, 30, 10, 30, 30, 255, 255, 100);
+            fill_triangle(10, 10, 30, 30, 10, 30, 255, 255, 100);
+        }
+
+        window.flush();
+    }
+
+    return int 0;
+}

@@ -1,24 +1,41 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 # slagrun — compile, assemble, link, and run a Slag program.
 # Usage: slagrun [-d] program[.slag]
-#   -d  Debug mode: keep .asm and .obj files
+#   -d  Debug mode: keep .asm and .obj files after running
 set -e
 
-debug=0
-if [[ "$1" == "-d" ]]; then
-    debug=1
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+declare debug;
+if [ "${1}" == '-d' ]; then
+    let debug='1'
     shift
+else
+    let debug='0'
 fi
 
 base="${1%.slag}"
-slag "$base.slag"
+"$SCRIPT_DIR/slag" "$base.slag"
 nasm -f win64 "$base.asm" -o "$base.obj"
-gcc "$base.obj" -o "$base.exe" \
-    -nostartfiles -e _start \
-    -lkernel32 -luser32 -lgdi32 -lws2_32
 
-"./$base.exe"
-
-if [[ $debug -eq 0 ]]; then
-    rm -f "$base.asm" "$base.obj"
-fi
+# On Linux, use -B to ensure MinGW binutils (not native ld) is used
+case "$(uname -s)" in
+    Linux*)
+        x86_64-w64-mingw32-gcc "$base.obj" -o "$base.exe" \
+            -B/usr/x86_64-w64-mingw32/bin/ \
+            -nostdlib -e _start \
+            -lkernel32 -luser32 -lgdi32 -lws2_32
+        echo "Built: $base.exe"
+        echo "Run with: wine $base.exe"
+        ;;
+    *)
+        x86_64-w64-mingw32-gcc "$base.obj" -o "$base.exe" \
+            -nostdlib -e _start \
+            -lkernel32 -luser32 -lgdi32 -lws2_32
+        "./$base.exe"
+        # Cleanup unless debug mode
+        if [ "${debug}" == '0' ]; then
+            rm -f "$base.asm" "$base.obj" "$base.exe"
+        fi
+        ;;
+esac

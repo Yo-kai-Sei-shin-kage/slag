@@ -1,0 +1,110 @@
+// Example: CPU Information
+// Demonstrates: cpu.physical_cores(), cpu.logical_cores(), cpu.hyperthreaded()
+
+// Embedded 5x7 font (ASCII 32-95)
+global int[] font = {
+    0,0,0,0,0, 0,0,95,0,0, 0,7,0,7,0, 20,127,20,127,20, 36,42,127,42,18,
+    35,19,8,100,98, 54,73,85,34,80, 0,5,3,0,0, 0,28,34,65,0, 0,65,34,28,0,
+    20,8,62,8,20, 8,8,62,8,8, 0,80,48,0,0, 8,8,8,8,8, 0,96,96,0,0, 32,16,8,4,2,
+    62,81,73,69,62, 0,66,127,64,0, 66,97,81,73,70, 33,65,69,75,49, 24,20,18,127,16,
+    39,69,69,69,57, 60,74,73,73,48, 1,113,9,5,3, 54,73,73,73,54, 6,73,73,41,30,
+    0,54,54,0,0, 0,86,54,0,0, 8,20,34,65,0, 20,20,20,20,20, 0,65,34,20,8,
+    2,1,81,9,6, 50,73,121,65,62, 126,17,17,17,126, 127,73,73,73,54, 62,65,65,65,34,
+    127,65,65,34,28, 127,73,73,73,65, 127,9,9,9,1, 62,65,73,73,122, 127,8,8,8,127,
+    0,65,127,65,0, 32,64,65,63,1, 127,8,20,34,65, 127,64,64,64,64, 127,2,12,2,127,
+    127,4,8,16,127, 62,65,65,65,62, 127,9,9,9,6, 62,65,81,33,94, 127,9,25,41,70,
+    38,73,73,73,50, 1,1,127,1,1, 63,64,64,64,63, 31,32,64,32,31, 63,64,56,64,63,
+    99,20,8,20,99, 7,8,112,8,7, 97,81,73,69,67, 0,127,65,65,0, 2,4,8,16,32,
+    0,65,65,127,0, 4,2,1,2,4, 64,64,64,64,64
+};
+
+global int[] pow2 = {1, 2, 4, 8, 16, 32, 64};
+
+function draw_char(int x, int y, int ch, int r, int g, int b) {
+    if (ch < 32) { return int 0; }
+    if (ch > 95) { if (ch >= 97) { if (ch <= 122) { ch = $(($ch - 32)); } } }
+    if (ch > 95) { return int 0; }
+    var int idx = $((($ch - 32) * 5));
+    var int col = 0;
+    while (col < 5) {
+        var int bits = font[$(($idx + $col))];
+        var int row = 0;
+        while (row < 7) {
+            var int bit = $((($bits / pow2[$row]) % 2));
+            if (bit == 1) {
+                pixel($(($x + $col)), $(($y + $row)), r, g, b);
+            }
+            row = $(($row + 1));
+        }
+        col = $(($col + 1));
+    }
+    return int 0;
+}
+
+function draw_str(int x, int y, int ptr, int r, int g, int b) {
+    var int i = 0;
+    var int cx = x;
+    while (i < 100) {
+        var int ch = mem.peek8(ptr, i);
+        if (ch == 0) { return int i; }
+        draw_char(cx, y, ch, r, g, b);
+        cx = $(($cx + 6));
+        i = $(($i + 1));
+    }
+    return int i;
+}
+
+function draw_int(int x, int y, int val, int r, int g, int b) {
+    var int cx = x;
+    if (val < 0) { draw_char(cx, y, 45, r, g, b); cx = $(($cx + 6)); val = $((0 - $val)); }
+    if (val == 0) { draw_char(cx, y, 48, r, g, b); return int 6; }
+    var int[] digits = {0,0,0,0,0,0,0,0,0,0};
+    var int count = 0;
+    while (val > 0) { digits[count] = $(($val % 10)); val = $(($val / 10)); count = $(($count + 1)); }
+    var int i = $(($count - 1));
+    while (i >= 0) { draw_char(cx, y, $((48 + digits[$i])), r, g, b); cx = $(($cx + 6)); i = $(($i - 1)); }
+    return int $(($cx - $x));
+}
+
+function main() {
+    window.open(400, 300, "CPU Info Example");
+
+    var str title = "CPU INFO DEMO";
+    var str l1 = "PHYSICAL CORES:";
+    var str l2 = "LOGICAL CORES:";
+    var str l3 = "THREADS PER CORE:";
+    var str l4 = "SAFE THREAD LIMIT:";
+    var str l5 = "HYPERTHREADED:";
+    var str yes = "YES";
+    var str no = "NO";
+
+    while (window.is_open()) {
+        fill_triangle(0, 0, 400, 0, 400, 300, 20, 20, 30);
+        fill_triangle(0, 0, 400, 300, 0, 300, 20, 20, 30);
+
+        draw_str(130, 20, title, 255, 255, 100);
+
+        draw_str(50, 60, l1, 150, 255, 150);
+        draw_int(230, 60, cpu.physical_cores(), 255, 255, 255);
+
+        draw_str(50, 85, l2, 150, 255, 150);
+        draw_int(230, 85, cpu.logical_cores(), 255, 255, 255);
+
+        draw_str(50, 110, l3, 150, 255, 150);
+        draw_int(230, 110, cpu.threads_per_core(), 255, 255, 255);
+
+        draw_str(50, 135, l4, 150, 255, 150);
+        draw_int(230, 135, cpu.safe_thread_limit(), 255, 255, 255);
+
+        draw_str(50, 160, l5, 150, 255, 150);
+        if (cpu.hyperthreaded() == 1) {
+            draw_str(230, 160, yes, 100, 255, 100);
+        } else {
+            draw_str(230, 160, no, 255, 100, 100);
+        }
+
+        window.flush();
+    }
+
+    return int 0;
+}

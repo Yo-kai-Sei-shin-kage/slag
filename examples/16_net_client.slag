@@ -1,0 +1,212 @@
+// Example: Network API Demo
+// Demonstrates: net.start(), net.connect(), net.send_buf(), net.end()
+// Shows networking initialization and connection attempt in real-time
+
+// Embedded 5x7 font (ASCII 32-95)
+global int[] font = {
+    0,0,0,0,0, 0,0,95,0,0, 0,7,0,7,0, 20,127,20,127,20, 36,42,127,42,18,
+    35,19,8,100,98, 54,73,85,34,80, 0,5,3,0,0, 0,28,34,65,0, 0,65,34,28,0,
+    20,8,62,8,20, 8,8,62,8,8, 0,80,48,0,0, 8,8,8,8,8, 0,96,96,0,0, 32,16,8,4,2,
+    62,81,73,69,62, 0,66,127,64,0, 66,97,81,73,70, 33,65,69,75,49, 24,20,18,127,16,
+    39,69,69,69,57, 60,74,73,73,48, 1,113,9,5,3, 54,73,73,73,54, 6,73,73,41,30,
+    0,54,54,0,0, 0,86,54,0,0, 8,20,34,65,0, 20,20,20,20,20, 0,65,34,20,8,
+    2,1,81,9,6, 50,73,121,65,62, 126,17,17,17,126, 127,73,73,73,54, 62,65,65,65,34,
+    127,65,65,34,28, 127,73,73,73,65, 127,9,9,9,1, 62,65,73,73,122, 127,8,8,8,127,
+    0,65,127,65,0, 32,64,65,63,1, 127,8,20,34,65, 127,64,64,64,64, 127,2,12,2,127,
+    127,4,8,16,127, 62,65,65,65,62, 127,9,9,9,6, 62,65,81,33,94, 127,9,25,41,70,
+    38,73,73,73,50, 1,1,127,1,1, 63,64,64,64,63, 31,32,64,32,31, 63,64,56,64,63,
+    99,20,8,20,99, 7,8,112,8,7, 97,81,73,69,67, 0,127,65,65,0, 2,4,8,16,32,
+    0,65,65,127,0, 4,2,1,2,4, 64,64,64,64,64
+};
+
+global int[] pow2 = {1, 2, 4, 8, 16, 32, 64};
+
+// Status tracking
+global int step = 0;
+global int net_ok = 0;
+global int conn_ok = 0;
+global int send_ok = 0;
+global int end_ok = 0;
+global int send_buf = 0;
+
+function draw_char(int x, int y, int ch, int r, int g, int b) {
+    if (ch < 32) { return int 0; }
+    if (ch > 95) { if (ch >= 97) { if (ch <= 122) { ch = $(($ch - 32)); } } }
+    if (ch > 95) { return int 0; }
+    var int idx = $((($ch - 32) * 5));
+    var int col = 0;
+    while (col < 5) {
+        var int bits = font[$(($idx + $col))];
+        var int row = 0;
+        while (row < 7) {
+            var int bit = $((($bits / pow2[$row]) % 2));
+            if (bit == 1) {
+                pixel($(($x + $col)), $(($y + $row)), r, g, b);
+            }
+            row = $(($row + 1));
+        }
+        col = $(($col + 1));
+    }
+    return int 0;
+}
+
+function draw_str(int x, int y, int ptr, int r, int g, int b) {
+    var int i = 0;
+    var int cx = x;
+    while (i < 100) {
+        var int ch = mem.peek8(ptr, i);
+        if (ch == 0) { return int i; }
+        draw_char(cx, y, ch, r, g, b);
+        cx = $(($cx + 6));
+        i = $(($i + 1));
+    }
+    return int i;
+}
+
+function draw_frame() {
+    // Labels
+    var str title = "NETWORK API DEMO";
+    var str l1 = "NET.START()";
+    var str l2 = "NET.CONNECT(127.0.0.1, 9000)";
+    var str l3 = "NET.SEND_BUF(HELLO, 6)";
+    var str l4 = "NET.END()";
+    var str status_ok = "OK";
+    var str status_fail = "FAIL";
+    var str status_skip = "SKIPPED";
+    var str status_wait = "...";
+    var str note1 = "CONNECTION FAILS AS EXPECTED";
+    var str note2 = "(NO SERVER RUNNING)";
+
+    // Clear background
+    fill_triangle(0, 0, 400, 0, 400, 300, 25, 30, 40);
+    fill_triangle(0, 0, 400, 300, 0, 300, 25, 30, 40);
+
+    // Title
+    draw_str(115, 20, title, 255, 255, 100);
+
+    // Step 1: net.start()
+    draw_str(50, 60, l1, 150, 200, 255);
+    if (step >= 1) {
+        if (net_ok == 1) {
+            draw_str(300, 60, status_ok, 100, 255, 100);
+        } else {
+            draw_str(300, 60, status_fail, 255, 100, 100);
+        }
+    } else {
+        draw_str(300, 60, status_wait, 255, 255, 100);
+    }
+
+    // Step 2: net.connect()
+    draw_str(50, 90, l2, 150, 200, 255);
+    if (step >= 2) {
+        if (conn_ok == 1) {
+            draw_str(300, 90, status_ok, 100, 255, 100);
+        } else {
+            draw_str(300, 90, status_fail, 255, 100, 100);
+        }
+    } else {
+        if (step >= 1) {
+            draw_str(300, 90, status_wait, 255, 255, 100);
+        }
+    }
+
+    // Step 3: net.send_buf()
+    draw_str(50, 120, l3, 150, 200, 255);
+    if (step >= 3) {
+        if (send_ok == 1) {
+            draw_str(300, 120, status_ok, 100, 255, 100);
+        } else {
+            draw_str(300, 120, status_skip, 255, 200, 100);
+        }
+    } else {
+        if (step >= 2) {
+            draw_str(300, 120, status_wait, 255, 255, 100);
+        }
+    }
+
+    // Step 4: net.end()
+    draw_str(50, 150, l4, 150, 200, 255);
+    if (step >= 4) {
+        if (end_ok == 1) {
+            draw_str(300, 150, status_ok, 100, 255, 100);
+        } else {
+            draw_str(300, 150, status_fail, 255, 100, 100);
+        }
+    } else {
+        if (step >= 3) {
+            draw_str(300, 150, status_wait, 255, 255, 100);
+        }
+    }
+
+    // Note (only show when done)
+    if (step >= 4) {
+        draw_str(60, 200, note1, 200, 200, 200);
+        draw_str(100, 220, note2, 150, 150, 150);
+    }
+
+    window.flush();
+    return int 0;
+}
+
+function main() {
+    window.open(400, 300, "Network API Demo");
+
+    // Allocate send buffer
+    send_buf = mem.alloc(256);
+    mem.poke8(send_buf, 0, 72);  // H
+    mem.poke8(send_buf, 1, 69);  // E
+    mem.poke8(send_buf, 2, 76);  // L
+    mem.poke8(send_buf, 3, 76);  // L
+    mem.poke8(send_buf, 4, 79);  // O
+    mem.poke8(send_buf, 5, 0);
+
+    var int frame = 0;
+    var int delay = 30;
+
+    while (window.is_open()) {
+        // Progress through steps with delay
+        if (step == 0) {
+            if (frame > delay) {
+                net.start();
+                net_ok = 1;
+                step = 1;
+                frame = 0;
+            }
+        }
+        if (step == 1) {
+            if (frame > delay) {
+                net.connect("127.0.0.1", 9000);
+                if (net.ack() == 1) {
+                    conn_ok = 1;
+                }
+                step = 2;
+                frame = 0;
+            }
+        }
+        if (step == 2) {
+            if (frame > delay) {
+                if (conn_ok == 1) {
+                    net.send_buf(send_buf, 6);
+                    send_ok = 1;
+                }
+                step = 3;
+                frame = 0;
+            }
+        }
+        if (step == 3) {
+            if (frame > delay) {
+                net.end();
+                end_ok = 1;
+                step = 4;
+                frame = 0;
+            }
+        }
+
+        draw_frame();
+        frame = $(($frame + 1));
+    }
+
+    mem.free(send_buf);
+
+    return int 0;
+}

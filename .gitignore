@@ -19,5 +19,6 @@ slag
 CLAUDE.md
 *.slag
 !working_tests/**/*.slag
+!examples/**/*.slag
 compiler/working_*.c
 slag.nanorc

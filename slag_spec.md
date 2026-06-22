@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.7 — Draft**
+**Version 0.8 — Draft**
 
 ---
 
@@ -295,6 +295,36 @@ var str content = readfile("data.txt");
 ```
 
 Returns the full file contents as a `str`. File I/O uses `kernel32.dll` directly — no CRT file functions.
+
+### 9.4 Config File Parsing
+
+Text configuration files can be parsed by combining `readfile()` with `mem.peek8()` for byte-by-byte access. A typical pattern:
+
+```
+function parse_int(int ptr, int start, int end) {
+    var int val = 0;
+    var int i = start;
+    while (i < end) {
+        var int byte = mem.peek8(ptr, i);
+        if (byte >= 48) {
+            if (byte <= 57) {
+                val = $(($val * 10 + $byte - 48));
+            }
+        }
+        i = $(($i + 1));
+    }
+    return int val;
+}
+
+function main() {
+    var str config = readfile("settings.txt");
+    var int ptr = config;
+    // Parse line-by-line, looking for newline (10) or null (0)
+    // ...
+}
+```
+
+This enables runtime configuration without recompilation. See the `config_tests/` directory for complete examples.
 
 ---
 
@@ -769,11 +799,12 @@ function main() {
 | 0.5     | Multithreading (thread/sync/lock), CPU topology             | ✅ Complete |
 | 0.6     | Memory primitives (mem.*), TCP networking (net.*), multi-byte P2P messaging, global/local scope | ✅ Complete |
 | 0.7     | Global arrays, z-buffer depth testing (fill_triangle_z, zbuffer.clear) | ✅ Complete |
-| 0.8     | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
-| 0.9     | Texture mapping, matrix stack                               | 🔲 Planned  |
-| 0.95    | Lighting model, perspective correction                      | 🔲 Planned  |
+| 0.8     | Config file parsing, examples directory with interactive browser | ✅ Complete |
+| 0.9     | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
+| 0.10    | Texture mapping, matrix stack                               | 🔲 Planned  |
+| 0.11    | Lighting model, perspective correction                      | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ---
 
-*Slag Language Specification v0.7 — Subject to revision*
+*Slag Language Specification v0.8 — Subject to revision*

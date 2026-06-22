@@ -1,0 +1,65 @@
+// Example: Keyboard Input
+// Demonstrates: on key_down handler, movement with WASD keys
+
+global int player_x = 200;
+global int player_y = 150;
+global int player_color = 100;
+
+function main() {
+    window.open(400, 300, "Keyboard Input - WASD to move, Space for color");
+
+    on key_down(int keycode) {
+        // WASD movement
+        // W = 87, A = 65, S = 83, D = 68
+        if (keycode == 87) {
+            player_y = $(($player_y - 10));
+        }
+        if (keycode == 83) {
+            player_y = $(($player_y + 10));
+        }
+        if (keycode == 65) {
+            player_x = $(($player_x - 10));
+        }
+        if (keycode == 68) {
+            player_x = $(($player_x + 10));
+        }
+
+        // Space = 32 - change color
+        if (keycode == 32) {
+            player_color = $(($player_color + 50));
+            if (player_color > 255) {
+                player_color = 50;
+            }
+        }
+
+        // Keep in bounds
+        if (player_x < 20) {
+            player_x = 20;
+        }
+        if (player_x > 350) {
+            player_x = 350;
+        }
+        if (player_y < 20) {
+            player_y = 20;
+        }
+        if (player_y > 250) {
+            player_y = 250;
+        }
+    }
+
+    while (window.is_open()) {
+        // Clear
+        fill_triangle(0, 0, 400, 0, 400, 300, 25, 25, 35);
+        fill_triangle(0, 0, 400, 300, 0, 300, 25, 25, 35);
+
+        // Draw player square
+        var int x2 = $(($player_x + 40));
+        var int y2 = $(($player_y + 40));
+        fill_triangle(player_x, player_y, x2, player_y, x2, y2, player_color, 150, 255);
+        fill_triangle(player_x, player_y, x2, y2, player_x, y2, player_color, 150, 255);
+
+        window.flush();
+    }
+
+    return int 0;
+}

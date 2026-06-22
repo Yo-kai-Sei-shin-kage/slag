@@ -279,10 +279,20 @@ SLAGRUN="$COMPILER_DIR/slagrun"
 cat > "$SLAGRUN" <<'SLAGRUN_EOF'
 #!/usr/bin/env bash
 # slagrun — compile, assemble, link, and run a Slag program.
-# Usage: slagrun program[.slag]
+# Usage: slagrun [-d] program[.slag]
+#   -d  Debug mode: keep .asm and .obj files after running
 set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+debug=0
+if [[ "$1" == "-d" ]]; then
+    debug=1
+    shift
+fi
+
 base="${1%.slag}"
-slag "$base.slag"
+"$SCRIPT_DIR/slag" "$base.slag"
 nasm -f win64 "$base.asm" -o "$base.obj"
 
 # On Linux, use -B to ensure MinGW binutils (not native ld) is used
@@ -300,6 +310,10 @@ case "$(uname -s)" in
             -nostdlib -e _start \
             -lkernel32 -luser32 -lgdi32 -lws2_32
         "./$base.exe"
+        # Cleanup unless debug mode
+        if [[ $debug -eq 0 ]]; then
+            rm -f "$base.asm" "$base.obj" "$base.exe"
+        fi
         ;;
 esac
 SLAGRUN_EOF
@@ -327,3 +341,6 @@ echo "Commands (available after sourcing or in new terminals):"
 echo "  slagrun yourprogram    - build and run a Slag program"
 echo "  slag yourprogram.slag  - compile only"
 echo "  man slag               - view documentation"
+echo ""
+echo "Explore the language with the examples browser:"
+echo "  cd $REPO_DIR/examples && ./run_examples.sh"
