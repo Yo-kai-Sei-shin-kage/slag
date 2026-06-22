@@ -57,7 +57,11 @@ typedef struct Global {
     char *name;
     SlagType type;
     int label_id;         // global is at _glob<label_id>
-    Expr *init;           // initializer expression
+    int is_array;         // 1 if this is an array
+    SlagType elem_type;   // element type if is_array
+    int size;             // element count if is_array
+    Expr *init;           // initializer expression (scalars)
+    ExprList arr_init;    // initializer list (arrays)
 } Global;
 
 #define MAX_GLOBALS 256
@@ -221,7 +225,36 @@ static Global *alloc_global(Codegen *cg, const char *name, SlagType type, Expr *
     strcpy(g->name, name);
     g->type = type;
     g->label_id = cg->global_count;
+    g->is_array = 0;
+    g->elem_type = TYPE_UNKNOWN;
+    g->size = 0;
     g->init = init;
+    exprlist_init(&g->arr_init);
+    cg->global_count++;
+    return g;
+}
+
+// Allocate a new global array. Returns the global entry.
+static Global *alloc_global_array(Codegen *cg, const char *name, SlagType elem_type,
+                                   int size, ExprList *init_list) {
+    if (cg->global_count >= MAX_GLOBALS) {
+        fprintf(stderr, "codegen error: too many globals\n");
+        exit(1);
+    }
+    Global *g = &cg->globals[cg->global_count];
+    g->name = malloc(strlen(name) + 1);
+    strcpy(g->name, name);
+    g->type = elem_type;
+    g->label_id = cg->global_count;
+    g->is_array = 1;
+    g->elem_type = elem_type;
+    g->size = size;
+    g->init = NULL;
+    if (init_list) {
+        g->arr_init = *init_list;  // copy the list
+    } else {
+        exprlist_init(&g->arr_init);
+    }
     cg->global_count++;
     return g;
 }
@@ -424,6 +457,8 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
                 e->as.index.base->kind == EXPR_DOLLAR_IDENT) {
                 Local *loc = find_local(cg, e->as.index.base->as.str.value);
                 if (loc && loc->is_array) return loc->elem_type;
+                Global *glb = find_global(cg, e->as.index.base->as.str.value);
+                if (glb && glb->is_array) return glb->elem_type;
             }
             return hint;
         }
@@ -626,11 +661,15 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             // Array element access: base[index]
             // Load base address, compute offset, load qword.
             Local *loc = NULL;
+            Global *glb = NULL;
             if (e->as.index.base->kind == EXPR_IDENT ||
                 e->as.index.base->kind == EXPR_DOLLAR_IDENT) {
                 loc = find_local(cg, e->as.index.base->as.str.value);
+                if (!loc) {
+                    glb = find_global(cg, e->as.index.base->as.str.value);
+                }
             }
-            if (!loc) {
+            if (!loc && !glb) {
                 fprintf(stderr, "codegen error: array base not found\n");
                 emit(cg, "    xor  rax, rax");
                 break;
@@ -638,9 +677,15 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             // Compute index into rcx
             emit_int_expr(cg, e->as.index.index);
             emit(cg, "    mov  rcx, rax");
-            // Base address
-            emit(cg, "    lea  rax, [rbp%+d]", loc->offset);
-            emit(cg, "    mov  rax, [rax + rcx*8]");
+            if (loc) {
+                // Local array: base address on stack
+                emit(cg, "    lea  rax, [rbp%+d]", loc->offset);
+                emit(cg, "    mov  rax, [rax + rcx*8]");
+            } else {
+                // Global array: base address is label
+                emit(cg, "    lea  rax, [_globarr%d]", glb->label_id);
+                emit(cg, "    mov  rax, [rax + rcx*8]");
+            }
             break;
         }
 
@@ -648,11 +693,21 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             // e.g. tokens.len, cpu.logical_cores
             // For now handle .len on arrays and cpu.* fields.
             Local *loc = NULL;
+            Global *glb = NULL;
             if (e->as.member.base->kind == EXPR_IDENT) {
                 loc = find_local(cg, e->as.member.base->as.str.value);
+                if (!loc) {
+                    glb = find_global(cg, e->as.member.base->as.str.value);
+                }
             }
-            if (loc && strcmp(e->as.member.member, "len") == 0) {
-                emit(cg, "    mov  rax, %d", loc->size);
+            if (strcmp(e->as.member.member, "len") == 0) {
+                if (loc) {
+                    emit(cg, "    mov  rax, %d", loc->size);
+                } else if (glb && glb->is_array) {
+                    emit(cg, "    mov  rax, %d", glb->size);
+                } else {
+                    emit(cg, "    xor  rax, rax");
+                }
             } else {
                 // cpu.* fields — these are global read-only values
                 // populated at startup (stub: return 0 for now)
@@ -782,17 +837,25 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
 
         case EXPR_INDEX: {
             Local *loc = NULL;
+            Global *glb = NULL;
             if (e->as.index.base->kind == EXPR_IDENT ||
                 e->as.index.base->kind == EXPR_DOLLAR_IDENT) {
                 loc = find_local(cg, e->as.index.base->as.str.value);
+                if (!loc) {
+                    glb = find_global(cg, e->as.index.base->as.str.value);
+                }
             }
-            if (!loc) {
+            if (!loc && !glb) {
                 emit(cg, "    xorpd xmm0, xmm0");
                 break;
             }
             emit_int_expr(cg, e->as.index.index);
             emit(cg, "    mov  rcx, rax");
-            emit(cg, "    lea  rax, [rbp%+d]", loc->offset);
+            if (loc) {
+                emit(cg, "    lea  rax, [rbp%+d]", loc->offset);
+            } else {
+                emit(cg, "    lea  rax, [_globarr%d]", glb->label_id);
+            }
             emit(cg, "    movsd xmm0, [rax + rcx*8]");
             break;
         }
@@ -1525,6 +1588,7 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
 
         // ------------------------------------------------------------------
         // var TYPE[n] name = { ... } or var TYPE[] name = call(...)
+        // Also handles global TYPE[n] name = { ... }
         // ------------------------------------------------------------------
         case STMT_ARRAY_DECL: {
             SlagType elem = s->as.array_decl.elem_type;
@@ -1541,6 +1605,17 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
                 size = 8; // fallback; runtime size not yet supported
             }
 
+            if (s->as.array_decl.is_global) {
+                // Global array: allocate in .data section
+                ExprList *init_list = NULL;
+                if (s->as.array_decl.init_call == NULL) {
+                    init_list = &s->as.array_decl.init_list;
+                }
+                alloc_global_array(cg, name, elem, size, init_list);
+                break;
+            }
+
+            // Local array: allocate on stack
             Local *loc = alloc_local(cg, name, elem, 1, elem, size);
             emit(cg, "    ; array %s[%d] %s", slag_type_name(elem), size, name);
 
@@ -2432,6 +2507,8 @@ static void emit_data_section(Codegen *cg) {
         for (int i = 0; i < cg->global_count; i++) {
             Global *g = &cg->globals[i];
             Expr *init = g->init;
+            // Skip arrays here - they are emitted separately
+            if (g->is_array) continue;
             if (g->type == TYPE_INT || g->type == TYPE_BOOL) {
                 long val = 0;
                 if (init && init->kind == EXPR_INT_LIT) {
@@ -2460,6 +2537,60 @@ static void emit_data_section(Codegen *cg) {
                 } else {
                     emit(cg, "_glob%d:  dq 0   ; global %s (uninitialized ptr)", g->label_id, g->name);
                     emit(cg, "_glob%d_len:  dq 0   ; global %s (len)", g->label_id, g->name);
+                }
+            }
+        }
+        // Emit global arrays
+        for (int i = 0; i < cg->global_count; i++) {
+            Global *g = &cg->globals[i];
+            if (!g->is_array) continue;
+            emit(cg, "; global array %s[%d]", g->name, g->size);
+            for (int j = 0; j < g->size; j++) {
+                if (j < g->arr_init.count) {
+                    Expr *e = g->arr_init.items[j];
+                    if (g->elem_type == TYPE_FLOAT) {
+                        double val = 0.0;
+                        if (e->kind == EXPR_FLOAT_LIT) {
+                            val = e->as.float_val;
+                        } else if (e->kind == EXPR_INT_LIT) {
+                            val = (double)e->as.int_val;
+                        } else if (e->kind == EXPR_UNARY && e->as.unary.op == '-') {
+                            Expr *inner = e->as.unary.operand;
+                            if (inner->kind == EXPR_FLOAT_LIT) {
+                                val = -inner->as.float_val;
+                            } else if (inner->kind == EXPR_INT_LIT) {
+                                val = -(double)inner->as.int_val;
+                            }
+                        }
+                        union { double d; unsigned long long u; } v;
+                        v.d = val;
+                        if (j == 0) {
+                            emit(cg, "_globarr%d: dq 0x%016llx", g->label_id, v.u);
+                        } else {
+                            emit(cg, "            dq 0x%016llx", v.u);
+                        }
+                    } else {
+                        long val = 0;
+                        if (e->kind == EXPR_INT_LIT) {
+                            val = e->as.int_val;
+                        } else if (e->kind == EXPR_UNARY && e->as.unary.op == '-') {
+                            Expr *inner = e->as.unary.operand;
+                            if (inner->kind == EXPR_INT_LIT) {
+                                val = -inner->as.int_val;
+                            }
+                        }
+                        if (j == 0) {
+                            emit(cg, "_globarr%d: dq %ld", g->label_id, val);
+                        } else {
+                            emit(cg, "            dq %ld", val);
+                        }
+                    }
+                } else {
+                    if (j == 0) {
+                        emit(cg, "_globarr%d: dq 0", g->label_id);
+                    } else {
+                        emit(cg, "            dq 0");
+                    }
                 }
             }
         }
@@ -2768,12 +2899,21 @@ void codegen_program(const Program *prog, FILE *out) {
         const Stmt *s = prog->globals.items[i];
         if (s && s->kind == STMT_GLOBAL_DECL) {
             // Pre-add string constants for global strings
-            if (s->as.var_decl.type == TYPE_STR && 
-                s->as.var_decl.init && 
+            if (s->as.var_decl.type == TYPE_STR &&
+                s->as.var_decl.init &&
                 s->as.var_decl.init->kind == EXPR_STR_LIT) {
                 add_str_const(&cg, s->as.var_decl.init->as.str.value);
             }
             alloc_global(&cg, s->as.var_decl.name, s->as.var_decl.type, s->as.var_decl.init);
+        } else if (s && s->kind == STMT_ARRAY_DECL && s->as.array_decl.is_global) {
+            // Global array declaration
+            int size = s->as.array_decl.init_list.count;
+            if (size == 0 && s->as.array_decl.size_expr &&
+                s->as.array_decl.size_expr->kind == EXPR_INT_LIT) {
+                size = (int)s->as.array_decl.size_expr->as.int_val;
+            }
+            alloc_global_array(&cg, s->as.array_decl.name, s->as.array_decl.elem_type,
+                               size, &s->as.array_decl.init_list);
         }
     }
 
