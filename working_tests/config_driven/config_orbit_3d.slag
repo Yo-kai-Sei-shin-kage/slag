@@ -1,0 +1,159 @@
+// 3D Orbital motion with perspective
+// orbit_3d.txt: center_x, center_y, radius, base_w, base_h, r, g, b, speed, y_scale, depth_scale
+// y_scale: percentage (50 = half vertical radius for tilted orbit)
+// depth_scale: percentage (50 = size varies 50% based on depth)
+
+global int[] sin90 = {0, 174, 342, 500, 643, 766, 866, 940, 985, 1000};
+
+function get_sin(int angle) {
+    var int quad = $(($angle / 9));
+    var int idx = $(($angle - $quad * 9));
+    var int val = 0;
+    if (quad == 0) {
+        val = sin90[idx];
+    }
+    if (quad == 1) {
+        val = sin90[$((9 - $idx))];
+    }
+    if (quad == 2) {
+        val = $((0 - sin90[$idx]));
+    }
+    if (quad == 3) {
+        val = $((0 - sin90[$((9 - $idx))]));
+    }
+    return int val;
+}
+
+function get_cos(int angle) {
+    var int shifted = $(($angle + 9));
+    if (shifted >= 36) {
+        shifted = $(($shifted - 36));
+    }
+    return int get_sin(shifted);
+}
+
+function parse_int(int ptr, int start, int end) {
+    var int val = 0;
+    var int i = start;
+    while (i < end) {
+        var int byte = mem.peek8(ptr, i);
+        if (byte >= 48) {
+            if (byte <= 57) {
+                val = $(($val * 10 + $byte - 48));
+            }
+        }
+        i = $(($i + 1));
+    }
+    return int val;
+}
+
+function main() {
+    window.open(640, 480, "3D Orbital Motion");
+
+    var str config = readfile("orbit_3d.txt");
+    var int ptr = config;
+
+    // Parse values (11 total)
+    var int[] v = {0,0,0,0,0,0,0,0,0,0,0};
+    var int idx = 0;
+    var int line_start = 0;
+    var int pos = 0;
+    var int done = 0;
+
+    while (done == 0) {
+        var int byte = mem.peek8(ptr, pos);
+        if (byte == 10) {
+            if (pos > line_start) {
+                v[idx] = parse_int(ptr, line_start, pos);
+                idx = $(($idx + 1));
+            }
+            line_start = $(($pos + 1));
+        }
+        if (byte == 0) {
+            if (pos > line_start) {
+                v[idx] = parse_int(ptr, line_start, pos);
+            }
+            done = 1;
+        }
+        pos = $(($pos + 1));
+        if (pos > 500) {
+            done = 1;
+        }
+    }
+
+    var int cx = v[0];
+    var int cy = v[1];
+    var int radius = v[2];
+    var int base_w = v[3];
+    var int base_h = v[4];
+    var int r = v[5];
+    var int g = v[6];
+    var int b = v[7];
+    var int speed = v[8];
+    var int y_scale = v[9];
+    var int depth_scale = v[10];
+
+    var int angle = 0;
+    var int frame = 0;
+
+    while (window.is_open()) {
+        // Clear
+        fill_triangle(0, 0, 640, 0, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 480, 0, 480, 0, 0, 0);
+
+        // Get sin and cos
+        var int sinVal = get_sin(angle);
+        var int cosVal = get_cos(angle);
+
+        // Calculate position with Y compression for tilted orbit
+        // sinVal ranges -1000 to +1000
+        var int x = $(($cx + $radius * $cosVal / 1000));
+        var int y = $(($cy + $radius * $sinVal * $y_scale / 100000));
+
+        // Perspective scaling based on depth (sinVal)
+        // When sinVal is negative (top/far), scale down
+        // When sinVal is positive (bottom/near), scale up
+        // scale_factor = 1000 + (sinVal * depth_scale / 100)
+        var int scale_factor = $((1000 + $sinVal * $depth_scale / 100));
+
+        // Clamp scale to reasonable range (500-1500 = 50%-150%)
+        if (scale_factor < 500) {
+            scale_factor = 500;
+        }
+        if (scale_factor > 1500) {
+            scale_factor = 1500;
+        }
+
+        // Apply scale to size
+        var int w = $(($base_w * $scale_factor / 1000));
+        var int h = $(($base_h * $scale_factor / 1000));
+
+        // Center the square on position
+        var int x1 = $(($x - $w / 2));
+        var int y1 = $(($y - $h / 2));
+        var int x2 = $(($x1 + $w));
+        var int y2 = $(($y1 + $h));
+
+        // Draw square
+        fill_triangle(x1, y1, x2, y1, x2, y2, r, g, b);
+        fill_triangle(x1, y1, x2, y2, x1, y2, r, g, b);
+
+        // Draw center point
+        fill_triangle($(($cx - 3)), $(($cy - 3)), $(($cx + 3)), $(($cy - 3)), $(($cx + 3)), $(($cy + 3)), 100, 100, 100);
+        fill_triangle($(($cx - 3)), $(($cy - 3)), $(($cx + 3)), $(($cy + 3)), $(($cx - 3)), $(($cy + 3)), 100, 100, 100);
+
+        // Update angle every 2 frames
+        frame = $(($frame + 1));
+        if (frame >= 2) {
+            frame = 0;
+            angle = $(($angle + $speed));
+            if (angle >= 36) {
+                angle = $(($angle - 36));
+            }
+        }
+
+        window.flush();
+    }
+
+    return int 0;
+}
