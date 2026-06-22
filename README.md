@@ -17,6 +17,7 @@ Slag is under active development. The pipeline currently supports:
   - Integer and float arithmetic, comparisons, logical short-circuit operators
   - Mixed int/float expressions auto-promote (int operands are converted with `cvtsi2sd`); assigning a float expression to an `int` truncates via `cvttsd2si`. No cast syntax is required
   - Fixed-size arrays (declaration, indexing, `.len`)
+  - Global arrays (`global int[] data = {1, 2, 3};`) — accessible from any function, stored in `.data` section
   - Control flow (if/else, while)
   - `print`/`println` for ints, floats, string literals, and string variables
   - String variable ptr+len tracking
@@ -58,6 +59,8 @@ Slag is under active development. The pipeline currently supports:
   - **Rasterization and timing builtins**:
     - `fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)` — flat-shaded scanline triangle rasterizer, writes directly to the framebuffer with no per-pixel call overhead; bounds-clamped
     - `fill_triangle_gradient(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)` — per-vertex color (Gouraud-style) scanline rasterizer with linear interpolation along edges and across spans (smooth color blending across a triangle's interior)
+    - `fill_triangle_z(x0,y0,z0, x1,y1,z1, x2,y2,z2, r,g,b)` — depth-tested triangle rasterizer; x/y are int screen coords, z values are float depth; pixels only drawn if closer than existing z-buffer value
+    - `zbuffer.clear()` — resets the z-buffer to max depth (call at start of each frame)
     - `time.now_ms()` — milliseconds since system start (`GetTickCount`), useful for fps counters and frame timing
     - `time.now_us()` — microseconds via `QueryPerformanceCounter`/`QueryPerformanceFrequency`; high-resolution timing for benchmarks and precise frame timing
   - **Keyboard/mouse event handlers** — `on key_down`, `on key_up`, `on mouse_move`, `on mouse_down`, `on mouse_up` (buttons: 0=left, 1=right, 2=middle), and `on mouse_wheel(int delta)` (delta is ±120 per notch) are compiled to standalone procs and dispatched directly from the window's `WndProc`; handlers not defined by the user fall back to no-op stubs
@@ -73,10 +76,10 @@ Slag is under active development. The pipeline currently supports:
 
 ### Not yet implemented
 
-- Dynamic arrays; passing arrays into functions (use `mem.alloc` + pointers to share buffers across functions instead)
+- Dynamic arrays; passing arrays as function parameters (use global arrays or `mem.alloc` + pointers to share buffers across functions instead)
 - Per-vertex (Gouraud) lighting on meshes — the gradient rasterizer exists, but the cube demo currently uses flat per-face lighting
-- Depth buffering / back-face culling — the cube demos rely on draw order, which is correct for a single convex cube but not for general scenes
-- Built-in 3D math/rendering primitives (matrix types, z-buffering, texture mapping) — not strictly needed, since rotation/projection/rasterization pipelines can already be written in Slag itself (see the cube demos)
+- Back-face culling — the cube demos rely on draw order or z-buffer
+- Built-in 3D math/rendering primitives (matrix types, texture mapping) — not strictly needed, since rotation/projection/rasterization pipelines can already be written in Slag itself (see the cube demos)
 - Encrypted P2P via Windows CNG (`bcrypt.dll`) Diffie-Hellman key exchange + AES — planned next; the networking and buffer primitives it depends on are now in place
 - Self-hosting compiler
 

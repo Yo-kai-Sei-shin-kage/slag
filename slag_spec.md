@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.6 — Draft**
+**Version 0.7 — Draft**
 
 ---
 
@@ -141,6 +141,19 @@ Global variables are declared at file scope (outside any function) and are:
 - Stored in the `.data` section of the executable
 - Accessible from any function in the program
 - Initialized at compile-time with literal values
+
+#### Global Arrays
+
+```
+global int[] xpos = {50, 150, 250, 350};
+global float[] scales = {1.0, 0.5, 0.25};
+```
+
+Global arrays are declared at file scope and are:
+- Stored in the `.data` section with their element values
+- Accessible from any function via indexing (`xpos[i]`)
+- Support `.len` to get the array length
+- Initialized with brace-enclosed literal values
 
 #### Local Variables
 
@@ -754,13 +767,13 @@ function main() {
 | 0.3     | File I/O (readfile, readline)                               | ✅ Complete |
 | 0.4     | Win32 window, pixel write, triangle rasterizer, keyboard/mouse events, input state, CPU topology detection | ✅ Complete |
 | 0.5     | Multithreading (thread/sync/lock), CPU topology             | ✅ Complete |
-| 0.6     | Memory primitives (mem.*), TCP networking (net.*), multi-byte P2P messaging | ✅ Complete |
-| 0.7     | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
-| 0.8     | Depth buffer, back-face culling, z-tested triangles         | 🔲 Planned  |
+| 0.6     | Memory primitives (mem.*), TCP networking (net.*), multi-byte P2P messaging, global/local scope | ✅ Complete |
+| 0.7     | Global arrays, z-buffer depth testing (fill_triangle_z, zbuffer.clear) | ✅ Complete |
+| 0.8     | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
 | 0.9     | Texture mapping, matrix stack                               | 🔲 Planned  |
 | 0.95    | Lighting model, perspective correction                      | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ---
 
-*Slag Language Specification v0.6 — Subject to revision*
+*Slag Language Specification v0.7 — Subject to revision*

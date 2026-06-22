@@ -170,6 +170,7 @@ struct Stmt {
             Expr *size_expr;      // NULL if size is inferred (TYPE[])
             ExprList init_list;   // for {1,2,3} literal init; empty if init is a call
             Expr *init_call;      // e.g. match(...) - NULL if init_list used
+            int is_global;        // 1 if declared with 'global', 0 otherwise
         } array_decl;
 
         struct {

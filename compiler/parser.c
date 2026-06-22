@@ -494,6 +494,7 @@ static Stmt *parse_var_decl(Parser *p) {
         s->as.array_decl.size_expr = size_expr;
         exprlist_init(&s->as.array_decl.init_list);
         s->as.array_decl.init_call = NULL;
+        s->as.array_decl.is_global = 0;
 
         if (check(p, TOK_LBRACE)) {
             // Brace initializer: { expr, expr, ... }
@@ -553,6 +554,53 @@ static Stmt *parse_global_decl(Parser *p) {
     SlagType base_type = slag_type_from_token(p->current.type);
     advance(p); // consume type keyword
 
+    // Global array declaration: global TYPE[n] name = { ... }
+    if (check(p, TOK_LBRACKET)) {
+        advance(p); // [
+
+        Expr *size_expr = NULL;
+        if (!check(p, TOK_RBRACKET)) {
+            size_expr = parse_expr(p, 0);
+        }
+        expect(p, TOK_RBRACKET, "expected ']' after array size");
+
+        if (!check(p, TOK_IDENT)) {
+            error_at(p, "expected array name");
+            return NULL;
+        }
+        char *name = copy_text(&p->current);
+        advance(p);
+
+        expect(p, TOK_ASSIGN, "expected '=' in global array declaration");
+
+        Stmt *s = stmt_new(STMT_ARRAY_DECL, line, col);
+        s->as.array_decl.elem_type = base_type;
+        s->as.array_decl.name = name;
+        s->as.array_decl.size_expr = size_expr;
+        exprlist_init(&s->as.array_decl.init_list);
+        s->as.array_decl.init_call = NULL;
+        s->as.array_decl.is_global = 1;
+
+        if (check(p, TOK_LBRACE)) {
+            advance(p); // {
+            if (!check(p, TOK_RBRACE)) {
+                for (;;) {
+                    Expr *elem = parse_expr(p, 0);
+                    exprlist_push(&s->as.array_decl.init_list, elem);
+                    if (!match(p, TOK_COMMA)) break;
+                    if (check(p, TOK_RBRACE)) break;
+                }
+            }
+            expect(p, TOK_RBRACE, "expected '}' after array initializer");
+        } else {
+            s->as.array_decl.init_call = parse_expr(p, 0);
+        }
+
+        expect(p, TOK_SEMICOLON, "expected ';' after global array declaration");
+        return s;
+    }
+
+    // Global scalar declaration
     if (!check(p, TOK_IDENT)) {
         error_at(p, "expected variable name");
         return NULL;

@@ -1,0 +1,33 @@
+// Test global array access with visual output
+
+global int[] xpos = {50, 150, 250, 350, 450};
+global int[] ypos = {100, 200, 150, 250, 180};
+
+function draw_points() {
+    var int i = 0;
+    while (i < xpos.len) {
+        var int x = xpos[i];
+        var int y = ypos[i];
+        // Draw a small square at each point
+        fill_triangle(x, y, $((x + 20)), y, $((x + 20)), $((y + 20)), 255, 0, 0);
+        fill_triangle(x, y, $((x + 20)), $((y + 20)), x, $((y + 20)), 255, 0, 0);
+        i = $(($i + 1));
+    }
+}
+
+function main() {
+    window.open(640, 480, "Global Array Test");
+
+    while (window.is_open()) {
+        // Clear screen
+        fill_triangle(0, 0, 640, 0, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 480, 0, 480, 0, 0, 0);
+
+        // Draw points from global arrays
+        draw_points();
+
+        window.flush();
+    }
+
+    return int 0;
+}
