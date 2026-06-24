@@ -1177,6 +1177,20 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_window_close");
             emit_call_epilogue(cg, 0);
         }
+        // window.capture_mouse() - trap cursor in window
+        else if (strcmp(member, "capture_mouse") == 0) {
+            emit(cg, "    ; window.capture_mouse");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_window_capture_mouse");
+            emit_call_epilogue(cg, 0);
+        }
+        // window.release_mouse() - release cursor
+        else if (strcmp(member, "release_mouse") == 0) {
+            emit(cg, "    ; window.release_mouse");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_window_release_mouse");
+            emit_call_epilogue(cg, 0);
+        }
         // window.flush()
         else if (strcmp(member, "flush") == 0) {
             emit(cg, "    ; window.flush");
@@ -1532,6 +1546,30 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "hyperthreaded") == 0) {
             emit(cg, "    ; cpu.hyperthreaded");
             emit(cg, "    mov  rax, [_cpu_hyperthreaded]");
+        }
+        // bit.shl(value, count) -> int (left shift)
+        else if (strcmp(member, "shl") == 0) {
+            emit(cg, "    ; bit.shl (inlined)");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    mov  rax, r12");
+                emit(cg, "    shl  rax, cl");
+            }
+        }
+        // bit.shr(value, count) -> int (right shift, unsigned)
+        else if (strcmp(member, "shr") == 0) {
+            emit(cg, "    ; bit.shr (inlined)");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    mov  rax, r12");
+                emit(cg, "    shr  rax, cl");
+            }
         }
         else {
             emit(cg, "    ; unhandled member call .%s", member);

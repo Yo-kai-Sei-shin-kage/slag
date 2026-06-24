@@ -786,6 +786,108 @@ static void emit_window_utils(Codegen *cg) {
     E("    ret");
     E("");
 
+    // _slag_window_capture_mouse() - capture, clip, and hide cursor
+    // Stack layout: RECT(16) + POINT(8) + padding
+    E("; --- _slag_window_capture_mouse ---");
+    E("_slag_window_capture_mouse:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    push r12");
+    E("    sub  rsp, 64");
+    E("");
+    E("    ; get struct ptr from TLS");
+    E("    sub  rsp, 32");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    add  rsp, 32");
+    E("    mov  rbx, rax");
+    E("");
+    E("    ; SetCapture(hwnd)");
+    E("    mov  rcx, [rbx + WSTATE_HWND]");
+    E("    sub  rsp, 32");
+    E("    call SetCapture");
+    E("    add  rsp, 32");
+    E("");
+    E("    ; GetClientRect(hwnd, &rect) - rect at [rbp-48]");
+    E("    mov  rcx, [rbx + WSTATE_HWND]");
+    E("    lea  rdx, [rbp-48]");
+    E("    sub  rsp, 32");
+    E("    call GetClientRect");
+    E("    add  rsp, 32");
+    E("");
+    E("    ; Save right/bottom before converting top-left");
+    E("    mov  r12d, [rbp-40]          ; save right (offset 8)");
+    E("    mov  eax, [rbp-36]           ; save bottom (offset 12)");
+    E("    mov  [rbp-24], eax           ; store bottom temporarily");
+    E("");
+    E("    ; ClientToScreen top-left point (left,top at offset 0,4)");
+    E("    mov  rcx, [rbx + WSTATE_HWND]");
+    E("    lea  rdx, [rbp-48]           ; point to left,top");
+    E("    sub  rsp, 32");
+    E("    call ClientToScreen");
+    E("    add  rsp, 32");
+    E("");
+    E("    ; Build point2 with saved right,bottom at [rbp-32]");
+    E("    mov  [rbp-32], r12d          ; x = right");
+    E("    mov  eax, [rbp-24]");
+    E("    mov  [rbp-28], eax           ; y = bottom");
+    E("");
+    E("    ; ClientToScreen bottom-right point");
+    E("    mov  rcx, [rbx + WSTATE_HWND]");
+    E("    lea  rdx, [rbp-32]");
+    E("    sub  rsp, 32");
+    E("    call ClientToScreen");
+    E("    add  rsp, 32");
+    E("");
+    E("    ; Build final RECT: [rbp-48] has screen left,top; [rbp-32] has screen right,bottom");
+    E("    mov  eax, [rbp-32]           ; screen right");
+    E("    mov  [rbp-40], eax           ; rect.right");
+    E("    mov  eax, [rbp-28]           ; screen bottom");
+    E("    mov  [rbp-36], eax           ; rect.bottom");
+    E("");
+    E("    ; ClipCursor(&rect)");
+    E("    lea  rcx, [rbp-48]");
+    E("    sub  rsp, 32");
+    E("    call ClipCursor");
+    E("    add  rsp, 32");
+    E("");
+    E("    ; ShowCursor(FALSE)");
+    E("    xor  rcx, rcx");
+    E("    sub  rsp, 32");
+    E("    call ShowCursor");
+    E("    add  rsp, 32");
+    E("");
+    E("    add  rsp, 64");
+    E("    pop  r12");
+    E("    pop  rbx");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // _slag_window_release_mouse() - release and show cursor
+    E("; --- _slag_window_release_mouse ---");
+    E("_slag_window_release_mouse:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    sub  rsp, 32");
+    E("");
+    E("    ; ReleaseCapture()");
+    E("    call ReleaseCapture");
+    E("");
+    E("    ; ClipCursor(NULL)");
+    E("    xor  rcx, rcx");
+    E("    call ClipCursor");
+    E("");
+    E("    ; ShowCursor(TRUE)");
+    E("    mov  rcx, 1");
+    E("    call ShowCursor");
+    E("");
+    E("    add  rsp, 32");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
     // pixel(x, y, r, g, b)
     // rcx=x, rdx=y, r8=r, r9=g, [rsp+32]=b
     // BGRA format: byte order in memory is B, G, R, A
@@ -2021,6 +2123,13 @@ void emit_window_imports(Codegen *cg) {
     E("extern SetWindowLongPtrA");
     E("extern GetWindowLongPtrA");
     E("GWLP_USERDATA equ -21");
+    E("; --- Mouse capture ---");
+    E("extern SetCapture");
+    E("extern ReleaseCapture");
+    E("extern ClipCursor");
+    E("extern ShowCursor");
+    E("extern GetClientRect");
+    E("extern ClientToScreen");
     E("");
 }
 
