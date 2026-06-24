@@ -452,6 +452,8 @@ window.capture_mouse();              // capture mouse, clip to window, hide curs
 window.release_mouse();              // release capture, show cursor
 ```
 
+**Thread-Local Storage (TLS):** Window state is stored per-thread via `TlsAlloc`/`TlsSetValue`, enabling multiple independent windows from a single program. Each thread that calls `window.open()` gets its own window with separate framebuffer, z-buffer, and event handling.
+
 Mouse capture is useful for FPS-style controls where the cursor should be hidden and constrained to the window. Press ESC or call `release_mouse()` to restore normal cursor behavior.
 
 ### 12.2 Pixel Write

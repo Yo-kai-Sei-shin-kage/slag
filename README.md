@@ -65,7 +65,7 @@ Slag is under active development. The pipeline currently supports:
     - `net.ack()` — returns 1/0: did the last network op succeed
     - `net.connected()` — returns 1/0: is the active connection still alive (clears on peer disconnect)
   - **Windowing and software-rendered graphics**:
-    - `window.open(w, h, title)` — creates a window on its own thread with a BGRA DIB framebuffer
+    - `window.open(w, h, title)` — creates a window on its own thread with a BGRA DIB framebuffer; uses TLS so multiple windows can be opened from separate threads
     - `pixel(x, y, r, g, b)` — writes a single pixel into the framebuffer; bounds-checks against the framebuffer dimensions and silently no-ops out-of-range writes (safe to draw off-screen)
     - `window.flush()` — pumps the message queue and blits the framebuffer to the window (sleeps ~16 ms, giving a ~60fps cap)
     - `window.is_open()` — returns 1/0, enabling `while (window.is_open()) { ... }` main loops
