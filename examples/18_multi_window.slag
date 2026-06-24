@@ -1,0 +1,33 @@
+// Example: Multi-Window
+// Demonstrates: Opening two windows from a single program using TLS + threads
+
+function red_window() {
+    window.open(300, 200, "Window 1 - Red");
+    var int frame = 0;
+    while (window.is_open()) {
+        var int pulse = $((100 + $frame % 100));
+        fill_triangle(0, 0, 300, 0, 300, 200, pulse, 30, 30);
+        fill_triangle(0, 0, 300, 200, 0, 200, pulse, 30, 30);
+        window.flush();
+        frame = $(($frame + 1));
+    }
+}
+
+function blue_window() {
+    window.open(300, 200, "Window 2 - Blue");
+    var int frame = 0;
+    while (window.is_open()) {
+        var int pulse = $((100 + $frame % 100));
+        fill_triangle(0, 0, 300, 0, 300, 200, 30, 30, pulse);
+        fill_triangle(0, 0, 300, 200, 0, 200, 30, 30, pulse);
+        window.flush();
+        frame = $(($frame + 1));
+    }
+}
+
+function main() {
+    thread { red_window(); }
+    thread { blue_window(); }
+    sync {}
+    return int 0;
+}
