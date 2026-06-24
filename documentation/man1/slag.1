@@ -198,7 +198,9 @@ into a
 .TP
 .BI window.open( width , " height" , " title" )
 Create a window of the given dimensions and title, with a BGRA pixel
-framebuffer, running on its own thread.
+framebuffer, running on its own thread. Window state is stored in
+thread-local storage (TLS), so multiple threads can each open their
+own independent window.
 .TP
 .B window.close()
 Request that the open window close.
