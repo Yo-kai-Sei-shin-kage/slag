@@ -1,0 +1,15 @@
+// Example: Variables and Types
+function main() {
+    var int x = 100;          // 64-bit signed integer
+    var int count = 42;       // another integer
+    var float pi = 3.14159;   // 64-bit IEEE 754 double
+    var bool active = true;   // boolean (true/false)
+    var str name = "Slag";    // immutable string (ptr+len)
+
+    println(x);               // print integer to console
+    println(count);
+    println(pi);              // print float to console
+    println(name);            // print string to console
+
+    return;                   // void return
+}

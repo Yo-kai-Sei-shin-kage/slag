@@ -1,0 +1,18 @@
+// Example: Control Flow
+function main() {
+    var int x = 10;
+
+    if (x > 5) {                       // if condition
+        println("x is big");
+    } else {                           // else branch
+        println("x is small");
+    }
+
+    var int i = 0;
+    while (i < 3) {                    // while loop
+        println(i);
+        i = $(($i + 1));
+    }
+
+    return;
+}

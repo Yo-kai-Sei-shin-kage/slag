@@ -1,0 +1,15 @@
+// Example: Global Arrays
+global int[] data = {100, 200, 300};  // declared outside functions
+
+function print_data() {
+    println(data[0]);                  // can access global from here
+    println(data[1]);
+    return;
+}
+
+function main() {
+    print_data();
+    println(data[2]);                  // can access global from here too
+    println(data.len);                 // prints 3
+    return;
+}

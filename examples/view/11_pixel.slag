@@ -1,0 +1,13 @@
+// Example: Pixel Drawing
+function main() {
+    window.open(400, 300, "Pixels");
+
+    while (window.is_open()) {
+        pixel(100, 50, 255, 0, 0);       // red pixel at x=100, y=50
+        pixel(200, 100, 0, 255, 0);      // green pixel
+        pixel(150, 75, 0, 0, 255);       // blue pixel
+        window.flush();
+    }
+
+    return;
+}

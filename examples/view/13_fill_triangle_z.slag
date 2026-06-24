@@ -1,0 +1,17 @@
+// Example: Z-Buffered Triangle
+function main() {
+    window.open(400, 300, "Z-Buffer");
+
+    while (window.is_open()) {
+        zbuffer.clear();                 // reset depth buffer each frame
+
+        // fill_triangle_z(x0,y0,z0, x1,y1,z1, x2,y2,z2, r,g,b)
+        // lower z = closer to camera
+        fill_triangle_z(100,50,500, 250,50,500, 175,180,500, 255,0,0);   // far
+        fill_triangle_z(50,120,100, 200,120,100, 125,250,100, 0,0,255);  // near
+
+        window.flush();
+    }
+
+    return;
+}

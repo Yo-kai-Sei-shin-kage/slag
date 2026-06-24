@@ -186,6 +186,30 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    add  rsp, 32");
     E("");
 
+    // Adjust window rect for client area
+    E("    ; --- AdjustWindowRectEx ---");
+    E("    sub  rsp, 48                   ; RECT(16) + shadow(32)");
+    E("    mov  dword [rsp+32], 0         ; left = 0");
+    E("    mov  dword [rsp+36], 0         ; top = 0");
+    E("    mov  eax, [_window_width]");
+    E("    mov  [rsp+40], eax             ; right = width");
+    E("    mov  eax, [_window_height]");
+    E("    mov  [rsp+44], eax             ; bottom = height");
+    E("    lea  rcx, [rsp+32]             ; lpRect");
+    E("    mov  rdx, WS_OVERLAPPEDWINDOW  ; dwStyle");
+    E("    xor  r8, r8                    ; bMenu = FALSE");
+    E("    mov  r9, WS_EX_APPWINDOW       ; dwExStyle");
+    E("    call AdjustWindowRectEx");
+    E("    ; Calculate adjusted dimensions");
+    E("    mov  eax, [rsp+40]             ; right");
+    E("    sub  eax, [rsp+32]             ; right - left");
+    E("    mov  [_adjusted_width], eax");
+    E("    mov  eax, [rsp+44]             ; bottom");
+    E("    sub  eax, [rsp+36]             ; bottom - top");
+    E("    mov  [_adjusted_height], eax");
+    E("    add  rsp, 48");
+    E("");
+
     // Create window
     E("    ; --- CreateWindowEx ---");
     E("    mov  rcx, WS_EX_APPWINDOW     ; dwExStyle");
@@ -195,9 +219,9 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    sub  rsp, 96");
     E("    mov  qword [rsp+32], 100       ; x");
     E("    mov  qword [rsp+40], 100       ; y");
-    E("    mov  rax,  [_window_width]");
+    E("    mov  rax,  [_adjusted_width]");
     E("    mov  [rsp+48], rax             ; nWidth");
-    E("    mov  rax,  [_window_height]");
+    E("    mov  rax,  [_adjusted_height]");
     E("    mov  [rsp+56], rax             ; nHeight");
     E("    mov  qword [rsp+64], 0         ; hWndParent = NULL");
     E("    mov  qword [rsp+72], 0         ; hMenu = NULL");
@@ -1757,6 +1781,8 @@ void emit_window_data(Codegen *cg) {
     E("_window_title:      dq 0   ; set by _slag_window_open");
     E("_window_width:      dq 0");
     E("_window_height:     dq 0");
+    E("_adjusted_width:    dq 0");
+    E("_adjusted_height:   dq 0");
     E("_window_open:       dq 0   ; volatile: 1=open, 0=closed");
     E("");
 }
@@ -1796,6 +1822,7 @@ void emit_window_imports(Codegen *cg) {
     E("extern GetModuleHandleA");
     E("extern RegisterClassExA");
     E("extern CreateWindowExA");
+    E("extern AdjustWindowRectEx");
     E("extern ShowWindow");
     E("extern UpdateWindow");
     E("extern GetMessageA");
