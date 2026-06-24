@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-06-19" "slag 0.6" "Slag Programming Language"
+.TH SLAG 1 "2026-06-24" "slag 0.9" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -211,6 +211,13 @@ as a main-loop condition.
 Pump the window's message queue and blit the current framebuffer
 contents to the screen. Caps the frame rate to approximately 60 FPS.
 .TP
+.B window.capture_mouse()
+Capture the mouse, clip the cursor to the window bounds, and hide the
+cursor. Useful for FPS-style controls.
+.TP
+.B window.release_mouse()
+Release mouse capture and show the cursor.
+.TP
 .BI pixel( x , " y" , " r" , " g" , " b" )
 Write a single RGB pixel into the framebuffer at
 .RI ( x , " y" ).
@@ -318,6 +325,15 @@ Store / load a single byte at a byte offset.
 .TP
 .BR mem.poke64(ptr,wordoff,val) ", " mem.peek64(ptr,wordoff)
 Store / load 8 bytes at a word offset (byte offset = wordoff times 8).
+.SS Bit manipulation
+.TP
+.B bit.shl(value,count)
+Left shift. Inlined to a single shl instruction; enables 16.16 fixed-point
+arithmetic (e.g., bit.shl(n, 16) converts an integer to fixed-point).
+.TP
+.B bit.shr(value,count)
+Unsigned right shift. Inlined to a single shr instruction; bit.shr(fixed, 16)
+converts fixed-point back to integer.
 .SS Networking
 TCP networking via ws2_32; supports persistent peer-to-peer sessions
 between two machines running the same program. Programs using networking
