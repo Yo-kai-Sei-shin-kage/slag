@@ -50,6 +50,9 @@ Slag is under active development. The pipeline currently supports:
     - `mem.free(ptr)` — `HeapFree`
     - `mem.poke8(ptr, byteoff, val)` / `mem.peek8(ptr, byteoff)` — single-byte store/load at a byte offset (for network/crypto byte streams)
     - `mem.poke64(ptr, wordoff, val)` / `mem.peek64(ptr, wordoff)` — 8-byte store/load at a word offset (`wordoff*8` bytes; for bulk moves and bignum limbs)
+  - **Bit manipulation — `bit.*`** (inlined to single CPU instructions, no function-call overhead):
+    - `bit.shl(val, count)` — left shift; enables 16.16 fixed-point: `bit.shl(n, 16)` converts int to fixed
+    - `bit.shr(val, count)` — unsigned right shift; `bit.shr(fixed, 16)` converts fixed to int
   - **Networking — `net.*`** (TCP via `ws2_32`; supports persistent peer-to-peer sessions between two machines running the same program):
     - `net.start()` / `net.end()` — `WSAStartup` / close sockets + `WSACleanup`
     - `net.bind(port)` — create socket, bind, and listen (no block)
@@ -67,6 +70,8 @@ Slag is under active development. The pipeline currently supports:
     - `window.flush()` — pumps the message queue and blits the framebuffer to the window (sleeps ~16 ms, giving a ~60fps cap)
     - `window.is_open()` — returns 1/0, enabling `while (window.is_open()) { ... }` main loops
     - `window.close()` — requests the window close (posts `WM_CLOSE`)
+    - `window.capture_mouse()` — captures mouse, clips cursor to window, hides cursor (for FPS-style controls)
+    - `window.release_mouse()` — releases mouse capture, shows cursor
   - **Rasterization and timing builtins**:
     - `fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)` — flat-shaded scanline triangle rasterizer, writes directly to the framebuffer with no per-pixel call overhead; bounds-clamped
     - `fill_triangle_gradient(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)` — per-vertex color (Gouraud-style) scanline rasterizer with linear interpolation along edges and across spans (smooth color blending across a triangle's interior)

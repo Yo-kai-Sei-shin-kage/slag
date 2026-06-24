@@ -448,7 +448,11 @@ Multi-byte transfer pairs with the `mem.*` primitives: build a message with
 window.open(width, height, title);   // create window on its own thread
 window.is_open()                     // returns 1 if open, 0 if closed
 window.close();                      // post WM_CLOSE to the window
+window.capture_mouse();              // capture mouse, clip to window, hide cursor
+window.release_mouse();              // release capture, show cursor
 ```
+
+Mouse capture is useful for FPS-style controls where the cursor should be hidden and constrained to the window. Press ESC or call `release_mouse()` to restore normal cursor behavior.
 
 ### 12.2 Pixel Write
 
@@ -618,6 +622,24 @@ Per-face Lambertian lighting can be implemented in Slag: compute each face norma
 - The runtime also uses heap allocation internally for the pixel buffer,
   z-buffer, and file I/O
 
+### 14.2 Bit Manipulation — `bit.*`
+
+Bit shift operations for fixed-point arithmetic and low-level manipulation:
+
+```
+bit.shl(value, count)   // left shift — inlined to shl instruction
+bit.shr(value, count)   // unsigned right shift — inlined to shr instruction
+```
+
+**16.16 Fixed-Point Example:**
+```
+var int fixed = bit.shl(3, 16);           // 3 << 16 = 196608 (3.0 in 16.16)
+var int product = bit.shr($(($a * $b)), 16);  // fixed multiply
+var int back = bit.shr(fixed, 16);        // convert back to int = 3
+```
+
+These are inlined to single CPU instructions with no function-call overhead.
+
 ---
 
 ## 15. Compiler Architecture
@@ -661,6 +683,8 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `window.close()`                | Post WM_CLOSE to window                            |
 | `window.is_open()`              | Returns 1 if window is open                        |
 | `window.flush()`                | Blit framebuffer to window (~60fps cap)            |
+| `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
+| `window.release_mouse()`        | Release capture, show cursor                       |
 | `zbuffer.clear()`               | Reset depth buffer                                 |
 | `time.now_ms()`                 | Milliseconds since system start (GetTickCount)     |
 | `time.now_us()`                 | Microseconds (QueryPerformanceCounter, high-res)   |
@@ -685,6 +709,8 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `mem.peek8(ptr,off)`            | Load byte at ptr[off] -> int                       |
 | `mem.poke64(ptr,woff,v)`        | Store 8 bytes at ptr + woff*8                      |
 | `mem.peek64(ptr,woff)`          | Load 8 bytes at ptr + woff*8 -> int                |
+| `bit.shl(val,count)`            | Left shift (inlined to shl instruction)            |
+| `bit.shr(val,count)`            | Unsigned right shift (inlined to shr instruction)  |
 | `net.start()` / `net.end()`     | Begin / end a networking session (ws2_32)          |
 | `net.bind(port)`                | Socket + bind + listen (no block)                  |
 | `net.accept()`                  | Block for a peer on the bound socket               |
