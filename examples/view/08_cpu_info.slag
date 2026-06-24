@@ -1,0 +1,9 @@
+// Example: CPU Information
+function main() {
+    println(cpu.physical_cores());     // number of physical cores
+    println(cpu.logical_cores());      // number of logical processors
+    println(cpu.threads_per_core());   // threads per core (2 = hyperthreaded)
+    println(cpu.safe_thread_limit());  // suggested max worker threads
+    println(cpu.hyperthreaded());      // 1 if hyperthreading on, 0 if off
+    return;
+}

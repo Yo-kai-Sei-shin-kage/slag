@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 # slagrun — compile, assemble, link, and run a Slag program.
 # Usage: slagrun [-d] program[.slag]
 #   -d  Debug mode: keep .asm and .obj files after running
@@ -6,12 +6,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-declare debug;
-if [ "${1}" == '-d' ]; then
-    let debug='1'
+debug=0
+if [[ "$1" == "-d" ]]; then
+    debug=1
     shift
-else
-    let debug='0'
 fi
 
 base="${1%.slag}"
@@ -34,7 +32,7 @@ case "$(uname -s)" in
             -lkernel32 -luser32 -lgdi32 -lws2_32
         "./$base.exe"
         # Cleanup unless debug mode
-        if [ "${debug}" == '0' ]; then
+        if [[ $debug -eq 0 ]]; then
             rm -f "$base.asm" "$base.obj" "$base.exe"
         fi
         ;;

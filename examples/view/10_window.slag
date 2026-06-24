@@ -1,0 +1,11 @@
+// Example: Window Management
+function main() {
+    window.open(400, 300, "My Window");  // open window (width, height, title)
+
+    while (window.is_open()) {           // loop until window closed
+        // draw stuff here
+        window.flush();                  // update display (~60fps)
+    }
+
+    return;
+}

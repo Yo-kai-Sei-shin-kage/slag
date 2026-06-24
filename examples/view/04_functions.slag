@@ -1,0 +1,21 @@
+// Example: Functions
+function add(int a, int b) {           // takes two int parameters
+    return int $(($a + $b));           // returns an int
+}
+
+function square(int n) {
+    return int $(($n * $n));
+}
+
+function greet() {
+    println("Hello");
+    return;                            // no return value
+}
+
+function main() {
+    greet();
+    println(add(5, 3));                // prints 8
+    println(square(6));                // prints 36
+    println(add(square(3), 1));        // nested call, prints 10
+    return;
+}

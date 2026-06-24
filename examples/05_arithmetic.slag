@@ -66,25 +66,45 @@ function draw_int(int x, int y, int val, int r, int g, int b) {
     return int $(($cx - $x));
 }
 
+function draw_float_10x(int x, int y, int val10, int r, int g, int b) {
+    var int cx = x;
+    if (val10 < 0) { draw_char(cx, y, 45, r, g, b); cx = $(($cx + 6)); val10 = $((0 - $val10)); }
+    var int ipart = $(($val10 / 10));
+    var int fpart = $(($val10 % 10));
+    var int w = draw_int(cx, y, ipart, r, g, b);
+    cx = $(($cx + $w));
+    draw_char(cx, y, 46, r, g, b);
+    cx = $(($cx + 6));
+    draw_char(cx, y, $((48 + $fpart)), r, g, b);
+    return int $(($cx + 6 - $x));
+}
+
 function main() {
-    window.open(400, 300, "Arithmetic Example");
+    window.open(400, 425, "Arithmetic Example");
 
     var int a = 15;
     var int b = 4;
+    var float x = 3.5;
+    var float y = 1.2;
 
     var str title = "ARITHMETIC DEMO";
     var str l1 = "A = 15, B = 4";
-    var str l2 = "$A + $B =";
-    var str l3 = "$A - $B =";
-    var str l4 = "$A * $B =";
-    var str l5 = "$A / $B =";
-    var str l6 = "$A % $B =";
+    var str l2 = "$(($A + $B)) =";
+    var str l3 = "$(($A - $B)) =";
+    var str l4 = "$(($A * $B)) =";
+    var str l5 = "$(($A / $B)) =";
+    var str l6 = "$(($A % $B)) =";
     var str l7 = "$(($A * 2 + $B)) =";
+    var str lf1 = "X = 3.5, Y = 1.2";
+    var str lf2 = "$(($X + $Y)) =";
+    var str lf3 = "$(($X - $Y)) =";
+    var str lf4 = "$(($X * $Y)) =";
+    var str lf5 = "$(($X / $Y)) =";
 
     while (window.is_open()) {
         // Clear
-        fill_triangle(0, 0, 400, 0, 400, 300, 20, 20, 30);
-        fill_triangle(0, 0, 400, 300, 0, 300, 20, 20, 30);
+        fill_triangle(0, 0, 400, 0, 400, 425, 20, 20, 30);
+        fill_triangle(0, 0, 400, 425, 0, 425, 20, 20, 30);
 
         // Title
         draw_str(110, 20, title, 255, 255, 100);
@@ -111,6 +131,31 @@ function main() {
         // Complex expression
         draw_str(50, 190, l7, 150, 255, 150);
         draw_int(180, 190, $(($a * 2 + $b)), 255, 255, 255);
+
+        // Float arithmetic (multiply by 10 for display)
+        draw_str(50, 220, lf1, 200, 200, 200);
+
+        var float r1 = $(($x + $y));
+        var float r2 = $(($x - $y));
+        var float r3 = $(($x * $y));
+        var float r4 = $(($x / $y));
+
+        var int r1i = $(($r1 * 10.0));
+        var int r2i = $(($r2 * 10.0));
+        var int r3i = $(($r3 * 10.0));
+        var int r4i = $(($r4 * 10.0));
+
+        draw_str(50, 250, lf2, 150, 200, 255);
+        draw_float_10x(180, 250, r1i, 255, 255, 255);
+
+        draw_str(50, 270, lf3, 150, 200, 255);
+        draw_float_10x(180, 270, r2i, 255, 255, 255);
+
+        draw_str(50, 290, lf4, 150, 200, 255);
+        draw_float_10x(180, 290, r3i, 255, 255, 255);
+
+        draw_str(50, 310, lf5, 150, 200, 255);
+        draw_float_10x(180, 310, r4i, 255, 255, 255);
 
         window.flush();
     }

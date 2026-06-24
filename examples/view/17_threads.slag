@@ -1,0 +1,18 @@
+// Example: Threads
+function main() {
+    println("starting threads");
+
+    thread {                           // runs in parallel
+        println("thread A");
+    }
+
+    thread {                           // runs in parallel
+        println("thread B");
+    }
+
+    sync {                             // wait for all threads to finish
+        println("all done");
+    }
+
+    return;
+}

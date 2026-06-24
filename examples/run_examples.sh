@@ -3,6 +3,7 @@
 # Interactive terminal interface to view and run Slag examples
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VIEW_DIR="$SCRIPT_DIR/view"
 COMPILER_DIR="$(dirname "$SCRIPT_DIR")/compiler"
 
 # Colors
@@ -28,15 +29,17 @@ list_examples() {
     echo -e "${GREEN}Available Examples:${NC}"
     echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
 
-    local i=1
+    local i=1 name desc line
     for file in "$SCRIPT_DIR"/*.slag; do
         if [ -f "$file" ]; then
-            local basename=$(basename "$file" .slag)
-            local desc=$(head -2 "$file" | grep "^// Example:" | sed 's/^\/\/ Example: //')
-            if [ -z "$desc" ]; then
-                desc="$basename"
-            fi
-            printf "${YELLOW}%2d${NC}) %-20s - %s\n" "$i" "$basename" "$desc"
+            name="${file##*/}"
+            name="${name%.slag}"
+            # Read first 2 lines using bash built-in
+            desc=""
+            { read -r line; read -r line; } < "$file"
+            [[ "$line" == "// Example:"* ]] && desc="${line#// Example: }"
+            [ -z "$desc" ] && desc="$name"
+            printf "${YELLOW}%2d${NC}) %-20s - %s\n" "$i" "$name" "$desc"
             i=$((i + 1))
         fi
     done
@@ -53,6 +56,20 @@ get_example_file() {
     local num=$1
     local i=1
     for file in "$SCRIPT_DIR"/*.slag; do
+        if [ -f "$file" ]; then
+            if [ "$i" -eq "$num" ]; then
+                echo "$file"
+                return
+            fi
+            i=$((i + 1))
+        fi
+    done
+}
+
+get_view_file() {
+    local num=$1
+    local i=1
+    for file in "$VIEW_DIR"/*.slag; do
         if [ -f "$file" ]; then
             if [ "$i" -eq "$num" ]; then
                 echo "$file"
@@ -162,7 +179,7 @@ while true; do
             echo -ne "${CYAN}Enter example number to view: ${NC}"
             read num
             if [[ "$num" =~ ^[0-9]+$ ]]; then
-                file=$(get_example_file "$num")
+                file=$(get_view_file "$num")
                 if [ -n "$file" ]; then
                     view_source "$file"
                 else
@@ -192,7 +209,7 @@ while true; do
                     echo -ne "${CYAN}[v]iew or [r]un? ${NC}"
                     read action
                     case $action in
-                        v|V) view_source "$file" ;;
+                        v|V) view_file=$(get_view_file "$choice"); view_source "$view_file" ;;
                         r|R) run_example "$file" ;;
                     esac
                 else
