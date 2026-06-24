@@ -1184,10 +1184,17 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_window_flush");
             emit_call_epilogue(cg, 0);
         }
-        // window.is_open() -> int (0 or 1)
+        // window.is_open() -> int (0 or 1) - TLS-based
         else if (strcmp(member, "is_open") == 0) {
-            emit(cg, "    ; window.is_open");
-            emit(cg, "    mov  rax, [_window_open]");
+            emit(cg, "    ; window.is_open (TLS)");
+            emit(cg, "    push rbx");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    mov  rcx, [_window_tls_index]");
+            emit(cg, "    call TlsGetValue");
+            emit(cg, "    mov  rbx, rax");
+            emit(cg, "    mov  rax, [rbx + WSTATE_OPEN]");
+            emit(cg, "    add  rsp, 32");
+            emit(cg, "    pop  rbx");
         }
         // input.drag_x() -> int accumulated drag offset x
         else if (strcmp(member, "drag_x") == 0) {
