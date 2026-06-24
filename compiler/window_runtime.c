@@ -29,6 +29,24 @@
 static void emit_window_constants(Codegen *cg) {
     E("; --- Win32 window constants ---");
     E("WS_OVERLAPPEDWINDOW  equ 0x00CF0000");
+    E("");
+    E("; --- Window state struct offsets (TLS) ---");
+    E("WSTATE_HWND        equ 0");
+    E("WSTATE_HDC         equ 8");
+    E("WSTATE_MEMDC       equ 16");
+    E("WSTATE_HBITMAP     equ 24");
+    E("WSTATE_PIXELS      equ 32");
+    E("WSTATE_ZBUFFER     equ 40");
+    E("WSTATE_WIDTH       equ 48");
+    E("WSTATE_HEIGHT      equ 56");
+    E("WSTATE_ADJ_W       equ 64");
+    E("WSTATE_ADJ_H       equ 72");
+    E("WSTATE_OPEN        equ 80");
+    E("WSTATE_TITLE       equ 88");
+    E("WSTATE_READY_EVT   equ 96");
+    E("WSTATE_THREAD      equ 104");
+    E("WSTATE_MSG         equ 112");
+    E("WSTATE_SIZE        equ 160");
     E("WS_VISIBLE           equ 0x10000000");
     E("WS_EX_APPWINDOW      equ 0x00040000");
     E("CS_HREDRAW           equ 0x0002");
@@ -68,11 +86,12 @@ static void emit_window_constants(Codegen *cg) {
 // ---------------------------------------------------------------------
 // _slag_window_open(rcx=w, rdx=h, r8=title_ptr, r9=title_len)
 //
-// 1. Saves w/h into _window_width/_window_height
-// 2. Creates a Win32 manual-reset event (_window_ready_event)
-// 3. Spawns _slag_window_thread_proc on a new thread
-// 4. Waits on _window_ready_event (window is up and DIB is allocated)
-// 5. Returns
+// TLS-based implementation:
+// 1. Initialize TLS slot if first call
+// 2. Allocate window state struct via HeapAlloc
+// 3. Store params in struct, store struct ptr in TLS
+// 4. Spawn window thread with struct ptr as parameter
+// 5. Wait for ready event
 // ---------------------------------------------------------------------
 static void emit_window_open(Codegen *cg) {
     E("; --- _slag_window_open(w, h, title_ptr, title_len) ---");
@@ -82,20 +101,48 @@ static void emit_window_open(Codegen *cg) {
     E("    push r12          ; w");
     E("    push r13          ; h");
     E("    push r14          ; title_ptr");
-    E("    push r15          ; title_len");
+    E("    push r15          ; struct ptr");
     E("    sub  rsp, 64");
     E("");
     E("    mov  r12, rcx");
     E("    mov  r13, rdx");
     E("    mov  r14, r8");
-    E("    mov  r15, r9");
     E("");
-    E("    ; store dimensions");
-    E("    mov  [_window_width],  r12");
-    E("    mov  [_window_height], r13");
-    E("    mov  [_window_title],  r14");
+    E("    ; --- Initialize TLS if needed ---");
+    E("    cmp  qword [_window_tls_init], 1");
+    E("    je   .tls_ready");
+    E("    sub  rsp, 32");
+    E("    call TlsAlloc");
+    E("    add  rsp, 32");
+    E("    mov  [_window_tls_index], rax");
+    E("    mov  qword [_window_tls_init], 1");
+    E(".tls_ready:");
     E("");
-    E("    ; create manual-reset event (initially unsignaled)");
+    E("    ; --- Allocate window state struct (WSTATE_SIZE bytes) ---");
+    E("    sub  rsp, 32");
+    E("    call GetProcessHeap");
+    E("    add  rsp, 32");
+    E("    mov  rcx, rax           ; hHeap");
+    E("    mov  rdx, 8             ; HEAP_ZERO_MEMORY");
+    E("    mov  r8,  WSTATE_SIZE   ; dwBytes");
+    E("    sub  rsp, 32");
+    E("    call HeapAlloc");
+    E("    add  rsp, 32");
+    E("    mov  r15, rax           ; r15 = struct ptr");
+    E("");
+    E("    ; --- Store params in struct ---");
+    E("    mov  [r15 + WSTATE_WIDTH],  r12");
+    E("    mov  [r15 + WSTATE_HEIGHT], r13");
+    E("    mov  [r15 + WSTATE_TITLE],  r14");
+    E("");
+    E("    ; --- Store struct ptr in TLS ---");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    mov  rdx, r15");
+    E("    sub  rsp, 32");
+    E("    call TlsSetValue");
+    E("    add  rsp, 32");
+    E("");
+    E("    ; --- Create ready event, store in struct ---");
     E("    xor  rcx, rcx          ; lpEventAttributes = NULL");
     E("    mov  rdx, 1            ; bManualReset = TRUE");
     E("    xor  r8,  r8           ; bInitialState = FALSE");
@@ -103,22 +150,22 @@ static void emit_window_open(Codegen *cg) {
     E("    sub  rsp, 32");
     E("    call CreateEventA");
     E("    add  rsp, 32");
-    E("    mov  [_window_ready_event], rax");
+    E("    mov  [r15 + WSTATE_READY_EVT], rax");
     E("");
-    E("    ; spawn window thread");
+    E("    ; --- Spawn window thread with struct ptr as param ---");
     E("    xor  rcx, rcx          ; lpThreadAttributes = NULL");
     E("    xor  rdx, rdx          ; dwStackSize = default");
     E("    lea  r8,  [_slag_window_thread_proc]");
-    E("    xor  r9,  r9           ; lpParameter = NULL");
+    E("    mov  r9,  r15          ; lpParameter = struct ptr");
     E("    sub  rsp, 48");
-    E("    mov  qword [rsp+32], 0 ; dwCreationFlags = 0 (run immediately)");
+    E("    mov  qword [rsp+32], 0 ; dwCreationFlags = 0");
     E("    mov  qword [rsp+40], 0 ; lpThreadId = NULL");
     E("    call CreateThread");
     E("    add  rsp, 48");
-    E("    mov  [_window_thread], rax");
+    E("    mov  [r15 + WSTATE_THREAD], rax");
     E("");
-    E("    ; wait for window to be ready");
-    E("    mov  rcx, [_window_ready_event]");
+    E("    ; --- Wait for window to be ready ---");
+    E("    mov  rcx, [r15 + WSTATE_READY_EVT]");
     E("    mov  rdx, INFINITE");
     E("    sub  rsp, 32");
     E("    call WaitForSingleObject");
@@ -135,22 +182,32 @@ static void emit_window_open(Codegen *cg) {
 }
 
 // ---------------------------------------------------------------------
-// _slag_window_thread_proc
+// _slag_window_thread_proc(rcx = struct_ptr)
 //
-// Runs on a dedicated thread. Registers WNDCLASSEX, creates the window,
-// creates the DIB section, signals _window_ready_event, then runs the
-// Win32 message loop until WM_DESTROY.
+// Runs on a dedicated thread. Receives window state struct pointer.
+// Registers WNDCLASSEX, creates the window, creates the DIB section,
+// signals ready event, then runs the Win32 message loop until WM_DESTROY.
 // ---------------------------------------------------------------------
 static void emit_window_thread_proc(Codegen *cg) {
-    E("; --- _slag_window_thread_proc ---");
+    E("; --- _slag_window_thread_proc(rcx=struct_ptr) ---");
     E("_slag_window_thread_proc:");
     E("    push rbp");
     E("    mov  rbp, rsp");
+    E("    push rbx              ; struct ptr (preserved)");
     E("    push r12");
     E("    push r13");
     E("    push r14");
     E("    push r15");
-    E("    sub  rsp, 160          ; WNDCLASSEX(80) + MSG(48) + locals");
+    E("    sub  rsp, 168         ; WNDCLASSEX(80) + MSG(48) + locals + align");
+    E("");
+    E("    mov  rbx, rcx         ; rbx = struct ptr (callee-saved)");
+    E("");
+    E("    ; --- Store struct ptr in TLS for this thread ---");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    mov  rdx, rbx");
+    E("    sub  rsp, 32");
+    E("    call TlsSetValue");
+    E("    add  rsp, 32");
     E("");
 
     // Register window class
@@ -163,6 +220,7 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    mov  dword [rsp+16], 0         ; cbClsExtra");
     E("    mov  dword [rsp+20], 0         ; cbWndExtra");
     E("    sub  rsp, 32");
+    E("    xor  rcx, rcx");
     E("    call GetModuleHandleA          ; rcx=NULL -> hInstance");
     E("    add  rsp, 32");
     E("    mov  r12, rax                  ; save hInstance");
@@ -191,9 +249,9 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    sub  rsp, 48                   ; RECT(16) + shadow(32)");
     E("    mov  dword [rsp+32], 0         ; left = 0");
     E("    mov  dword [rsp+36], 0         ; top = 0");
-    E("    mov  eax, [_window_width]");
+    E("    mov  eax, [rbx + WSTATE_WIDTH]");
     E("    mov  [rsp+40], eax             ; right = width");
-    E("    mov  eax, [_window_height]");
+    E("    mov  eax, [rbx + WSTATE_HEIGHT]");
     E("    mov  [rsp+44], eax             ; bottom = height");
     E("    lea  rcx, [rsp+32]             ; lpRect");
     E("    mov  rdx, WS_OVERLAPPEDWINDOW  ; dwStyle");
@@ -203,10 +261,10 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    ; Calculate adjusted dimensions");
     E("    mov  eax, [rsp+40]             ; right");
     E("    sub  eax, [rsp+32]             ; right - left");
-    E("    mov  [_adjusted_width], eax");
+    E("    mov  [rbx + WSTATE_ADJ_W], eax");
     E("    mov  eax, [rsp+44]             ; bottom");
     E("    sub  eax, [rsp+36]             ; bottom - top");
-    E("    mov  [_adjusted_height], eax");
+    E("    mov  [rbx + WSTATE_ADJ_H], eax");
     E("    add  rsp, 48");
     E("");
 
@@ -214,14 +272,14 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    ; --- CreateWindowEx ---");
     E("    mov  rcx, WS_EX_APPWINDOW     ; dwExStyle");
     E("    lea  rdx, [_window_class_name] ; lpClassName");
-    E("    mov  r8,  [_window_title]      ; lpWindowName");
+    E("    mov  r8,  [rbx + WSTATE_TITLE] ; lpWindowName");
     E("    mov  r9,  WS_OVERLAPPEDWINDOW  ; dwStyle");
     E("    sub  rsp, 96");
     E("    mov  qword [rsp+32], 100       ; x");
     E("    mov  qword [rsp+40], 100       ; y");
-    E("    mov  rax,  [_adjusted_width]");
+    E("    mov  rax,  [rbx + WSTATE_ADJ_W]");
     E("    mov  [rsp+48], rax             ; nWidth");
-    E("    mov  rax,  [_adjusted_height]");
+    E("    mov  rax,  [rbx + WSTATE_ADJ_H]");
     E("    mov  [rsp+56], rax             ; nHeight");
     E("    mov  qword [rsp+64], 0         ; hWndParent = NULL");
     E("    mov  qword [rsp+72], 0         ; hMenu = NULL");
@@ -230,8 +288,18 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    call CreateWindowExA");
     E("    add  rsp, 96");
     E("    mov  r13, rax                  ; save HWND");
-    E("    mov  [_window_hwnd], rax");
-    E("    mov  qword [_window_open], 1");
+    E("    mov  [rbx + WSTATE_HWND], rax");
+    E("    mov  qword [rbx + WSTATE_OPEN], 1");
+    E("");
+
+    // Store struct ptr in window's GWLP_USERDATA
+    E("    ; --- Store struct ptr in window userdata ---");
+    E("    mov  rcx, r13                  ; hwnd");
+    E("    mov  rdx, GWLP_USERDATA");
+    E("    mov  r8,  rbx                  ; struct ptr");
+    E("    sub  rsp, 32");
+    E("    call SetWindowLongPtrA");
+    E("    add  rsp, 32");
     E("");
 
     // Create DIB section
@@ -239,9 +307,9 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    ; Build BITMAPINFOHEADER on stack");
     E("    sub  rsp, 48                   ; BITMAPINFOHEADER = 40 bytes + pad");
     E("    mov  dword [rsp+0],  40        ; biSize");
-    E("    mov  rax, [_window_width]");
+    E("    mov  rax, [rbx + WSTATE_WIDTH]");
     E("    mov  dword [rsp+4],  eax       ; biWidth");
-    E("    mov  rax, [_window_height]");
+    E("    mov  rax, [rbx + WSTATE_HEIGHT]");
     E("    neg  rax                       ; negative = top-down DIB");
     E("    mov  dword [rsp+8],  eax       ; biHeight");
     E("    mov  word  [rsp+12], 1         ; biPlanes");
@@ -258,36 +326,38 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    call GetDC");
     E("    add  rsp, 32");
     E("    mov  r14, rax                  ; save hDC");
-    E("    mov  [_window_hdc], rax");
+    E("    mov  [rbx + WSTATE_HDC], rax");
     E("    ; CreateCompatibleDC");
     E("    mov  rcx, r14");
     E("    sub  rsp, 32");
     E("    call CreateCompatibleDC");
     E("    add  rsp, 32");
     E("    mov  r15, rax                  ; save memDC");
-    E("    mov  [_window_memdc], rax");
-    E("    ; CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, &pixels, NULL, 0)");
+    E("    mov  [rbx + WSTATE_MEMDC], rax");
+    E("    ; CreateDIBSection - need temp for ppvBits");
     E("    mov  rcx, r15                  ; hdc = memDC");
     E("    lea  rdx, [rsp]                ; pbmi (our BITMAPINFOHEADER at rsp)");
     E("    mov  r8,  DIB_RGB_COLORS");
-    E("    lea  r9,  [_window_pixels]     ; ppvBits — filled by CreateDIBSection");
+    E("    lea  r9,  [rbp-80]             ; temp for ppvBits");
     E("    sub  rsp, 48");
     E("    mov  qword [rsp+32], 0         ; hSection = NULL");
     E("    mov  qword [rsp+40], 0         ; dwOffset = 0");
     E("    call CreateDIBSection");
     E("    add  rsp, 48");
-    E("    mov  [_window_hbitmap], rax");
+    E("    mov  [rbx + WSTATE_HBITMAP], rax");
+    E("    mov  rax, [rbp-80]             ; get pixels ptr from temp");
+    E("    mov  [rbx + WSTATE_PIXELS], rax");
     E("    ; SelectObject(memDC, hbitmap)");
     E("    mov  rcx, r15");
-    E("    mov  rdx, rax");
+    E("    mov  rdx, [rbx + WSTATE_HBITMAP]");
     E("    sub  rsp, 32");
     E("    call SelectObject");
     E("    add  rsp, 32");
     E("    add  rsp, 48                   ; free BITMAPINFOHEADER space");
     E("");
-    E("    ; --- allocate z-buffer: width*height*8 bytes (one double per pixel) ---");
-    E("    mov  rax, [_window_width]");
-    E("    imul rax, [_window_height]");
+    E("    ; --- allocate z-buffer: width*height*8 bytes ---");
+    E("    mov  rax, [rbx + WSTATE_WIDTH]");
+    E("    imul rax, [rbx + WSTATE_HEIGHT]");
     E("    shl  rax, 3                    ; * 8 bytes per double");
     E("    mov  r14, rax                  ; save byte count");
     E("    sub  rsp, 32");
@@ -299,7 +369,7 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    sub  rsp, 32");
     E("    call HeapAlloc");
     E("    add  rsp, 32");
-    E("    mov  [_zbuffer_ptr], rax       ; save depth buffer ptr");
+    E("    mov  [rbx + WSTATE_ZBUFFER], rax");
     E("");
 
     // Show window
@@ -316,17 +386,17 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("");
 
     // Signal ready
-    E("    ; signal _window_ready_event");
-    E("    mov  rcx, [_window_ready_event]");
+    E("    ; signal ready event");
+    E("    mov  rcx, [rbx + WSTATE_READY_EVT]");
     E("    sub  rsp, 32");
     E("    call SetEvent");
     E("    add  rsp, 32");
     E("");
 
-    // Message loop
+    // Message loop - use struct's MSG buffer
     E("    ; --- message loop ---");
     E(".msg_loop:");
-    E("    lea  rcx, [_window_msg]        ; lpMsg");
+    E("    lea  rcx, [rbx + WSTATE_MSG]   ; lpMsg");
     E("    xor  rdx, rdx                  ; hWnd = NULL (all messages)");
     E("    xor  r8,  r8                   ; wMsgFilterMin = 0");
     E("    xor  r9,  r9                   ; wMsgFilterMax = 0");
@@ -335,23 +405,24 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    add  rsp, 32");
     E("    test rax, rax");
     E("    jz   .msg_done");
-    E("    lea  rcx, [_window_msg]");
+    E("    lea  rcx, [rbx + WSTATE_MSG]");
     E("    sub  rsp, 32");
     E("    call TranslateMessage");
     E("    add  rsp, 32");
-    E("    lea  rcx, [_window_msg]");
+    E("    lea  rcx, [rbx + WSTATE_MSG]");
     E("    sub  rsp, 32");
     E("    call DispatchMessageA");
     E("    add  rsp, 32");
     E("    jmp  .msg_loop");
     E(".msg_done:");
-    E("    mov  qword [_window_open], 0");
+    E("    mov  qword [rbx + WSTATE_OPEN], 0");
     E("");
-    E("    lea  rsp, [rbp-32]");
+    E("    add  rsp, 168");
     E("    pop  r15");
     E("    pop  r14");
     E("    pop  r13");
     E("    pop  r12");
+    E("    pop  rbx");
     E("    pop  rbp");
     E("    xor  rax, rax");
     E("    ret");
@@ -361,30 +432,39 @@ static void emit_window_thread_proc(Codegen *cg) {
 // ---------------------------------------------------------------------
 // _slag_wndproc(HWND, UINT msg, WPARAM, LPARAM)
 //
+// Gets window state struct from GWLP_USERDATA.
 // Handles:
-//   WM_DESTROY   — post quit, clear _window_open
+//   WM_DESTROY   — post quit, clear open flag
 //   WM_PAINT     — BitBlt DIB to window
 //   WM_USER_FLUSH— BitBlt DIB to window (from window.flush())
-//   WM_KEYDOWN   — call _slag_on_key_down(wParam)
-//   WM_KEYUP     — call _slag_on_key_up(wParam)
-//   WM_MOUSEMOVE — call _slag_on_mouse_move(x, y)
-//   WM_LBUTTONDOWN etc. — call _slag_on_mouse_down/up(button, x, y)
+//   WM_KEYDOWN/UP, WM_MOUSE* — call event handlers
 // ---------------------------------------------------------------------
 static void emit_wndproc(Codegen *cg) {
     E("; --- _slag_wndproc ---");
     E("_slag_wndproc:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    push r12          ; hwnd");
-    E("    push r13          ; msg");
-    E("    push r14          ; wParam");
-    E("    push r15          ; lParam");
-    E("    sub  rsp, 64");
+    E("    push rbx              ; struct ptr");
+    E("    push r12              ; hwnd");
+    E("    push r13              ; msg");
+    E("    push r14              ; wParam");
+    E("    push r15              ; lParam");
+    E("    sub  rsp, 72");
     E("");
-    E("    mov  r12, rcx     ; hwnd");
-    E("    mov  r13, rdx     ; msg");
-    E("    mov  r14, r8      ; wParam");
-    E("    mov  r15, r9      ; lParam");
+    E("    mov  r12, rcx         ; hwnd");
+    E("    mov  r13, rdx         ; msg");
+    E("    mov  r14, r8          ; wParam");
+    E("    mov  r15, r9          ; lParam");
+    E("");
+    E("    ; --- Get struct ptr from window userdata ---");
+    E("    mov  rcx, r12         ; hwnd");
+    E("    mov  rdx, GWLP_USERDATA");
+    E("    sub  rsp, 32");
+    E("    call GetWindowLongPtrA");
+    E("    add  rsp, 32");
+    E("    mov  rbx, rax         ; rbx = struct ptr");
+    E("    test rbx, rbx");
+    E("    jz   .wndproc_default ; no struct yet, use default");
     E("");
 
     // Dispatch on message
@@ -419,7 +499,8 @@ static void emit_wndproc(Codegen *cg) {
 
     // WM_DESTROY
     E(".wndproc_destroy:");
-    E("    mov  qword [_window_open], 0");
+    E("    mov  qword [rbx + WSTATE_OPEN], 0");
+    E("    xor  rcx, rcx");
     E("    sub  rsp, 32");
     E("    call PostQuitMessage");
     E("    add  rsp, 32");
@@ -431,14 +512,14 @@ static void emit_wndproc(Codegen *cg) {
     E(".wndproc_paint:");
     E(".wndproc_flush:");
     E("    ; BitBlt(hdc, 0, 0, w, h, memdc, 0, 0, SRCCOPY)");
-    E("    mov  rcx, [_window_hdc]");
+    E("    mov  rcx, [rbx + WSTATE_HDC]");
     E("    xor  rdx, rdx              ; x=0");
     E("    xor  r8,  r8               ; y=0");
-    E("    mov  r9,  [_window_width]");
+    E("    mov  r9,  [rbx + WSTATE_WIDTH]");
     E("    sub  rsp, 80");
-    E("    mov  rax, [_window_height]");
+    E("    mov  rax, [rbx + WSTATE_HEIGHT]");
     E("    mov  [rsp+32], rax         ; nHeight");
-    E("    mov  rax, [_window_memdc]");
+    E("    mov  rax, [rbx + WSTATE_MEMDC]");
     E("    mov  [rsp+40], rax         ; hdcSrc");
     E("    mov  qword [rsp+48], 0     ; xSrc=0");
     E("    mov  qword [rsp+56], 0     ; ySrc=0");
@@ -620,11 +701,12 @@ static void emit_wndproc(Codegen *cg) {
     E("");
 
     E(".wndproc_ret:");
-    E("    lea  rsp, [rbp-32]");
+    E("    add  rsp, 72");
     E("    pop  r15");
     E("    pop  r14");
     E("    pop  r13");
     E("    pop  r12");
+    E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
     E("");
@@ -634,27 +716,48 @@ static void emit_wndproc(Codegen *cg) {
 // _slag_window_flush() — posts WM_USER_FLUSH to window thread
 // _slag_window_close() — posts WM_CLOSE to window
 // _slag_pixel(x, y, r, g, b) — writes BGRA pixel to DIB buffer
+// All use TLS to get current thread's window state struct.
 // ---------------------------------------------------------------------
 static void emit_window_utils(Codegen *cg) {
+    // Helper: _slag_get_window_state — gets struct ptr from TLS into rax
+    E("; --- _slag_get_window_state -> rax ---");
+    E("_slag_get_window_state:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    sub  rsp, 32");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    add  rsp, 32");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
     // window.flush()
     E("; --- _slag_window_flush ---");
     E("_slag_window_flush:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 48");
-    E("    mov  rcx, [_window_hwnd]");
+    E("    push rbx");
+    E("    sub  rsp, 40");
+    E("    ; get struct ptr");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    mov  rbx, rax");
+    E("    ; PostMessage(hwnd, WM_USER_FLUSH, 0, 0)");
+    E("    mov  rcx, [rbx + WSTATE_HWND]");
     E("    mov  rdx, WM_USER_FLUSH");
     E("    xor  r8,  r8");
     E("    xor  r9,  r9");
     E("    sub  rsp, 32");
     E("    call PostMessageA");
     E("    add  rsp, 32");
-    E("    ; sleep ~16ms to yield to window thread and cap frame rate (~60fps)");
+    E("    ; sleep ~16ms for frame rate cap");
     E("    mov  rcx, 16");
     E("    sub  rsp, 32");
     E("    call Sleep");
     E("    add  rsp, 32");
-    E("    mov  rsp, rbp");
+    E("    add  rsp, 40");
+    E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
     E("");
@@ -664,8 +767,14 @@ static void emit_window_utils(Codegen *cg) {
     E("_slag_window_close:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 48");
-    E("    mov  rcx, [_window_hwnd]");
+    E("    push rbx");
+    E("    sub  rsp, 40");
+    E("    ; get struct ptr");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    mov  rbx, rax");
+    E("    ; PostMessage(hwnd, WM_CLOSE, 0, 0)");
+    E("    mov  rcx, [rbx + WSTATE_HWND]");
     E("    mov  rdx, WM_CLOSE");
     E("    xor  r8,  r8");
     E("    xor  r9,  r9");
@@ -681,40 +790,62 @@ static void emit_window_utils(Codegen *cg) {
     // rcx=x, rdx=y, r8=r, r9=g, [rsp+32]=b
     // BGRA format: byte order in memory is B, G, R, A
     // offset = (y * width + x) * 4
+    // TLS-based: gets struct ptr from TLS, uses WSTATE_* offsets
     E("; --- _slag_pixel(x, y, r, g, b) ---");
     E("_slag_pixel:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 48");
+    E("    push rbx");
+    E("    push r12");
+    E("    push r13");
+    E("    push r14");
+    E("    push r15");
+    E("    sub  rsp, 56");
+    E("");
+    E("    ; save args");
+    E("    mov  r12, rcx              ; x");
+    E("    mov  r13, rdx              ; y");
+    E("    mov  r14, r8               ; r");
+    E("    mov  r15, r9               ; g");
+    E("");
+    E("    ; get struct ptr from TLS");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    mov  rbx, rax              ; rbx = struct ptr");
     E("");
     E("    ; bounds check: 0 <= x < width, 0 <= y < height");
-    E("    cmp  rcx, 0");
+    E("    cmp  r12, 0");
     E("    jl   .pixel_done");
-    E("    cmp  rcx, [_window_width]");
+    E("    cmp  r12, [rbx + WSTATE_WIDTH]");
     E("    jge  .pixel_done");
-    E("    cmp  rdx, 0");
+    E("    cmp  r13, 0");
     E("    jl   .pixel_done");
-    E("    cmp  rdx, [_window_height]");
+    E("    cmp  r13, [rbx + WSTATE_HEIGHT]");
     E("    jge  .pixel_done");
     E("");
     E("    ; compute offset = (y * width + x) * 4");
-    E("    mov  rax, rdx              ; rax = y");
-    E("    imul rax, [_window_width]  ; rax = y * width");
-    E("    add  rax, rcx              ; rax = y * width + x");
-    E("    shl  rax, 2                ; rax *= 4 (BGRA)");
+    E("    mov  rax, r13                   ; rax = y");
+    E("    imul rax, [rbx + WSTATE_WIDTH]  ; rax = y * width");
+    E("    add  rax, r12                   ; rax = y * width + x");
+    E("    shl  rax, 2                     ; rax *= 4 (BGRA)");
     E("");
-    E("    mov  r10, [_window_pixels] ; base ptr");
-    E("    add  r10, rax              ; ptr to pixel");
+    E("    mov  r10, [rbx + WSTATE_PIXELS] ; base ptr");
+    E("    add  r10, rax                   ; ptr to pixel");
     E("");
     E("    ; b = 5th arg, placed at [rbp+48] by caller (after 32-byte shadow space)");
     E("    mov  rax, [rbp+48]         ; b (5th arg)");
     E("    mov  byte [r10+0], al      ; B");
-    E("    mov  byte [r10+1], r9b     ; G");
-    E("    mov  byte [r10+2], r8b     ; R");
+    E("    mov  byte [r10+1], r15b    ; G");
+    E("    mov  byte [r10+2], r14b    ; R");
     E("    mov  byte [r10+3], 0xFF    ; A = opaque");
     E("");
     E(".pixel_done:");
-    E("    mov  rsp, rbp");
+    E("    add  rsp, 56");
+    E("    pop  r15");
+    E("    pop  r14");
+    E("    pop  r13");
+    E("    pop  r12");
+    E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
     E("");
@@ -734,16 +865,32 @@ static void emit_window_utils(Codegen *cg) {
     //  -104 xa  -112 xb  -120 xc   (x corresponding to ya/yb/yc)
     //   -128 y         (current scanline)
     //   -136 xleft     -144 xright
+    //   -152 struct_ptr (TLS window state)
+    // TLS-based: gets struct ptr from TLS, uses WSTATE_* offsets
     // -------------------------------------------------------------
     E("; --- _slag_fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b) ---");
     E("_slag_fill_triangle:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 160");
+    E("    push rbx");
+    E("    sub  rsp, 168");
+    E("");
+    E("    ; save args before TLS call clobbers registers");
     E("    mov  [rbp-8],  rcx   ; x0");
     E("    mov  [rbp-16], rdx   ; y0");
     E("    mov  [rbp-24], r8    ; x1");
     E("    mov  [rbp-32], r9    ; y1");
+    E("");
+    E("    ; get struct ptr from TLS");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    mov  rbx, rax              ; rbx = struct ptr for entire function");
+    E("");
+    E("    ; restore saved args (already stored above)");
+    E("    mov  rcx, [rbp-8]");
+    E("    mov  rdx, [rbp-16]");
+    E("    mov  r8,  [rbp-24]");
+    E("    mov  r9,  [rbp-32]");
     E("    mov  rax, [rbp+48]");
     E("    mov  [rbp-40], rax   ; x2");
     E("    mov  rax, [rbp+56]");
@@ -819,7 +966,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  [rbp-128], rax  ; y = max(ya, 0)");
     E("");
     E("    mov  r12, [rbp-96]   ; yc (loop end, exclusive of clamp below)");
-    E("    mov  rax, [_window_height]");
+    E("    mov  rax, [rbx + WSTATE_HEIGHT]");
     E("    dec  rax");
     E("    cmp  r12, rax");
     E("    jle  .ft_yend_ok");
@@ -922,7 +1069,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  [rbp-136], rax");
     E(".ft_xleft_ok:");
     E("    mov  rax, [rbp-144]");
-    E("    mov  rcx, [_window_width]");
+    E("    mov  rcx, [rbx + WSTATE_WIDTH]");
     E("    dec  rcx");
     E("    cmp  rax, rcx");
     E("    jle  .ft_xright_ok");
@@ -932,7 +1079,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    ; fill span [xleft, xright] on row y");
     E("    ; row_offset = y * width * 4 ; pixel_offset = row_offset + x*4");
     E("    mov  rax, [rbp-128]  ; y");
-    E("    imul rax, [_window_width]");
+    E("    imul rax, [rbx + WSTATE_WIDTH]");
     E("    mov  r13, rax        ; r13 = y*width");
     E("    mov  rax, [rbp-136]  ; x = xleft");
     E("");
@@ -944,7 +1091,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  r10, r13");
     E("    add  r10, rax        ; y*width + x");
     E("    shl  r10, 2");
-    E("    add  r10, [_window_pixels]");
+    E("    add  r10, [rbx + WSTATE_PIXELS]");
     E("    mov  rcx, [rbp-72]   ; b");
     E("    mov  byte [r10+0], cl");
     E("    mov  rcx, [rbp-64]   ; g");
@@ -963,7 +1110,8 @@ static void emit_window_utils(Codegen *cg) {
     E("    jmp  .ft_scanline_loop");
     E("");
     E(".ft_done:");
-    E("    mov  rsp, rbp");
+    E("    add  rsp, 168");
+    E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
     E("");
@@ -972,16 +1120,25 @@ static void emit_window_utils(Codegen *cg) {
     // _slag_zbuffer_clear() : fill the depth buffer with a large
     // "far" depth value so any real fragment passes the first test.
     // No-ops safely if the window/buffer hasn't been created.
+    // TLS-based: gets struct ptr from TLS
     // -------------------------------------------------------------
     E("; --- _slag_zbuffer_clear() ---");
     E("_slag_zbuffer_clear:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    mov  r10, [_zbuffer_ptr]");
+    E("    push rbx");
+    E("    sub  rsp, 40");
+    E("");
+    E("    ; get struct ptr from TLS");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    mov  rbx, rax");
+    E("");
+    E("    mov  r10, [rbx + WSTATE_ZBUFFER]");
     E("    test r10, r10");
     E("    jz   .zbc_done             ; no buffer yet -> skip safely");
-    E("    mov  rcx, [_window_width]");
-    E("    imul rcx, [_window_height] ; rcx = pixel count");
+    E("    mov  rcx, [rbx + WSTATE_WIDTH]");
+    E("    imul rcx, [rbx + WSTATE_HEIGHT] ; rcx = pixel count");
     E("    test rcx, rcx");
     E("    jle  .zbc_done");
     E("    mov  rax, 0x44A0000000000000 ; ~1.0e22 as double bits (far depth)");
@@ -993,6 +1150,8 @@ static void emit_window_utils(Codegen *cg) {
     E("    inc  r8");
     E("    jmp  .zbc_loop");
     E(".zbc_done:");
+    E("    add  rsp, 40");
+    E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
     E("");
@@ -1034,7 +1193,8 @@ static void emit_window_utils(Codegen *cg) {
     E("_slag_fill_triangle_z:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 272");
+    E("    push rbx");
+    E("    sub  rsp, 280");
     E("    mov  [rbp-240], r12       ; save callee-saved regs (ABI)");
     E("    mov  [rbp-248], r13");
     E("    mov  [rbp-256], r14");
@@ -1060,8 +1220,13 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  rax, [rbp+104]");
     E("    mov  [rbp-96], rax        ; b");
     E("");
+    E("    ; get struct ptr from TLS");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    mov  rbx, rax              ; rbx = struct ptr for entire function");
+    E("");
     E("    ; bail out safely if there is no depth buffer yet");
-    E("    mov  r10, [_zbuffer_ptr]");
+    E("    mov  r10, [rbx + WSTATE_ZBUFFER]");
     E("    test r10, r10");
     E("    jz   .ftz_done");
     E("");
@@ -1146,7 +1311,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  [rbp-176], rax       ; y = max(ya, 0)");
     E("");
     E("    mov  r12, [rbp-120]       ; yc");
-    E("    mov  rax, [_window_height]");
+    E("    mov  rax, [rbx + WSTATE_HEIGHT]");
     E("    dec  rax");
     E("    cmp  r12, rax");
     E("    jle  .ftz_yend_ok");
@@ -1294,7 +1459,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  [rbp-184], rax");
     E(".ftz_xleft_ok:");
     E("    mov  rax, [rbp-192]");
-    E("    mov  rcx, [_window_width]");
+    E("    mov  rcx, [rbx + WSTATE_WIDTH]");
     E("    dec  rcx");
     E("    cmp  rax, rcx");
     E("    jle  .ftz_xright_ok");
@@ -1302,9 +1467,9 @@ static void emit_window_utils(Codegen *cg) {
     E(".ftz_xright_ok:");
     E("");
     E("    ; fill span [xleft,xright] on row y, interpolating z per pixel");
-    E("    ; and depth-testing against _zbuffer_ptr");
+    E("    ; and depth-testing against zbuffer");
     E("    mov  rax, [rbp-176]       ; y");
-    E("    imul rax, [_window_width]");
+    E("    imul rax, [rbx + WSTATE_WIDTH]");
     E("    mov  r13, rax             ; r13 = y*width (pixel row base)");
     E("");
     E("    ; span_dx = xright - xleft (int, used as the z-lerp denominator)");
@@ -1338,7 +1503,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    ; depth test: pixel_index = r13 + x; compare against zbuffer");
     E("    mov  r10, r13");
     E("    add  r10, rax             ; pixel index = y*width + x");
-    E("    mov  r15, [_zbuffer_ptr]");
+    E("    mov  r15, [rbx + WSTATE_ZBUFFER]");
     E("    movsd xmm1, [r15 + r10*8]");
     E("    comisd xmm0, xmm1");
     E("    jae  .ftz_pix_skip        ; new z >= stored z -> farther/equal, skip");
@@ -1346,7 +1511,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    ; passes depth test: write z, then write pixel color");
     E("    movsd [r15 + r10*8], xmm0");
     E("    shl  r10, 2");
-    E("    add  r10, [_window_pixels]");
+    E("    add  r10, [rbx + WSTATE_PIXELS]");
     E("    mov  rcx, [rbp-96]        ; b");
     E("    mov  byte [r10+0], cl");
     E("    mov  rcx, [rbp-88]        ; g");
@@ -1370,7 +1535,8 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  r13, [rbp-248]");
     E("    mov  r14, [rbp-256]");
     E("    mov  r15, [rbp-264]");
-    E("    mov  rsp, rbp");
+    E("    add  rsp, 280");
+    E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
     E("");
@@ -1398,18 +1564,28 @@ static void emit_window_utils(Codegen *cg) {
     //   -136 xleft  -144 xright
     //   -152 rleft -160 gleft -168 bleft
     //   -176 rright -184 gright -192 bright
+    // TLS-based: gets struct ptr from TLS
     // -------------------------------------------------------------
     E("; --- _slag_fill_triangle_gradient(...) ---");
     E("_slag_fill_triangle_gradient:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 256");
+    E("    push rbx");
+    E("    sub  rsp, 264");
     E("");
-    E("    ; load all 3 vertices into A/B/C slots (unsorted initially)");
+    E("    ; save first 4 args before TLS call");
     E("    mov  [rbp-8],  rcx   ; A.x = x0");
     E("    mov  [rbp-16], rdx   ; A.y = y0");
     E("    mov  [rbp-24], r8    ; A.r = r0");
     E("    mov  [rbp-32], r9    ; A.g = g0");
+    E("");
+    E("    ; get struct ptr from TLS");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    mov  rbx, rax              ; rbx = struct ptr for entire function");
+    E("");
+    E("    ; load all 3 vertices into A/B/C slots (unsorted initially)");
+    E("    ; (first 4 args already saved above)");
     E("    mov  rax, [rbp+48]");
     E("    mov  [rbp-40], rax   ; A.b = b0");
     E("    mov  rax, [rbp+56]");
@@ -1477,7 +1653,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  [rbp-128], rax");
     E("");
     E("    mov  r12, [rbp-96]   ; C.y");
-    E("    mov  rax, [_window_height]");
+    E("    mov  rax, [rbx + WSTATE_HEIGHT]");
     E("    dec  rax");
     E("    cmp  r12, rax");
     E("    jle  .ftg_yend_ok");
@@ -1659,7 +1835,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  [rbp-136], rax");
     E(".ftg_xleft_ok:");
     E("    mov  rax, [rbp-144]");
-    E("    mov  rcx, [_window_width]");
+    E("    mov  rcx, [rbx + WSTATE_WIDTH]");
     E("    dec  rcx");
     E("    cmp  rax, rcx");
     E("    jle  .ftg_xright_ok");
@@ -1672,7 +1848,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  [rbp-200], rax  ; span_w");
     E("");
     E("    mov  rax, [rbp-128]  ; y");
-    E("    imul rax, [_window_width]");
+    E("    imul rax, [rbx + WSTATE_WIDTH]");
     E("    mov  [rbp-208], rax  ; y*width");
     E("");
     E("    mov  rax, [rbp-136]  ; x = xleft");
@@ -1713,7 +1889,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  r10, [rbp-208]  ; y*width");
     E("    add  r10, [rbp-216]  ; + x");
     E("    shl  r10, 2");
-    E("    add  r10, [_window_pixels]");
+    E("    add  r10, [rbx + WSTATE_PIXELS]");
     E("    mov  rax, [rbp-240]");
     E("    mov  byte [r10+0], al  ; B");
     E("    mov  rax, [rbp-232]");
@@ -1734,7 +1910,8 @@ static void emit_window_utils(Codegen *cg) {
     E("    jmp  .ftg_scanline_loop");
     E("");
     E(".ftg_done:");
-    E("    mov  rsp, rbp");
+    E("    add  rsp, 264");
+    E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
     E("");
@@ -1778,12 +1955,8 @@ static void emit_default_event_handlers(Codegen *cg, const EventHandlerFlags *fl
 // ---------------------------------------------------------------------
 void emit_window_data(Codegen *cg) {
     E("_window_class_name: db \"SlagWindow\", 0");
-    E("_window_title:      dq 0   ; set by _slag_window_open");
-    E("_window_width:      dq 0");
-    E("_window_height:     dq 0");
-    E("_adjusted_width:    dq 0");
-    E("_adjusted_height:   dq 0");
-    E("_window_open:       dq 0   ; volatile: 1=open, 0=closed");
+    E("_window_tls_index:  dq 0   ; TLS slot for per-thread window state");
+    E("_window_tls_init:   dq 0   ; 1 if TLS has been initialized");
     E("");
 }
 
@@ -1791,15 +1964,8 @@ void emit_window_data(Codegen *cg) {
 // .bss additions for window subsystem
 // ---------------------------------------------------------------------
 void emit_window_bss(Codegen *cg) {
-    E("_window_hwnd:        resq 1");
-    E("_window_hdc:         resq 1");
-    E("_window_memdc:       resq 1");
-    E("_window_hbitmap:     resq 1");
-    E("_window_pixels:      resq 1   ; ptr filled by CreateDIBSection");
-    E("_zbuffer_ptr:        resq 1   ; ptr to depth buffer (HeapAlloc'd in window.open)");
-    E("_window_ready_event: resq 1");
-    E("_window_thread:      resq 1");
-    E("_window_msg:         resb 48  ; MSG struct");
+    E("; Per-window state is now in TLS-allocated structs");
+    E("; Only shared input state remains global");
     E("");
     E("; --- shared input state (written by event handlers, read by user code) ---");
     E("_input_drag_x:       resq 1   ; accumulated drag offset x");
@@ -1844,6 +2010,17 @@ void emit_window_imports(Codegen *cg) {
     E("extern CreateEventA");
     E("extern SetEvent");
     E("extern WaitForSingleObject");
+    E("; --- TLS functions ---");
+    E("extern TlsAlloc");
+    E("extern TlsGetValue");
+    E("extern TlsSetValue");
+    E("; --- Heap functions ---");
+    E("extern GetProcessHeap");
+    E("extern HeapAlloc");
+    E("; --- Window user data ---");
+    E("extern SetWindowLongPtrA");
+    E("extern GetWindowLongPtrA");
+    E("GWLP_USERDATA equ -21");
     E("");
 }
 

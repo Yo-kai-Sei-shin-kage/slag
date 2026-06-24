@@ -143,6 +143,7 @@ run_example() {
         read
         return 1
     fi
+    chmod +x "$basename.exe"
 
     echo ""
     echo -e "${GREEN}Running: ${YELLOW}$basename.exe${NC}"
