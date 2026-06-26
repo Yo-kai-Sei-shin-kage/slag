@@ -508,8 +508,11 @@ Resets the depth buffer to a far value prior to rendering a frame.
 
 `time.now_ms()` returns milliseconds since system start via `GetTickCount` (~15 ms resolution). `time.now_us()` returns microseconds via `QueryPerformanceCounter`/`QueryPerformanceFrequency` for high-resolution benchmarking and precise frame timing.
 
+> **Note:** `time.now_ms()` wraps at ~49.7 days (32-bit overflow). For long-running server processes, use `time.now_us()` which has a much longer overflow period.
+
 ```
 time.now_ms()    // int — milliseconds since system start (GetTickCount)
+time.now_us()    // int — microseconds (QueryPerformanceCounter, high-res)
 ```
 
 ### 12.7 Keyboard Events
