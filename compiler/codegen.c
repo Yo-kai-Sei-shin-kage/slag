@@ -37,6 +37,7 @@
 #include "window_runtime.h"
 #include "net_runtime.h"
 #include "mem_runtime.h"
+#include "matrix_runtime.h"
 
 // ---------------------------------------------------------------------
 // Codegen state
@@ -1571,6 +1572,145 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    shr  rax, cl");
             }
         }
+        // mat.identity() -> reset current matrix to identity
+        else if (strcmp(member, "identity") == 0) {
+            emit(cg, "    ; mat.identity");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_mat_identity");
+            emit_call_epilogue(cg, 0);
+        }
+        // mat.push() -> push current matrix onto stack
+        else if (strcmp(member, "push") == 0) {
+            emit(cg, "    ; mat.push");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_mat_push");
+            emit_call_epilogue(cg, 0);
+        }
+        // mat.pop() -> pop matrix from stack into current
+        else if (strcmp(member, "pop") == 0) {
+            emit(cg, "    ; mat.pop");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_mat_pop");
+            emit_call_epilogue(cg, 0);
+        }
+        // mat.translate(x, y, z) -> multiply translation into current
+        else if (strcmp(member, "translate") == 0) {
+            emit(cg, "    ; mat.translate");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mat_translate");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mat.scale(sx, sy, sz) -> multiply scale into current
+        else if (strcmp(member, "scale") == 0) {
+            emit(cg, "    ; mat.scale");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mat_scale");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mat.rotate_x(angle) -> multiply X rotation into current
+        else if (strcmp(member, "rotate_x") == 0) {
+            emit(cg, "    ; mat.rotate_x");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mat_rotate_x");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mat.rotate_y(angle) -> multiply Y rotation into current
+        else if (strcmp(member, "rotate_y") == 0) {
+            emit(cg, "    ; mat.rotate_y");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mat_rotate_y");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mat.rotate_z(angle) -> multiply Z rotation into current
+        else if (strcmp(member, "rotate_z") == 0) {
+            emit(cg, "    ; mat.rotate_z");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mat_rotate_z");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mat.transform_x(x, y, z) -> return transformed X coordinate
+        else if (strcmp(member, "transform_x") == 0) {
+            emit(cg, "    ; mat.transform_x");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mat_transform_x");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mat.transform_y(x, y, z) -> return transformed Y coordinate
+        else if (strcmp(member, "transform_y") == 0) {
+            emit(cg, "    ; mat.transform_y");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mat_transform_y");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mat.transform_z(x, y, z) -> return transformed Z coordinate
+        else if (strcmp(member, "transform_z") == 0) {
+            emit(cg, "    ; mat.transform_z");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mat_transform_z");
+                emit_call_epilogue(cg, 0);
+            }
+        }
         else {
             emit(cg, "    ; unhandled member call .%s", member);
         }
@@ -3012,6 +3152,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_window_runtime(&cg, &ev_flags);
     emit_net_runtime(&cg);
     emit_mem_runtime(&cg);
+    emit_mat_runtime(&cg);
 
     // User functions.
     for (int i = 0; i < prog->functions.count; i++) {
@@ -3023,10 +3164,12 @@ void codegen_program(const Program *prog, FILE *out) {
     // populated by the time we write them).
     emit_data_section(&cg);
     emit_window_data(&cg);
+    emit_mat_data(&cg);
     emit_bss_section(&cg);
     emit_window_bss(&cg);
     emit_net_bss(&cg);
     emit_mem_bss(&cg);
+    emit_mat_bss(&cg);
 
     // Free string constant pool.
     for (int i = 0; i < cg.str_const_count; i++) {
