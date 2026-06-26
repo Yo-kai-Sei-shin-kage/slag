@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.8 — Draft**
+**Version 0.9 — Draft**
 
 ---
 
@@ -828,11 +828,12 @@ function main() {
 | 0.6     | Memory primitives (mem.*), TCP networking (net.*), multi-byte P2P messaging, global/local scope | ✅ Complete |
 | 0.7     | Global arrays, z-buffer depth testing (fill_triangle_z, zbuffer.clear) | ✅ Complete |
 | 0.8     | Config file parsing, examples directory with interactive browser | ✅ Complete |
-| 0.9     | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
-| 0.10    | Texture mapping, matrix stack                               | 🔲 Planned  |
-| 0.11    | Lighting model, perspective correction                      | 🔲 Planned  |
+| 0.9     | Bit shifts (bit.shl/shr), mouse capture, multi-window TLS   | ✅ Complete |
+| 0.10    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
+| 0.11    | Texture mapping, matrix stack                               | 🔲 Planned  |
+| 0.12    | Lighting model, perspective correction                      | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ---
 
-*Slag Language Specification v0.8 — Subject to revision*
+*Slag Language Specification v0.9 — Subject to revision*
