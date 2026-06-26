@@ -17,8 +17,10 @@ slag
 
 # AI assistant files
 CLAUDE.md
+.claude/
 *.slag
 !working_tests/**/*.slag
 !examples/**/*.slag
+!syntax_examples.slag
 compiler/working_*.c
 slag.nanorc
