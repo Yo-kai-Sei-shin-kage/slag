@@ -645,6 +645,40 @@ var int back = bit.shr(fixed, 16);        // convert back to int = 3
 
 These are inlined to single CPU instructions with no function-call overhead.
 
+### 14.3 Matrix Stack — `mat.*`
+
+A 3x4 transformation matrix stack for 3D graphics, using 16.16 fixed-point arithmetic for performance. Pre-computed sin/cos lookup tables (256 entries) enable fast rotation without floating-point trig calls.
+
+**Matrix Operations:**
+```
+mat.identity()              // reset current matrix to identity
+mat.push()                  // push current matrix onto stack (16 levels max)
+mat.pop()                   // pop matrix from stack into current
+mat.translate(x, y, z)      // multiply translation into current matrix
+mat.scale(sx, sy, sz)       // multiply scale into current matrix
+mat.rotate_x(angle)         // multiply X rotation (angle 0-255 = 0-360°)
+mat.rotate_y(angle)         // multiply Y rotation
+mat.rotate_z(angle)         // multiply Z rotation
+```
+
+**Point Transformation:**
+```
+mat.transform_x(x, y, z)    // return transformed X coordinate
+mat.transform_y(x, y, z)    // return transformed Y coordinate
+mat.transform_z(x, y, z)    // return transformed Z coordinate
+```
+
+**Fixed-Point Usage:**
+All coordinates use 16.16 fixed-point format. Convert integers with `bit.shl(n, 16)` and convert results back with `bit.shr(result, 16)`.
+
+```
+mat.identity();
+mat.translate(bit.shl(100, 16), bit.shl(200, 16), 0);
+mat.rotate_z(64);  // 90 degrees (64/256 * 360)
+var int x = mat.transform_x(bit.shl(50, 16), 0, 0);
+var int screen_x = bit.shr(x, 16);
+```
+
 ---
 
 ## 15. Compiler Architecture
@@ -716,6 +750,12 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `mem.peek64(ptr,woff)`          | Load 8 bytes at ptr + woff*8 -> int                |
 | `bit.shl(val,count)`            | Left shift (inlined to shl instruction)            |
 | `bit.shr(val,count)`            | Unsigned right shift (inlined to shr instruction)  |
+| `mat.identity()`                | Reset current matrix to identity                   |
+| `mat.push()` / `mat.pop()`      | Push/pop matrix stack (16 levels)                  |
+| `mat.translate(x,y,z)`          | Multiply translation into current matrix           |
+| `mat.scale(sx,sy,sz)`           | Multiply scale into current matrix                 |
+| `mat.rotate_x/y/z(angle)`       | Multiply rotation (angle 0-255 = 0-360°)           |
+| `mat.transform_x/y/z(x,y,z)`    | Transform point, return single coordinate          |
 | `net.start()` / `net.end()`     | Begin / end a networking session (ws2_32)          |
 | `net.bind(port)`                | Socket + bind + listen (no block)                  |
 | `net.accept()`                  | Block for a peer on the bound socket               |
