@@ -1,0 +1,34 @@
+// Matrix Stack - Hierarchical Transforms
+// Using 16.16 fixed-point coordinates
+
+// Reset to identity matrix
+mat.identity();
+
+// Translate to center (convert to fixed-point)
+var int cx = bit.shl(400, 16);
+var int cy = bit.shl(300, 16);
+mat.translate(cx, cy, 0);
+
+// Push matrix, rotate, translate for orbiting object
+mat.push();
+mat.rotate_z(angle);                    // angle 0-255 = 0-360 degrees
+var int dist = bit.shl(150, 16);
+mat.translate(dist, 0, 0);              // translate along rotated X axis
+
+// Transform origin to get world position
+var int world_x = mat.transform_x(0, 0, 0);
+var int world_y = mat.transform_y(0, 0, 0);
+
+// Convert back from fixed-point to screen coords
+var int screen_x = bit.shr(world_x, 16);
+var int screen_y = bit.shr(world_y, 16);
+
+// Nested transform: object orbiting the orbiting object
+mat.push();
+mat.rotate_z(inner_angle);
+mat.translate(bit.shl(30, 16), 0, 0);
+var int moon_x = bit.shr(mat.transform_x(0, 0, 0), 16);
+var int moon_y = bit.shr(mat.transform_y(0, 0, 0), 16);
+mat.pop();
+
+mat.pop();  // Back to center

@@ -1,0 +1,101 @@
+// Solar System Demo
+// Example: Matrix stack hierarchical transforms
+
+function draw_circle(int cx, int cy, int radius, int r, int g, int b) {
+    // Simple filled circle using scanlines
+    var int y = $((0 - $radius));
+    while (y <= radius) {
+        var int half_width = $((($radius * $radius) - ($y * $y)));
+        // Integer square root approximation
+        var int x = 0;
+        while ($(($x * $x)) < half_width) {
+            x = $(($x + 1));
+        }
+        // Draw horizontal line from -x to x
+        var int px = $((0 - $x));
+        while (px <= x) {
+            pixel($(($cx + $px)), $(($cy + $y)), r, g, b);
+            px = $(($px + 1));
+        }
+        y = $(($y + 1));
+    }
+    return;
+}
+
+function main() {
+    window.open(800, 600, "Solar System - Matrix Stack Demo");
+
+    var int frame = 0;
+
+    // Orbital speeds (angles per frame, 0-255 scale)
+    var int earth_speed = 1;
+    var int moon_speed = 4;
+    var int mars_speed = 1;
+
+    // Orbital distances (in fixed-point)
+    var int earth_dist = bit.shl(150, 16);
+    var int moon_dist = bit.shl(30, 16);
+    var int mars_dist = bit.shl(220, 16);
+
+    // Center of screen (fixed-point)
+    var int center_x = bit.shl(400, 16);
+    var int center_y = bit.shl(300, 16);
+
+    while (window.is_open()) {
+        // Clear screen (black space)
+        var int y = 0;
+        while (y < 600) {
+            var int x = 0;
+            while (x < 800) {
+                pixel(x, y, 0, 0, 0);
+                x = $(($x + 1));
+            }
+            y = $(($y + 1));
+        }
+
+        // Calculate orbital angles
+        var int earth_angle = $(($frame * $earth_speed % 256));
+        var int moon_angle = $(($frame * $moon_speed % 256));
+        var int mars_angle = $((($frame * $mars_speed + 100) % 256));
+
+        // === Draw Sun (at center) ===
+        mat.identity();
+        mat.translate(center_x, center_y, 0);
+        var int sun_x = bit.shr(mat.transform_x(0, 0, 0), 16);
+        var int sun_y = bit.shr(mat.transform_y(0, 0, 0), 16);
+        draw_circle(sun_x, sun_y, 30, 255, 200, 50);
+
+        // === Draw Earth (orbits sun) ===
+        mat.push();
+        mat.rotate_z(earth_angle);
+        mat.translate(earth_dist, 0, 0);
+        var int earth_x = bit.shr(mat.transform_x(0, 0, 0), 16);
+        var int earth_y = bit.shr(mat.transform_y(0, 0, 0), 16);
+        draw_circle(earth_x, earth_y, 12, 50, 100, 255);
+
+        // === Draw Moon (orbits Earth) ===
+        mat.push();
+        mat.rotate_z(moon_angle);
+        mat.translate(moon_dist, 0, 0);
+        var int moon_x = bit.shr(mat.transform_x(0, 0, 0), 16);
+        var int moon_y = bit.shr(mat.transform_y(0, 0, 0), 16);
+        draw_circle(moon_x, moon_y, 5, 180, 180, 180);
+        mat.pop();  // Back to Earth's frame
+
+        mat.pop();  // Back to Sun's frame
+
+        // === Draw Mars (orbits sun) ===
+        mat.push();
+        mat.rotate_z(mars_angle);
+        mat.translate(mars_dist, 0, 0);
+        var int mars_x = bit.shr(mat.transform_x(0, 0, 0), 16);
+        var int mars_y = bit.shr(mat.transform_y(0, 0, 0), 16);
+        draw_circle(mars_x, mars_y, 8, 200, 80, 50);
+        mat.pop();
+
+        window.flush();
+        frame = $(($frame + 1));
+    }
+
+    return int 0;
+}
