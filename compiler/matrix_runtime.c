@@ -170,14 +170,74 @@ void emit_mat_runtime(Codegen *cg) {
     E("");
 
     // mat.translate(x, y, z) — multiply translation into current
-    // rcx=x, rdx=y, r8=z (all in fixed-point 16.16)
-    E("; --- _slag_mat_translate (rcx=x, rdx=y, r8=z) ---");
+    // rcx=tx, rdx=ty, r8=tz (all in fixed-point 16.16)
+    // new_m3  = m0*tx + m1*ty + m2*tz + m3
+    // new_m7  = m4*tx + m5*ty + m6*tz + m7
+    // new_m11 = m8*tx + m9*ty + m10*tz + m11
+    E("; --- _slag_mat_translate (rcx=tx, rdx=ty, r8=tz) ---");
     E("_slag_mat_translate:");
     E("    push rbx");
+    E("    push r12");
+    E("    push r13");
+    E("    push r14");
+    E("    push r15");
     E("    lea  rbx, [rel _mat_current]");
-    E("    add  qword [rbx + 3*8], rcx    ; m3 += x");
-    E("    add  qword [rbx + 7*8], rdx    ; m7 += y");
-    E("    add  qword [rbx + 11*8], r8    ; m11 += z");
+    E("    mov  r12, rcx              ; r12 = tx");
+    E("    mov  r13, rdx              ; r13 = ty");
+    E("    mov  r14, r8               ; r14 = tz");
+    E("");
+    E("    ; Compute new_m3 = m0*tx + m1*ty + m2*tz + m3");
+    E("    mov  rax, [rbx + 0*8]      ; m0");
+    E("    imul r12                   ; m0*tx");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    mov  r15, rax              ; r15 = m0*tx");
+    E("    mov  rax, [rbx + 1*8]      ; m1");
+    E("    imul r13                   ; m1*ty");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    add  r15, rax              ; r15 += m1*ty");
+    E("    mov  rax, [rbx + 2*8]      ; m2");
+    E("    imul r14                   ; m2*tz");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    add  r15, rax              ; r15 += m2*tz");
+    E("    add  r15, [rbx + 3*8]      ; r15 += m3");
+    E("    mov  [rbx + 3*8], r15      ; m3 = result");
+    E("");
+    E("    ; Compute new_m7 = m4*tx + m5*ty + m6*tz + m7");
+    E("    mov  rax, [rbx + 4*8]      ; m4");
+    E("    imul r12                   ; m4*tx");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    mov  r15, rax              ; r15 = m4*tx");
+    E("    mov  rax, [rbx + 5*8]      ; m5");
+    E("    imul r13                   ; m5*ty");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    add  r15, rax              ; r15 += m5*ty");
+    E("    mov  rax, [rbx + 6*8]      ; m6");
+    E("    imul r14                   ; m6*tz");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    add  r15, rax              ; r15 += m6*tz");
+    E("    add  r15, [rbx + 7*8]      ; r15 += m7");
+    E("    mov  [rbx + 7*8], r15      ; m7 = result");
+    E("");
+    E("    ; Compute new_m11 = m8*tx + m9*ty + m10*tz + m11");
+    E("    mov  rax, [rbx + 8*8]      ; m8");
+    E("    imul r12                   ; m8*tx");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    mov  r15, rax              ; r15 = m8*tx");
+    E("    mov  rax, [rbx + 9*8]      ; m9");
+    E("    imul r13                   ; m9*ty");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    add  r15, rax              ; r15 += m9*ty");
+    E("    mov  rax, [rbx + 10*8]     ; m10");
+    E("    imul r14                   ; m10*tz");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    add  r15, rax              ; r15 += m10*tz");
+    E("    add  r15, [rbx + 11*8]     ; r15 += m11");
+    E("    mov  [rbx + 11*8], r15     ; m11 = result");
+    E("");
+    E("    pop  r15");
+    E("    pop  r14");
+    E("    pop  r13");
+    E("    pop  r12");
     E("    pop  rbx");
     E("    ret");
     E("");
