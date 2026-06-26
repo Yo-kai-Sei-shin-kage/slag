@@ -2624,7 +2624,7 @@ static void emit_data_section(Codegen *cg) {
                             val = e->as.float_val;
                         } else if (e->kind == EXPR_INT_LIT) {
                             val = (double)e->as.int_val;
-                        } else if (e->kind == EXPR_UNARY && e->as.unary.op == '-') {
+                        } else if (e->kind == EXPR_UNARY && e->as.unary.op == TOK_MINUS) {
                             Expr *inner = e->as.unary.operand;
                             if (inner->kind == EXPR_FLOAT_LIT) {
                                 val = -inner->as.float_val;
@@ -2643,7 +2643,7 @@ static void emit_data_section(Codegen *cg) {
                         long val = 0;
                         if (e->kind == EXPR_INT_LIT) {
                             val = e->as.int_val;
-                        } else if (e->kind == EXPR_UNARY && e->as.unary.op == '-') {
+                        } else if (e->kind == EXPR_UNARY && e->as.unary.op == TOK_MINUS) {
                             Expr *inner = e->as.unary.operand;
                             if (inner->kind == EXPR_INT_LIT) {
                                 val = -inner->as.int_val;
