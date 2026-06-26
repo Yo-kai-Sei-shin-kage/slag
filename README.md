@@ -53,6 +53,13 @@ Slag is under active development. The pipeline currently supports:
   - **Bit manipulation — `bit.*`** (inlined to single CPU instructions, no function-call overhead):
     - `bit.shl(val, count)` — left shift; enables 16.16 fixed-point: `bit.shl(n, 16)` converts int to fixed
     - `bit.shr(val, count)` — unsigned right shift; `bit.shr(fixed, 16)` converts fixed to int
+  - **Matrix stack — `mat.*`** (3x4 transformation matrices using 16.16 fixed-point; 16-level push/pop stack; pre-computed sin/cos lookup tables):
+    - `mat.identity()` — reset current matrix to identity
+    - `mat.push()` / `mat.pop()` — push/pop matrix stack for hierarchical transforms
+    - `mat.translate(x, y, z)` — multiply translation into current matrix
+    - `mat.scale(sx, sy, sz)` — multiply scale into current matrix
+    - `mat.rotate_x(angle)` / `mat.rotate_y(angle)` / `mat.rotate_z(angle)` — multiply rotation (angle 0-255 maps to 0-360°)
+    - `mat.transform_x(x, y, z)` / `mat.transform_y(...)` / `mat.transform_z(...)` — transform point, return single coordinate
   - **Networking — `net.*`** (TCP via `ws2_32`; supports persistent peer-to-peer sessions between two machines running the same program):
     - `net.start()` / `net.end()` — `WSAStartup` / close sockets + `WSACleanup`
     - `net.bind(port)` — create socket, bind, and listen (no block)

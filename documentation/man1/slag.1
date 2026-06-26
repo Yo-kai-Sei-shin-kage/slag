@@ -336,6 +336,29 @@ arithmetic (e.g., bit.shl(n, 16) converts an integer to fixed-point).
 .B bit.shr(value,count)
 Unsigned right shift. Inlined to a single shr instruction; bit.shr(fixed, 16)
 converts fixed-point back to integer.
+.SS Matrix stack
+A 3x4 transformation matrix stack using 16.16 fixed-point arithmetic.
+Pre-computed sin/cos lookup tables enable fast rotation. All coordinates
+use fixed-point format: convert with bit.shl(n, 16), convert back with
+bit.shr(result, 16).
+.TP
+.B mat.identity()
+Reset current matrix to identity.
+.TP
+.BR mat.push() ", " mat.pop()
+Push current matrix onto stack (16 levels max) / pop from stack.
+.TP
+.B mat.translate(x,y,z)
+Multiply translation into current matrix.
+.TP
+.B mat.scale(sx,sy,sz)
+Multiply scale into current matrix.
+.TP
+.BR mat.rotate_x(angle) ", " mat.rotate_y(angle) ", " mat.rotate_z(angle)
+Multiply rotation into current matrix. Angle 0-255 maps to 0-360 degrees.
+.TP
+.BR mat.transform_x(x,y,z) ", " mat.transform_y(...) ", " mat.transform_z(...)
+Transform a point by the current matrix, returning a single coordinate.
 .SS Networking
 TCP networking via ws2_32; supports persistent peer-to-peer sessions
 between two machines running the same program. Programs using networking
@@ -424,7 +447,7 @@ A self-hosting compiler
 .nf
 cd compiler
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
-    window_runtime.c net_runtime.c mem_runtime.c
+    window_runtime.c net_runtime.c mem_runtime.c matrix_runtime.c
 .fi
 .RE
 .SS Compiling and running a Slag program
