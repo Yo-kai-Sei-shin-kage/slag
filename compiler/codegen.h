@@ -13,8 +13,7 @@
 // assembled with:
 //
 //   nasm -f win64 output.asm -o output.obj
-//   gcc output.obj -o program.exe -lkernel32 -luser32 -lgdi32 \
-//       -nostartfiles -e _start
+//   gcc output.obj -o program.exe -lkernel32 -luser32 -lgdi32 -nostartfiles -e _start
 //
 // All Win32 calls are made directly via kernel32/user32/gdi32 imports.
 // No CRT functions are used.

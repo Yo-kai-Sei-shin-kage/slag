@@ -73,11 +73,17 @@ void emit_mat_data(Codegen *cg) {
     E("    dq 0, %d, 0, 0", FIXED_ONE);  // row 1: [0, 1, 0, 0]
     E("    dq 0, 0, %d, 0", FIXED_ONE);  // row 2: [0, 0, 1, 0]
     E("");
+    // Current matrix initialized to identity (not in BSS)
+    E("_mat_current:");
+    E("    dq %d, 0, 0, 0", FIXED_ONE);
+    E("    dq 0, %d, 0, 0", FIXED_ONE);
+    E("    dq 0, 0, %d, 0", FIXED_ONE);
+    E("");
 }
 
 void emit_mat_bss(Codegen *cg) {
     E("; ===================== matrix bss =====================");
-    E("_mat_current:  resq %d   ; current 3x4 matrix (12 qwords)", MAT_SIZE);
+    // _mat_current is now in .data section (initialized to identity)
     E("_mat_stack:    resq %d   ; matrix stack (%d levels x %d values)",
         MAT_STACK_DEPTH * MAT_SIZE, MAT_STACK_DEPTH, MAT_SIZE);
     E("_mat_sp:       resq 1    ; stack pointer (0 = empty)");
@@ -91,32 +97,27 @@ void emit_mat_runtime(Codegen *cg) {
     // mat.identity() — reset current matrix to identity
     E("; --- _slag_mat_identity ---");
     E("_slag_mat_identity:");
-    E("    push rsi");
     E("    push rdi");
-    E("    push rcx");
     E("    lea  rsi, [rel _mat_identity_const]");
     E("    lea  rdi, [rel _mat_current]");
     E("    mov  rcx, %d", MAT_SIZE);
     E("    rep  movsq");
-    E("    pop  rcx");
     E("    pop  rdi");
-    E("    pop  rsi");
     E("    ret");
     E("");
 
     // mat.push() — push current matrix onto stack
     E("; --- _slag_mat_push ---");
     E("_slag_mat_push:");
-    E("    push rsi");
     E("    push rdi");
-    E("    push rcx");
-    E("    push rax");
     E("    push rbx");
     E("    ; check stack overflow");
     E("    lea  rbx, [rel _mat_sp]");
     E("    mov  rax, [rbx]");
     E("    cmp  rax, %d", MAT_STACK_DEPTH);
     E("    jge  .push_done          ; stack full, ignore");
+    E("    ; save sp for increment later");
+    E("    mov  r9, rax");
     E("    ; calculate dest = _mat_stack + sp * %d * 8", MAT_SIZE);
     E("    imul rax, %d", MAT_SIZE * 8);
     E("    lea  rdi, [rel _mat_stack]");
@@ -125,25 +126,18 @@ void emit_mat_runtime(Codegen *cg) {
     E("    mov  rcx, %d", MAT_SIZE);
     E("    rep  movsq");
     E("    ; increment stack pointer");
-    E("    mov  rax, [rbx]");
-    E("    inc  rax");
-    E("    mov  [rbx], rax");
+    E("    inc  r9");
+    E("    mov  [rbx], r9");
     E(".push_done:");
     E("    pop  rbx");
-    E("    pop  rax");
-    E("    pop  rcx");
     E("    pop  rdi");
-    E("    pop  rsi");
     E("    ret");
     E("");
 
     // mat.pop() — pop matrix from stack into current
     E("; --- _slag_mat_pop ---");
     E("_slag_mat_pop:");
-    E("    push rsi");
     E("    push rdi");
-    E("    push rcx");
-    E("    push rax");
     E("    push rbx");
     E("    ; check stack underflow");
     E("    lea  rbx, [rel _mat_sp]");
@@ -162,10 +156,7 @@ void emit_mat_runtime(Codegen *cg) {
     E("    rep  movsq");
     E(".pop_done:");
     E("    pop  rbx");
-    E("    pop  rax");
-    E("    pop  rcx");
     E("    pop  rdi");
-    E("    pop  rsi");
     E("    ret");
     E("");
 
@@ -242,8 +233,9 @@ void emit_mat_runtime(Codegen *cg) {
     E("    ret");
     E("");
 
-    // mat.scale(sx, sy, sz) — multiply scale into current
+    // mat.scale(sx, sy, sz) — multiply scale into current (M' = M * S)
     // rcx=sx, rdx=sy, r8=sz (all in fixed-point 16.16)
+    // Scales column 0 by sx, column 1 by sy, column 2 by sz, translation unchanged
     E("; --- _slag_mat_scale (rcx=sx, rdx=sy, r8=sz) ---");
     E("_slag_mat_scale:");
     E("    push rbx");
@@ -254,57 +246,46 @@ void emit_mat_runtime(Codegen *cg) {
     E("    mov  r12, rcx              ; r12 = sx");
     E("    mov  r13, rdx              ; r13 = sy");
     E("    mov  r14, r8               ; r14 = sz");
-    E("    ; scale row 0 by sx");
+    E("    ; scale column 0 by sx (m0, m4, m8)");
     E("    mov  rax, [rbx + 0*8]");
     E("    imul r12");
     E("    sar  rax, %d", FIXED_SHIFT);
     E("    mov  [rbx + 0*8], rax");
-    E("    mov  rax, [rbx + 1*8]");
-    E("    imul r12");
-    E("    sar  rax, %d", FIXED_SHIFT);
-    E("    mov  [rbx + 1*8], rax");
-    E("    mov  rax, [rbx + 2*8]");
-    E("    imul r12");
-    E("    sar  rax, %d", FIXED_SHIFT);
-    E("    mov  [rbx + 2*8], rax");
-    E("    mov  rax, [rbx + 3*8]");
-    E("    imul r12");
-    E("    sar  rax, %d", FIXED_SHIFT);
-    E("    mov  [rbx + 3*8], rax");
-    E("    ; scale row 1 by sy");
     E("    mov  rax, [rbx + 4*8]");
-    E("    imul r13");
+    E("    imul r12");
     E("    sar  rax, %d", FIXED_SHIFT);
     E("    mov  [rbx + 4*8], rax");
+    E("    mov  rax, [rbx + 8*8]");
+    E("    imul r12");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    mov  [rbx + 8*8], rax");
+    E("    ; scale column 1 by sy (m1, m5, m9)");
+    E("    mov  rax, [rbx + 1*8]");
+    E("    imul r13");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    mov  [rbx + 1*8], rax");
     E("    mov  rax, [rbx + 5*8]");
     E("    imul r13");
     E("    sar  rax, %d", FIXED_SHIFT);
     E("    mov  [rbx + 5*8], rax");
-    E("    mov  rax, [rbx + 6*8]");
-    E("    imul r13");
-    E("    sar  rax, %d", FIXED_SHIFT);
-    E("    mov  [rbx + 6*8], rax");
-    E("    mov  rax, [rbx + 7*8]");
-    E("    imul r13");
-    E("    sar  rax, %d", FIXED_SHIFT);
-    E("    mov  [rbx + 7*8], rax");
-    E("    ; scale row 2 by sz");
-    E("    mov  rax, [rbx + 8*8]");
-    E("    imul r14");
-    E("    sar  rax, %d", FIXED_SHIFT);
-    E("    mov  [rbx + 8*8], rax");
     E("    mov  rax, [rbx + 9*8]");
-    E("    imul r14");
+    E("    imul r13");
     E("    sar  rax, %d", FIXED_SHIFT);
     E("    mov  [rbx + 9*8], rax");
+    E("    ; scale column 2 by sz (m2, m6, m10)");
+    E("    mov  rax, [rbx + 2*8]");
+    E("    imul r14");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    mov  [rbx + 2*8], rax");
+    E("    mov  rax, [rbx + 6*8]");
+    E("    imul r14");
+    E("    sar  rax, %d", FIXED_SHIFT);
+    E("    mov  [rbx + 6*8], rax");
     E("    mov  rax, [rbx + 10*8]");
     E("    imul r14");
     E("    sar  rax, %d", FIXED_SHIFT);
     E("    mov  [rbx + 10*8], rax");
-    E("    mov  rax, [rbx + 11*8]");
-    E("    imul r14");
-    E("    sar  rax, %d", FIXED_SHIFT);
-    E("    mov  [rbx + 11*8], rax");
+    E("    ; translation column (m3, m7, m11) unchanged");
     E("    pop  r14");
     E("    pop  r13");
     E("    pop  r12");
