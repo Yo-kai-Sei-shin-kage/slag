@@ -38,6 +38,7 @@
 #include "net_runtime.h"
 #include "mem_runtime.h"
 #include "matrix_runtime.h"
+#include "simd_runtime.h"
 
 // ---------------------------------------------------------------------
 // Codegen state
@@ -1711,6 +1712,249 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit_call_epilogue(cg, 0);
             }
         }
+        // simd.addf4(dest, a, b) -> dest ptr; adds 4 packed floats
+        else if (strcmp(member, "addf4") == 0) {
+            emit(cg, "    ; simd.addf4");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_addf4");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.subf4(dest, a, b) -> dest ptr; subtracts 4 packed floats
+        else if (strcmp(member, "subf4") == 0) {
+            emit(cg, "    ; simd.subf4");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_subf4");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.mulf4(dest, a, b) -> dest ptr; multiplies 4 packed floats
+        else if (strcmp(member, "mulf4") == 0) {
+            emit(cg, "    ; simd.mulf4");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_mulf4");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.divf4(dest, a, b) -> dest ptr; divides 4 packed floats
+        else if (strcmp(member, "divf4") == 0) {
+            emit(cg, "    ; simd.divf4");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_divf4");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.dot4(dest, a, b) -> dest ptr; dot product of 4-float vectors
+        else if (strcmp(member, "dot4") == 0) {
+            emit(cg, "    ; simd.dot4");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_dot4");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.cross3(dest, a, b) -> dest ptr; cross product of 3D vectors
+        else if (strcmp(member, "cross3") == 0) {
+            emit(cg, "    ; simd.cross3");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_cross3");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.normalize4(dest, v) -> dest ptr; normalizes 4-float vector
+        else if (strcmp(member, "normalize4") == 0) {
+            emit(cg, "    ; simd.normalize4");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; v");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_normalize4");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.lint4(dest, a, b, t) -> dest ptr; linear interpolation a + t*(b-a)
+        else if (strcmp(member, "lint4") == 0) {
+            emit(cg, "    ; simd.lint4");
+            if (args->count >= 4) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  r15, rax        ; t");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit(cg, "    mov  r9,  r15");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_lint4");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.mat4_mul(dest, a, b) -> dest ptr; 4x4 matrix multiply
+        else if (strcmp(member, "mat4_mul") == 0) {
+            emit(cg, "    ; simd.mat4_mul");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_mat4_mul");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.mat4_vec4(dest, m, v) -> dest ptr; matrix-vector multiply
+        else if (strcmp(member, "mat4_vec4") == 0) {
+            emit(cg, "    ; simd.mat4_vec4");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; m");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; v");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_mat4_vec4");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.rgb565_unpack(r, g, b, pixels) -> unpacks 8 RGB565 pixels to R/G/B
+        else if (strcmp(member, "rgb565_unpack") == 0) {
+            emit(cg, "    ; simd.rgb565_unpack");
+            if (args->count >= 4) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; r_dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; g_dest");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b_dest");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  r15, rax        ; pixels");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit(cg, "    mov  r9,  r15");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_rgb565_unpack");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.rgb565_pack(dest, r, g, b) -> packs R/G/B to 8 RGB565 pixels
+        else if (strcmp(member, "rgb565_pack") == 0) {
+            emit(cg, "    ; simd.rgb565_pack");
+            if (args->count >= 4) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; r");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; g");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  r15, rax        ; b");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit(cg, "    mov  r9,  r15");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_rgb565_pack");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // simd.rgb565_blend(dest, a, b, alpha) -> alpha blend 8 RGB565 pixels
+        else if (strcmp(member, "rgb565_blend") == 0) {
+            emit(cg, "    ; simd.rgb565_blend");
+            if (args->count >= 4) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dest");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; a");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; b");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  r15, rax        ; alpha");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8,  r14");
+                emit(cg, "    mov  r9,  r15");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_simd_rgb565_blend");
+                emit_call_epilogue(cg, 0);
+            }
+        }
         else {
             emit(cg, "    ; unhandled member call .%s", member);
         }
@@ -2711,6 +2955,10 @@ static void emit_data_section(Codegen *cg) {
     emit(cg, "_cpu_hyperthreaded:    dq 0   ; 1 if any core reports LTP_PC_SMT, else 0");
     emit(cg, "");
 
+    // SIMD constants (RGB565 masks).
+    emit_simd_data(cg);
+    emit(cg, "");
+
     // User-defined global variables.
     if (cg->global_count > 0) {
         emit(cg, "; User-defined globals");
@@ -3077,6 +3325,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_window_imports(&cg);
     emit_net_imports(&cg);
     emit_mem_imports(&cg);
+    emit_simd_imports(&cg);
 
     // .text section.
     emit(&cg, "section .text");
@@ -3153,6 +3402,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_net_runtime(&cg);
     emit_mem_runtime(&cg);
     emit_mat_runtime(&cg);
+    emit_simd_runtime(&cg);
 
     // User functions.
     for (int i = 0; i < prog->functions.count; i++) {
@@ -3170,6 +3420,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_net_bss(&cg);
     emit_mem_bss(&cg);
     emit_mat_bss(&cg);
+    emit_simd_bss(&cg);
 
     // Free string constant pool.
     for (int i = 0; i < cg.str_const_count; i++) {

@@ -359,6 +359,39 @@ Multiply rotation into current matrix. Angle 0-255 maps to 0-360 degrees.
 .TP
 .BR mat.transform_x(x,y,z) ", " mat.transform_y(...) ", " mat.transform_z(...)
 Transform a point by the current matrix, returning a single coordinate.
+.SS SIMD (SSE2)
+128-bit vector operations for graphics and bulk processing. All pointer
+arguments are 16-byte buffers (from mem.alloc).
+.TP
+.BR simd.addf4(d,a,b) ", " simd.subf4 ", " simd.mulf4 ", " simd.divf4
+Packed 4-float arithmetic operations.
+.TP
+.B simd.dot4(d,a,b)
+Dot product of two vec4s; result broadcast to all 4 elements.
+.TP
+.B simd.cross3(d,a,b)
+3D cross product (w component = 0).
+.TP
+.B simd.normalize4(d,v)
+Normalize a vec4 to unit length.
+.TP
+.B simd.lint4(d,a,b,t)
+Linear interpolation: a + t*(b-a).
+.TP
+.B simd.mat4_mul(d,a,b)
+4x4 matrix multiply (row-major).
+.TP
+.B simd.mat4_vec4(d,m,v)
+Matrix-vector multiply.
+.TP
+.B simd.rgb565_unpack(r,g,b,pixels)
+Extract R/G/B channels from 8 RGB565 pixels.
+.TP
+.B simd.rgb565_pack(d,r,g,b)
+Pack R/G/B channels to 8 RGB565 pixels.
+.TP
+.B simd.rgb565_blend(d,a,b,alpha)
+Alpha blend 8 RGB565 pixels (alpha: 8x16-bit values, 0-256 range).
 .SS Networking
 TCP networking via ws2_32; supports persistent peer-to-peer sessions
 between two machines running the same program. Programs using networking
@@ -447,7 +480,7 @@ A self-hosting compiler
 .nf
 cd compiler
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
-    window_runtime.c net_runtime.c mem_runtime.c matrix_runtime.c
+    window_runtime.c net_runtime.c mem_runtime.c matrix_runtime.c simd_runtime.c
 .fi
 .RE
 .SS Compiling and running a Slag program
@@ -459,6 +492,10 @@ x86_64-w64-mingw32-gcc program.obj -o program.exe \e
     -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -e _start
 .fi
 .RE
+.PP
+Add
+.B \-mwindows
+to suppress the console window for GUI-only programs.
 .SS A minimal windowed program
 .RS
 .nf

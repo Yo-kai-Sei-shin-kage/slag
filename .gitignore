@@ -19,6 +19,7 @@ slag
 CLAUDE.md
 .claude/
 *.slag
+sse2_features.txt
 !working_tests/**/*.slag
 !examples/**/*.slag
 !syntax_examples.slag

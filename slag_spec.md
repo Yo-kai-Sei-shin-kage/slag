@@ -679,6 +679,39 @@ var int x = mat.transform_x(bit.shl(50, 16), 0, 0);
 var int screen_x = bit.shr(x, 16);
 ```
 
+### 14.4 SIMD — `simd.*`
+
+SSE2 128-bit vector operations for graphics and bulk data processing. All buffer arguments are pointers (from `mem.alloc`) to 16-byte regions.
+
+**Arithmetic (4 packed single-precision floats):**
+```
+simd.addf4(dest, a, b)   // dest = a + b element-wise
+simd.subf4(dest, a, b)   // dest = a - b
+simd.mulf4(dest, a, b)   // dest = a * b
+simd.divf4(dest, a, b)   // dest = a / b
+```
+
+**Vector operations:**
+```
+simd.dot4(dest, a, b)      // dot product, result broadcast to all 4 elements
+simd.cross3(dest, a, b)    // 3D cross product (w=0)
+simd.normalize4(dest, v)   // normalize to unit length
+simd.lint4(dest, a, b, t)  // linear interpolation: a + t*(b-a)
+```
+
+**Matrix operations (row-major 4×4):**
+```
+simd.mat4_mul(dest, a, b)   // 4×4 matrix multiply: C = A * B
+simd.mat4_vec4(dest, m, v)  // matrix-vector multiply
+```
+
+**RGB565 texture operations (8 pixels per 128-bit register):**
+```
+simd.rgb565_unpack(r, g, b, pixels)  // extract R/G/B channels
+simd.rgb565_pack(dest, r, g, b)      // combine to RGB565
+simd.rgb565_blend(dest, a, b, alpha) // alpha blend (alpha: 8×16-bit, 0-256)
+```
+
 ---
 
 ## 15. Compiler Architecture
@@ -756,6 +789,19 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `mat.scale(sx,sy,sz)`           | Multiply scale into current matrix                 |
 | `mat.rotate_x/y/z(angle)`       | Multiply rotation (angle 0-255 = 0-360°)           |
 | `mat.transform_x/y/z(x,y,z)`    | Transform point, return single coordinate          |
+| `simd.addf4(d,a,b)`             | Add 4 packed floats                                |
+| `simd.subf4(d,a,b)`             | Subtract 4 packed floats                           |
+| `simd.mulf4(d,a,b)`             | Multiply 4 packed floats                           |
+| `simd.divf4(d,a,b)`             | Divide 4 packed floats                             |
+| `simd.dot4(d,a,b)`              | Dot product of 4-float vectors                     |
+| `simd.cross3(d,a,b)`            | 3D cross product                                   |
+| `simd.normalize4(d,v)`          | Normalize vec4 to unit length                      |
+| `simd.lint4(d,a,b,t)`           | Linear interpolation a + t*(b-a)                   |
+| `simd.mat4_mul(d,a,b)`          | 4×4 matrix multiply                                |
+| `simd.mat4_vec4(d,m,v)`         | Matrix-vector multiply                             |
+| `simd.rgb565_unpack(r,g,b,px)`  | Extract R/G/B from 8 RGB565 pixels                 |
+| `simd.rgb565_pack(d,r,g,b)`     | Pack R/G/B to 8 RGB565 pixels                      |
+| `simd.rgb565_blend(d,a,b,α)`    | Alpha blend 8 RGB565 pixels                        |
 | `net.start()` / `net.end()`     | Begin / end a networking session (ws2_32)          |
 | `net.bind(port)`                | Socket + bind + listen (no block)                  |
 | `net.accept()`                  | Block for a peer on the bound socket               |

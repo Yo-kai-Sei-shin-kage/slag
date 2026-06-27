@@ -1,10 +1,15 @@
 // Example: Multi-Window
 // Demonstrates: Opening two windows from a single program using TLS + threads
 
+global int running = 1;
+
 function red_window() {
     window.open(300, 200, "Window 1 - Red");
     var int frame = 0;
-    while (window.is_open()) {
+    while ($running == 1) {
+        if (window.is_open() == 0) {
+            running = 0;
+        }
         var int pulse = $((100 + $frame % 100));
         fill_triangle(0, 0, 300, 0, 300, 200, pulse, 30, 30);
         fill_triangle(0, 0, 300, 200, 0, 200, pulse, 30, 30);
@@ -16,7 +21,10 @@ function red_window() {
 function blue_window() {
     window.open(300, 200, "Window 2 - Blue");
     var int frame = 0;
-    while (window.is_open()) {
+    while ($running == 1) {
+        if (window.is_open() == 0) {
+            running = 0;
+        }
         var int pulse = $((100 + $frame % 100));
         fill_triangle(0, 0, 300, 0, 300, 200, 30, 30, pulse);
         fill_triangle(0, 0, 300, 200, 0, 200, 30, 30, pulse);
