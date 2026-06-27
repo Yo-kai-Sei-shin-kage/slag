@@ -20,8 +20,13 @@ CLAUDE.md
 .claude/
 *.slag
 sse2_features.txt
+syntax_examples.slag
 !working_tests/**/*.slag
 !examples/**/*.slag
-!syntax_examples.slag
 compiler/working_*.c
 slag.nanorc
+
+# Test directories and misc
+tests/
+config_tests/
+DISCLAIMER
