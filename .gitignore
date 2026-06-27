@@ -18,6 +18,7 @@ slag
 # AI assistant files
 CLAUDE.md
 .claude/
+syntax_examples.txt
 *.slag
 sse2_features.txt
 syntax_examples.slag

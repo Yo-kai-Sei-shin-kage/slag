@@ -1193,6 +1193,13 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_window_release_mouse");
             emit_call_epilogue(cg, 0);
         }
+        // window.center_cursor() - move cursor to window center
+        else if (strcmp(member, "center_cursor") == 0) {
+            emit(cg, "    ; window.center_cursor");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_window_center_cursor");
+            emit_call_epilogue(cg, 0);
+        }
         // window.flush()
         else if (strcmp(member, "flush") == 0) {
             emit(cg, "    ; window.flush");
