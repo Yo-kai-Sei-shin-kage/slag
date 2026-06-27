@@ -39,6 +39,9 @@ void emit_simd_data(Codegen *cg) {
     E("_simd_rgb565_mask_r: times 8 dw 0xF800");
     E("_simd_rgb565_mask_g: times 8 dw 0x07E0");
     E("_simd_rgb565_mask_b: times 8 dw 0x001F");
+    E("_simd_cross3_wmask: dd 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000");
+    E("_simd_rgb565_max_5bit: times 8 dw 31");
+    E("_simd_rgb565_max_6bit: times 8 dw 63");
 }
 
 void emit_simd_runtime(Codegen *cg) {
@@ -113,6 +116,7 @@ void emit_simd_runtime(Codegen *cg) {
     E("    shufps xmm3, xmm3, 0xC9  ; b -> {b.y, b.z, b.x, b.w}");
     E("    mulps  xmm2, xmm3        ; {a.z*b.y, a.x*b.z, a.y*b.x, ...}");
     E("    subps  xmm0, xmm2        ; cross product result");
+    E("    andps  xmm0, [_simd_cross3_wmask] ; zero w component");
     E("    movaps [rcx], xmm0       ; store result");
     E("    mov    rax, rcx          ; return dest ptr");
     E("    ret");
@@ -132,8 +136,11 @@ void emit_simd_runtime(Codegen *cg) {
     E("    shufps xmm2, xmm2, 0x4E  ; swap halves");
     E("    addps  xmm1, xmm2        ; xmm1 = squared length (all 4)");
     E("    sqrtps xmm1, xmm1        ; xmm1 = length");
+    E("    xorps  xmm2, xmm2        ; zero for comparison");
+    E("    cmpps  xmm2, xmm1, 0     ; xmm2 = (length == 0) mask");
     E("    divps  xmm0, xmm1        ; xmm0 = v / length");
-    E("    movaps [rcx], xmm0       ; store normalized");
+    E("    andnps xmm2, xmm0        ; zero result if length was zero");
+    E("    movaps [rcx], xmm2       ; store normalized");
     E("    mov    rax, rcx          ; return dest ptr");
     E("    ret");
 
@@ -300,6 +307,7 @@ void emit_simd_runtime(Codegen *cg) {
     E("    ; extract B: pixel & 0x001F");
     E("    pand   xmm2, [_simd_rgb565_mask_b]");
     E("    movdqu [r8], xmm2              ; store B");
+    E("    mov    rax, rcx                ; return dest ptr");
     E("    ret");
 
     // _slag_simd_rgb565_pack(dest=rcx, r=rdx, g=r8, b=r9)
@@ -351,6 +359,7 @@ void emit_simd_runtime(Codegen *cg) {
     E("    movdqa [rsp+80], xmm2          ; b_b at rsp+80");
     E("    ; load alpha");
     E("    movdqu xmm3, [r9]              ; alpha (0-256)");
+    E("    pxor   xmm7, xmm7               ; zero for clamping");
     E("    ; blend R: a_r + ((b_r - a_r) * alpha) >> 8");
     E("    movdqa xmm0, [rsp]             ; a_r");
     E("    movdqa xmm1, [rsp+48]          ; b_r");
@@ -358,6 +367,8 @@ void emit_simd_runtime(Codegen *cg) {
     E("    pmullw xmm1, xmm3              ; * alpha");
     E("    psraw  xmm1, 8                 ; >> 8");
     E("    paddw  xmm0, xmm1              ; a_r + diff");
+    E("    pmaxsw xmm0, xmm7              ; clamp >= 0");
+    E("    pminsw xmm0, [_simd_rgb565_max_5bit] ; clamp <= 31");
     E("    movdqa xmm4, xmm0              ; save blended R");
     E("    ; blend G");
     E("    movdqa xmm0, [rsp+16]          ; a_g");
@@ -366,6 +377,8 @@ void emit_simd_runtime(Codegen *cg) {
     E("    pmullw xmm1, xmm3");
     E("    psraw  xmm1, 8");
     E("    paddw  xmm0, xmm1");
+    E("    pmaxsw xmm0, xmm7              ; clamp >= 0");
+    E("    pminsw xmm0, [_simd_rgb565_max_6bit] ; clamp <= 63");
     E("    movdqa xmm5, xmm0              ; save blended G");
     E("    ; blend B");
     E("    movdqa xmm0, [rsp+32]          ; a_b");
@@ -374,6 +387,8 @@ void emit_simd_runtime(Codegen *cg) {
     E("    pmullw xmm1, xmm3");
     E("    psraw  xmm1, 8");
     E("    paddw  xmm0, xmm1");
+    E("    pmaxsw xmm0, xmm7              ; clamp >= 0");
+    E("    pminsw xmm0, [_simd_rgb565_max_5bit] ; clamp <= 31");
     E("    movdqa xmm6, xmm0              ; save blended B");
     E("    ; pack result");
     E("    psllw  xmm4, 11                ; R << 11");

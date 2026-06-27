@@ -238,7 +238,7 @@ static Global *alloc_global(Codegen *cg, const char *name, SlagType type, Expr *
 
 // Allocate a new global array. Returns the global entry.
 static Global *alloc_global_array(Codegen *cg, const char *name, SlagType elem_type,
-                                   int size, ExprList *init_list) {
+                                   int size, const ExprList *init_list) {
     if (cg->global_count >= MAX_GLOBALS) {
         fprintf(stderr, "codegen error: too many globals\n");
         exit(1);
@@ -379,7 +379,7 @@ static void emit_stmtlist(Codegen *cg, const StmtList *list);
 
 // Emit a string constant's bytes as NASM db directives.
 // Handles \n \t \\ and other escapes.
-static void emit_str_bytes(Codegen *cg, const char *s) {
+static void __attribute__((unused)) emit_str_bytes(Codegen *cg, const char *s) {
     // We emit as a mix of quoted segments and explicit byte values.
     int in_quote = 0;
     for (const char *p = s; *p; p++) {
@@ -2068,7 +2068,7 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
 
             if (s->as.array_decl.is_global) {
                 // Global array: allocate in .data section
-                ExprList *init_list = NULL;
+                const ExprList *init_list = NULL;
                 if (s->as.array_decl.init_call == NULL) {
                     init_list = &s->as.array_decl.init_list;
                 }

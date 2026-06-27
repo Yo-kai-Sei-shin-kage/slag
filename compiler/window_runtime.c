@@ -494,6 +494,8 @@ static void emit_wndproc(Codegen *cg) {
     E("    je   .wndproc_mbuttonup");
     E("    cmp  r13, WM_MOUSEWHEEL");
     E("    je   .wndproc_mousewheel");
+    E("    cmp  r13, WM_CLOSE");
+    E("    je   .wndproc_close");
     E("    jmp  .wndproc_default");
     E("");
 
@@ -558,15 +560,11 @@ static void emit_wndproc(Codegen *cg) {
 
     // WM_MOUSEMOVE — lParam: low word = x, high word = y
     E(".wndproc_mousemove:");
-    E("    movsx rcx, word [rbp-24]   ; x = low word of lParam (r15)");
-    E("    movsx rdx, word [rbp-22]   ; y = high word of lParam");
-    E("    ; extract from r15 directly");
     E("    mov  rcx, r15");
     E("    movsx rdx, cx              ; low 16 = x");
     E("    shr  rcx, 16");
     E("    movsx rcx, cx              ; high 16 = y");
-    E("    ; swap: rdx=x, rcx=y — reorder for call(x,y)");
-    E("    xchg rcx, rdx");
+    E("    xchg rcx, rdx              ; reorder for call(x,y)");
     E("    sub  rsp, 32");
     E("    call _slag_on_mouse_move");
     E("    add  rsp, 32");
