@@ -210,7 +210,7 @@ fi
 echo "Building the Slag compiler..."
 cd "$COMPILER_DIR"
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \
-    window_runtime.c net_runtime.c mem_runtime.c
+    window_runtime.c net_runtime.c mem_runtime.c simd_runtime.c
 
 # Decide the expected binary name per platform. On Cygwin/MSYS, GCC always
 # emits a .exe regardless of the -o name; on Linux it is extensionless.
@@ -277,42 +277,50 @@ fi
 
 SLAGRUN="$COMPILER_DIR/slagrun"
 cat > "$SLAGRUN" <<'SLAGRUN_EOF'
-#!/usr/bin/env bash
+#!/usr/bin/bash
 # slagrun — compile, assemble, link, and run a Slag program.
-# Usage: slagrun [-d] program[.slag]
-#   -d  Debug mode: keep .asm and .obj files after running
+# Usage: slagrun [-d] [-g] program[.slag]
+#   -d  Debug mode: keep .asm and .obj build artifacts
+#   -g  GUI mode: suppress console window (-mwindows)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 debug=0
-if [[ "$1" == "-d" ]]; then
-    debug=1
-    shift
-fi
+gui=0
+while [[ "$1" == -* ]]; do
+    case "$1" in
+        -d) debug=1; shift ;;
+        -g) gui=1; shift ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
 
 base="${1%.slag}"
 "$SCRIPT_DIR/slag" "$base.slag"
 nasm -f win64 "$base.asm" -o "$base.obj"
+
+# Build link flags
+LDFLAGS="-nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32"
+if [[ $gui -eq 1 ]]; then
+    LDFLAGS="$LDFLAGS -mwindows"
+fi
 
 # On Linux, use -B to ensure MinGW binutils (not native ld) is used
 case "$(uname -s)" in
     Linux*)
         x86_64-w64-mingw32-gcc "$base.obj" -o "$base.exe" \
             -B/usr/x86_64-w64-mingw32/bin/ \
-            -nostdlib -e _start \
-            -lkernel32 -luser32 -lgdi32 -lws2_32
+            $LDFLAGS
         echo "Built: $base.exe"
         echo "Run with: wine $base.exe"
         ;;
     *)
-        x86_64-w64-mingw32-gcc "$base.obj" -o "$base.exe" \
-            -nostdlib -e _start \
-            -lkernel32 -luser32 -lgdi32 -lws2_32
+        x86_64-w64-mingw32-gcc "$base.obj" -o "$base.exe" $LDFLAGS
         "./$base.exe"
-        # Cleanup unless debug mode
+        # Cleanup build artifacts unless debug mode
         if [[ $debug -eq 0 ]]; then
-            rm -f "$base.asm" "$base.obj" "$base.exe"
+            rm -f "$base.asm" "$base.obj"
         fi
         ;;
 esac

@@ -60,6 +60,11 @@ Slag is under active development. The pipeline currently supports:
     - `mat.scale(sx, sy, sz)` — multiply scale into current matrix
     - `mat.rotate_x(angle)` / `mat.rotate_y(angle)` / `mat.rotate_z(angle)` — multiply rotation (angle 0-255 maps to 0-360°)
     - `mat.transform_x(x, y, z)` / `mat.transform_y(...)` / `mat.transform_z(...)` — transform point, return single coordinate
+  - **SIMD — `simd.*`** (SSE2 128-bit vector operations for graphics and bulk processing; all pointers are 16-byte buffers):
+    - *Arithmetic:* `simd.addf4(dest,a,b)`, `simd.subf4`, `simd.mulf4`, `simd.divf4` — packed 4-float ops
+    - *Vector:* `simd.dot4(dest,a,b)` — dot product; `simd.cross3(dest,a,b)` — 3D cross; `simd.normalize4(dest,v)` — unit vector; `simd.lint4(dest,a,b,t)` — linear interpolation
+    - *Matrix:* `simd.mat4_mul(dest,a,b)` — 4×4 matrix multiply; `simd.mat4_vec4(dest,m,v)` — matrix-vector multiply
+    - *RGB565:* `simd.rgb565_unpack(r,g,b,pixels)` — extract channels from 8 pixels; `simd.rgb565_pack(dest,r,g,b)` — combine channels; `simd.rgb565_blend(dest,a,b,alpha)` — alpha blend 8 pixels
   - **Networking — `net.*`** (TCP via `ws2_32`; supports persistent peer-to-peer sessions between two machines running the same program):
     - `net.start()` / `net.end()` — `WSAStartup` / close sockets + `WSACleanup`
     - `net.bind(port)` — create socket, bind, and listen (no block)
@@ -132,6 +137,7 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -e _start
+# Add -mwindows to suppress console window for GUI-only programs
 ```
 
 ## Example: window + pixels + input
