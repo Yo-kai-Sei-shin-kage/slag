@@ -84,10 +84,12 @@ Slag is under active development. The pipeline currently supports:
     - `window.close()` — requests the window close (posts `WM_CLOSE`)
     - `window.capture_mouse()` — captures mouse, clips cursor to window, hides cursor (for FPS-style controls)
     - `window.release_mouse()` — releases mouse capture, shows cursor
+    - `window.native()` — returns native screen resolution as "WxH" string (e.g., "1920x1080")
   - **Rasterization and timing builtins**:
     - `fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)` — flat-shaded scanline triangle rasterizer, writes directly to the framebuffer with no per-pixel call overhead; bounds-clamped
     - `fill_triangle_gradient(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)` — per-vertex color (Gouraud-style) scanline rasterizer with linear interpolation along edges and across spans (smooth color blending across a triangle's interior)
     - `fill_triangle_z(x0,y0,z0, x1,y1,z1, x2,y2,z2, r,g,b)` — depth-tested triangle rasterizer; x/y are int screen coords, z values are float depth; pixels only drawn if closer than existing z-buffer value
+    - `fill_triangle_affine(x0,y0,u0,v0, x1,y1,u1,v1, x2,y2,u2,v2, tex_ptr,tex_w,tex_h)` — PS1-style affine texture-mapped triangle; UV coords interpolated linearly (no perspective correction); texture is RGB565 format (2 bytes/pixel)
     - `zbuffer.clear()` — resets the z-buffer to max depth (call at start of each frame)
     - `time.now_ms()` — milliseconds since system start (`GetTickCount`), useful for fps counters and frame timing
     - `time.now_us()` — microseconds via `QueryPerformanceCounter`/`QueryPerformanceFrequency`; high-resolution timing for benchmarks and precise frame timing
@@ -102,6 +104,24 @@ Slag is under active development. The pipeline currently supports:
     - `input.set_bbox(minx, miny, maxx, maxy)` / `input.in_bbox(mx, my)` — axis-aligned bounding box check, used for hit-testing draggable objects
   - **3D pipeline (demonstrated, written entirely in Slag)** — Bresenham line drawing, flat-shaded filled triangles, perspective projection, and per-axis rotation matrices using precomputed sin/cos constants. Per-face Lambertian lighting is also implemented in Slag: each face's normal is computed as the cross product of two rotated edge vectors, dotted with a fixed light direction, remapped to a `[0.3, 1.0]` brightness, and applied to the face color. Demos include a wireframe rotating cube, a mouse-drag + scroll-wheel-rotation cube, a solid 6-face flat-shaded rotating cube (~60fps at 640x800), and a per-face-lit shaded cube whose faces brighten and dim as it rotates
   - **Config file reading** — Text configuration files can be parsed using `readfile()` combined with `mem.peek8()` for byte-by-byte parsing. The `config_tests/` directory contains examples of config-driven animations where parameters (positions, colors, paths) are read from external `.txt` files at runtime
+  - **BMP image loading** (`mesh.*`):
+    - `mesh.bmp_width(ptr)` / `mesh.bmp_height(ptr)` — dimensions of a 24-bit uncompressed BMP loaded via `readfile()`
+    - `mesh.bmp_pixel(ptr, x, y)` — returns 0x00RRGGBB for pixel at (x,y)
+    - `mesh.bmp_gray(ptr, x, y)` — returns 0-255 grayscale value
+  - **Mesh management** (`mesh.*`):
+    - `mesh.create(verts, faces)` — allocate a mesh with capacity for N vertices and M faces; returns handle
+    - `mesh.destroy(handle)` — free mesh memory
+    - `mesh.set_vertex(h, i, x, y, z)` / `mesh.get_vertex_x/y/z(h, i)` — vertex access (16.16 fixed-point)
+    - `mesh.set_face(h, i, v0, v1, v2)` / `mesh.get_face(h, i, c)` — face access (c=0/1/2 for vertex index)
+    - `mesh.from_heightmap(bmp_ptr, scale_xz, scale_y)` — generate terrain mesh from grayscale BMP
+    - `mesh.vertex_count(h)` / `mesh.face_count(h)` — query mesh size
+  - **Procedural textures** (`tex.*`):
+    - `tex.checker(x, y, size)` — returns 0 or 255 checkerboard pattern
+    - `tex.gradient_h(x, width)` / `tex.gradient_v(y, height)` — linear gradient 0-255
+    - `tex.brick(x, y, bw, bh, mortar)` — brick pattern (0=mortar, 255=brick)
+    - `tex.noise2d(x, y, seed)` — hash-based noise 0-255
+    - `tex.perlin2d(x, y, freq, seed)` — Perlin noise 0-255
+    - `tex.wood(x, y, rings, seed)` / `tex.marble(x, y, freq, seed)` — organic patterns
 
 ### Not yet implemented
 
@@ -128,7 +148,9 @@ The install script detects the host environment (Cygwin, MSYS2, or Linux), check
 
 ```bash
 cd compiler
-gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c window_runtime.c net_runtime.c mem_runtime.c
+gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \
+    window_runtime.c net_runtime.c mem_runtime.c matrix_runtime.c \
+    simd_runtime.c mesh_runtime.c texture_runtime.c
 ```
 
 ## Compiling a Slag program

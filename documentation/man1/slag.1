@@ -220,6 +220,10 @@ cursor. Useful for FPS-style controls.
 .B window.release_mouse()
 Release mouse capture and show the cursor.
 .TP
+.B window.native()
+Returns the native screen resolution as a string in "WxH" format
+(e.g., "1920x1080").
+.TP
 .BI pixel( x , " y" , " r" , " g" , " b" )
 Write a single RGB pixel into the framebuffer at
 .RI ( x , " y" ).
@@ -240,6 +244,11 @@ the active z-buffer. Each vertex carries a floating-point depth
 a pixel is drawn only when it is nearer (smaller
 .IR z )
 than the value already stored in the depth buffer.
+.TP
+.BI fill_triangle_affine( x0 , " y0" , " u0" , " v0" ", ..." , " tex_ptr" , " tex_w" , " tex_h" )
+PS1-style affine texture-mapped triangle. UV coordinates are linearly
+interpolated without perspective correction. The texture must be in
+RGB565 format (2 bytes per pixel, RRRRRGGG GGGBBBBB).
 .TP
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.
@@ -392,6 +401,55 @@ Pack R/G/B channels to 8 RGB565 pixels.
 .TP
 .B simd.rgb565_blend(d,a,b,alpha)
 Alpha blend 8 RGB565 pixels (alpha: 8x16-bit values, 0-256 range).
+.SS BMP and mesh management
+BMP image loading and mesh management for 3D geometry.
+.TP
+.BR mesh.bmp_width(ptr) ", " mesh.bmp_height(ptr)
+Return dimensions of a 24-bit uncompressed BMP loaded via readfile().
+.TP
+.B mesh.bmp_pixel(ptr,x,y)
+Return 0x00RRGGBB for the pixel at (x,y).
+.TP
+.B mesh.bmp_gray(ptr,x,y)
+Return grayscale value 0-255 for the pixel at (x,y).
+.TP
+.B mesh.create(verts,faces)
+Allocate a mesh with capacity for N vertices and M faces; returns handle.
+.TP
+.B mesh.destroy(handle)
+Free mesh memory.
+.TP
+.BR mesh.set_vertex(h,i,x,y,z) ", " mesh.get_vertex_x(h,i) ", etc."
+Set or get vertex coordinates (16.16 fixed-point).
+.TP
+.BR mesh.set_face(h,i,v0,v1,v2) ", " mesh.get_face(h,i,c)
+Set or get face vertex indices (c=0/1/2).
+.TP
+.B mesh.from_heightmap(bmp_ptr,scale_xz,scale_y)
+Generate terrain mesh from grayscale BMP.
+.TP
+.BR mesh.vertex_count(h) ", " mesh.face_count(h)
+Query mesh size.
+.SS Procedural textures
+Generate procedural texture values (0-255 grayscale).
+.TP
+.B tex.checker(x,y,size)
+Returns 0 or 255 in a checkerboard pattern.
+.TP
+.BR tex.gradient_h(x,width) ", " tex.gradient_v(y,height)
+Linear gradient from 0 to 255.
+.TP
+.B tex.brick(x,y,bw,bh,mortar)
+Brick pattern (0=mortar, 255=brick).
+.TP
+.B tex.noise2d(x,y,seed)
+Hash-based noise, returns 0-255.
+.TP
+.B tex.perlin2d(x,y,freq,seed)
+Perlin noise, returns 0-255.
+.TP
+.BR tex.wood(x,y,rings,seed) ", " tex.marble(x,y,freq,seed)
+Organic patterns (wood grain, marble veins).
 .SS Networking
 TCP networking via ws2_32; supports persistent peer-to-peer sessions
 between two machines running the same program. Programs using networking
@@ -480,7 +538,8 @@ A self-hosting compiler
 .nf
 cd compiler
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
-    window_runtime.c net_runtime.c mem_runtime.c matrix_runtime.c simd_runtime.c
+    window_runtime.c net_runtime.c mem_runtime.c matrix_runtime.c \e
+    simd_runtime.c mesh_runtime.c texture_runtime.c
 .fi
 .RE
 .SS Compiling and running a Slag program

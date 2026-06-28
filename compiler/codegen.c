@@ -39,6 +39,8 @@
 #include "mem_runtime.h"
 #include "matrix_runtime.h"
 #include "simd_runtime.h"
+#include "mesh_runtime.h"
+#include "texture_runtime.h"
 
 // ---------------------------------------------------------------------
 // Codegen state
@@ -1137,6 +1139,10 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // fill_triangle_z(x0,y0,z0,x1,y1,z1,x2,y2,z2,r,g,b)
             emit(cg, "    ; fill_triangle_z()");
             emit_user_call(cg, "slag_fill_triangle_z", args);
+        } else if (strcmp(name, "fill_triangle_affine") == 0) {
+            // fill_triangle_affine(x0,y0,u0,v0,x1,y1,u1,v1,x2,y2,u2,v2,tex_ptr,tex_w,tex_h)
+            emit(cg, "    ; fill_triangle_affine()");
+            emit_user_call(cg, "slag_fill_triangle_affine", args);
         } else if (strcmp(name, "zbuffer") == 0) {
             emit(cg, "    ; zbuffer stub");
         } else {
@@ -1198,6 +1204,13 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    ; window.center_cursor");
             emit_call_prologue(cg);
             emit(cg, "    call _slag_window_center_cursor");
+            emit_call_epilogue(cg, 0);
+        }
+        // window.native() -> str "WxH" native screen resolution
+        else if (strcmp(member, "native") == 0) {
+            emit(cg, "    ; window.native");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_window_native");
             emit_call_epilogue(cg, 0);
         }
         // window.flush()
@@ -1959,6 +1972,290 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  r9,  r15");
                 emit_call_prologue(cg);
                 emit(cg, "    call _slag_simd_rgb565_blend");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mesh.bmp_width(ptr) -> int
+        else if (strcmp(member, "bmp_width") == 0) {
+            emit(cg, "    ; mesh.bmp_width");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    call _slag_mesh_bmp_width");
+            }
+        }
+        // mesh.bmp_height(ptr) -> int
+        else if (strcmp(member, "bmp_height") == 0) {
+            emit(cg, "    ; mesh.bmp_height");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    call _slag_mesh_bmp_height");
+            }
+        }
+        // mesh.bmp_pixel(ptr, x, y) -> int (0x00RRGGBB)
+        else if (strcmp(member, "bmp_pixel") == 0) {
+            emit(cg, "    ; mesh.bmp_pixel");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    call _slag_mesh_bmp_pixel");
+            }
+        }
+        // mesh.bmp_gray(ptr, x, y) -> int (0-255)
+        else if (strcmp(member, "bmp_gray") == 0) {
+            emit(cg, "    ; mesh.bmp_gray");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    call _slag_mesh_bmp_gray");
+            }
+        }
+        // mesh.create(verts, faces) -> handle
+        else if (strcmp(member, "create") == 0 && args->count >= 2) {
+            emit(cg, "    ; mesh.create");
+            emit_int_expr(cg, args->items[0]);
+            emit(cg, "    mov  r12, rax");
+            emit_int_expr(cg, args->items[1]);
+            emit(cg, "    mov  rcx, r12");
+            emit(cg, "    mov  rdx, rax");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_mesh_create");
+            emit_call_epilogue(cg, 0);
+        }
+        // mesh.destroy(handle) - frees mesh and internal arrays
+        else if (strcmp(member, "destroy") == 0) {
+            emit(cg, "    ; mesh.destroy");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mesh_free");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // mesh.vertex_count(handle) -> int
+        else if (strcmp(member, "vertex_count") == 0) {
+            emit(cg, "    ; mesh.vertex_count");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    call _slag_mesh_vertex_count");
+            }
+        }
+        // mesh.face_count(handle) -> int
+        else if (strcmp(member, "face_count") == 0) {
+            emit(cg, "    ; mesh.face_count");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    call _slag_mesh_face_count");
+            }
+        }
+        // mesh.set_vertex(handle, i, x, y, z)
+        else if (strcmp(member, "set_vertex") == 0) {
+            emit(cg, "    ; mesh.set_vertex");
+            if (args->count >= 5) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; handle");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; i");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax        ; x");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  r15, rax        ; y");
+                emit_int_expr(cg, args->items[4]);
+                emit(cg, "    mov  [rsp+32], rax   ; z (5th arg)");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, r14");
+                emit(cg, "    mov  r9, r15");
+                emit(cg, "    call _slag_mesh_set_vertex");
+            }
+        }
+        // mesh.get_vertex_x(handle, i) -> int
+        else if (strcmp(member, "get_vertex_x") == 0) {
+            emit(cg, "    ; mesh.get_vertex_x");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    call _slag_mesh_get_vertex_x");
+            }
+        }
+        // mesh.get_vertex_y(handle, i) -> int
+        else if (strcmp(member, "get_vertex_y") == 0) {
+            emit(cg, "    ; mesh.get_vertex_y");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    call _slag_mesh_get_vertex_y");
+            }
+        }
+        // mesh.get_vertex_z(handle, i) -> int
+        else if (strcmp(member, "get_vertex_z") == 0) {
+            emit(cg, "    ; mesh.get_vertex_z");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    call _slag_mesh_get_vertex_z");
+            }
+        }
+        // mesh.set_face(handle, i, v0, v1, v2)
+        else if (strcmp(member, "set_face") == 0) {
+            emit(cg, "    ; mesh.set_face");
+            if (args->count >= 5) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  r15, rax");
+                emit_int_expr(cg, args->items[4]);
+                emit(cg, "    mov  [rsp+32], rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, r14");
+                emit(cg, "    mov  r9, r15");
+                emit(cg, "    call _slag_mesh_set_face");
+            }
+        }
+        // mesh.get_face(handle, i, c) -> int (vertex index)
+        else if (strcmp(member, "get_face") == 0) {
+            emit(cg, "    ; mesh.get_face");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    call _slag_mesh_get_face");
+            }
+        }
+        // mesh.from_heightmap(bmp_ptr, scale_xz, scale_y) -> handle
+        else if (strcmp(member, "from_heightmap") == 0) {
+            emit(cg, "    ; mesh.from_heightmap");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_mesh_from_heightmap");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // tex.checker(x, y, size) -> int (0 or 255)
+        else if (strcmp(member, "checker") == 0) {
+            emit(cg, "    ; tex.checker");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_tex_checker");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // tex.gradient_h(x, width) -> int (0-255)
+        else if (strcmp(member, "gradient_h") == 0) {
+            emit(cg, "    ; tex.gradient_h");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_tex_gradient_h");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // tex.gradient_v(y, height) -> int (0-255)
+        else if (strcmp(member, "gradient_v") == 0) {
+            emit(cg, "    ; tex.gradient_v");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_tex_gradient_v");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // tex.brick(x, y, bw, bh, mortar) -> int (0 or 255)
+        else if (strcmp(member, "brick") == 0) {
+            emit(cg, "    ; tex.brick");
+            if (args->count >= 5) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  r15, rax");
+                emit_int_expr(cg, args->items[4]);
+                emit(cg, "    mov  [rsp+32], rax");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, r14");
+                emit(cg, "    mov  r9, r15");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_tex_brick");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // tex.noise2d(x, y, seed) -> int (0-255)
+        else if (strcmp(member, "noise2d") == 0) {
+            emit(cg, "    ; tex.noise2d");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_tex_noise2d");
                 emit_call_epilogue(cg, 0);
             }
         }
@@ -3410,6 +3707,8 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_mem_runtime(&cg);
     emit_mat_runtime(&cg);
     emit_simd_runtime(&cg);
+    emit_mesh_runtime(&cg);
+    emit_tex_runtime(&cg);
 
     // User functions.
     for (int i = 0; i < prog->functions.count; i++) {
@@ -3422,12 +3721,16 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_data_section(&cg);
     emit_window_data(&cg);
     emit_mat_data(&cg);
+    emit_mesh_data(&cg);
+    emit_tex_data(&cg);
     emit_bss_section(&cg);
     emit_window_bss(&cg);
     emit_net_bss(&cg);
     emit_mem_bss(&cg);
     emit_mat_bss(&cg);
     emit_simd_bss(&cg);
+    emit_mesh_bss(&cg);
+    emit_tex_bss(&cg);
 
     // Free string constant pool.
     for (int i = 0; i < cg.str_const_count; i++) {
