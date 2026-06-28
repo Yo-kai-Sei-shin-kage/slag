@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.9 — Draft**
+**Version 0.10 — Draft**
 
 ---
 
@@ -994,11 +994,33 @@ function main() {
 | 0.7     | Global arrays, z-buffer depth testing (fill_triangle_z, zbuffer.clear) | ✅ Complete |
 | 0.8     | Config file parsing, examples directory with interactive browser | ✅ Complete |
 | 0.9     | Bit shifts (bit.shl/shr), mouse capture, multi-window TLS   | ✅ Complete |
-| 0.10    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
-| 0.11    | Texture mapping, matrix stack                               | 🔲 Planned  |
-| 0.12    | Lighting model, perspective correction                      | 🔲 Planned  |
+| 0.10    | Matrix stack (mat.*), affine texture mapping, BMP loading, mesh management, procedural textures (tex.*) | ✅ Complete |
+| 0.11    | Perspective-correct texture mapping, combined texture+vertex color triangles | 🔲 Planned  |
+| 0.12    | Alpha-blended triangles, backface culling, near-plane clipping | 🔲 Planned  |
+| 0.13    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
+| 0.14    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
+
+### PS2-Era Graphics Target (60fps)
+
+To achieve PS2-era rendering at 60fps, the following features are required:
+
+**Core rendering (0.11-0.12):**
+- Perspective-correct texture interpolation (1/z correction per scanline)
+- Gouraud shading combined with texturing
+- Per-triangle alpha blending / transparency
+- Backface culling (dot product of view vector and face normal)
+- Near-plane triangle clipping (Sutherland-Hodgman)
+
+**Visual quality (0.13):**
+- Bilinear texture filtering (4-tap weighted average)
+- Linear fog (blend to fog color based on z-depth)
+
+**Performance targets:**
+- 10K+ textured triangles per frame at 640x480
+- Sub-16ms frame time (60fps)
+- SIMD-accelerated rasterization where possible
 
 ---
 
-*Slag Language Specification v0.9 — Subject to revision*
+*Slag Language Specification v0.10 — Subject to revision*
