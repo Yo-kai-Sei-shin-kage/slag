@@ -1,5 +1,11 @@
-// Example: Fill Triangle
-// Demonstrates: fill_triangle(x0, y0, x1, y1, x2, y2, r, g, b)
+// Fill Triangle
+//
+//
+//
+//
+//
+//
+// Example: fill_triangle(x0, y0, x1, y1, x2, y2, r, g, b)
 
 function main() {
     window.open(400, 300, "Fill Triangle Example");

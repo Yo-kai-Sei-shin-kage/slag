@@ -1,4 +1,10 @@
 // Example: Fill Triangle
+//
+//
+//
+//
+//
+//
 function main() {
     window.open(400, 300, "Triangles");
 

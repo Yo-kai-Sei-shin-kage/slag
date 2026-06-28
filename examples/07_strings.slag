@@ -1,5 +1,11 @@
-// Example: Strings and File Reading
-// Demonstrates: str type, readfile(), mem.peek8 for parsing
+// Strings and File Reading
+//
+//
+//
+//
+//
+//
+// Example: str type, readfile(), mem.peek8 for parsing
 
 // Embedded 5x7 font (ASCII 32-95)
 global int[] font = {

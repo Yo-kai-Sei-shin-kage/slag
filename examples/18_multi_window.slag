@@ -1,5 +1,11 @@
-// Example: Multi-Window
-// Demonstrates: Opening two windows from a single program using TLS + threads
+// Multi-Window
+//
+//
+//
+//
+//
+//
+// Example: Opening two windows from a single program using TLS + threads
 
 global int running = 1;
 

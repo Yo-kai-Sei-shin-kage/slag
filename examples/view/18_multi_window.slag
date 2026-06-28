@@ -1,4 +1,10 @@
 // Example: Multi-Window
+//
+//
+//
+//
+//
+//
 // Two windows from one binary using TLS
 
 function red_window() {

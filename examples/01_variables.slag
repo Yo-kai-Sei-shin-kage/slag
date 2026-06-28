@@ -1,5 +1,11 @@
-// Example: Variables and Types
-// Demonstrates: var declarations, int, float, str, bool types
+// Variables and Types
+//
+//
+//
+//
+//
+//
+// Example: var declarations, int, float, str, bool types
 
 // Embedded 5x7 font (ASCII 32-95)
 global int[] font = {

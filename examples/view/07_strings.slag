@@ -1,4 +1,10 @@
 // Example: Strings
+//
+//
+//
+//
+//
+//
 function main() {
     var str greeting = "Hello";        // string literal
     var str name = "Slag";

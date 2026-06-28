@@ -1,5 +1,11 @@
-// Example: Threads and Synchronization
-// Minimal test to debug threading
+// Threads and Synchronization
+//
+//
+//
+//
+//
+//
+// Example: thread blocks, sync blocks, lock blocks
 
 global int[] font = {
     0,0,0,0,0, 0,0,95,0,0, 0,7,0,7,0, 20,127,20,127,20, 36,42,127,42,18,

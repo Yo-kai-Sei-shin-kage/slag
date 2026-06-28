@@ -1,5 +1,11 @@
-// Example: Global Arrays
-// Demonstrates: global array declaration, access from multiple functions
+// Global Arrays
+//
+//
+//
+//
+//
+//
+// Example: global array declaration, access from multiple functions
 
 // Embedded 5x7 font (ASCII 32-95)
 global int[] font = {

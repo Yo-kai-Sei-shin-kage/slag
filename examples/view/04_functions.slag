@@ -1,4 +1,10 @@
 // Example: Functions
+//
+//
+//
+//
+//
+//
 function add(int a, int b) {           // takes two int parameters
     return int $(($a + $b));           // returns an int
 }

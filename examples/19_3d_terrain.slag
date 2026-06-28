@@ -1,4 +1,10 @@
 // 3D Terrain Demo
+//
+//
+//
+//
+//
+//
 // Example: First-person 3D terrain demo
 
 global int cam_x = 0;

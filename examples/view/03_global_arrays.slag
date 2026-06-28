@@ -1,4 +1,10 @@
 // Example: Global Arrays
+//
+//
+//
+//
+//
+//
 global int[] data = {100, 200, 300};  // declared outside functions
 
 function print_data() {

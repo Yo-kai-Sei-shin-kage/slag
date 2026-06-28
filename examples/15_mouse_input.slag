@@ -1,5 +1,11 @@
-// Example: Mouse Input
-// Demonstrates: on mouse_move, on mouse_down, on mouse_up, on mouse_wheel
+// Mouse Input
+//
+//
+//
+//
+//
+//
+// Example: on mouse_move, on mouse_down, on mouse_up, on mouse_wheel
 
 global int mouse_x = 200;
 global int mouse_y = 150;

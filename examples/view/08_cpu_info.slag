@@ -1,4 +1,10 @@
 // Example: CPU Information
+//
+//
+//
+//
+//
+//
 function main() {
     println(cpu.physical_cores());     // number of physical cores
     println(cpu.logical_cores());      // number of logical processors

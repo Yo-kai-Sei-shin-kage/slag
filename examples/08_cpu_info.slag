@@ -1,5 +1,11 @@
-// Example: CPU Information
-// Demonstrates: cpu.physical_cores(), cpu.logical_cores(), cpu.hyperthreaded()
+// CPU Information
+//
+//
+//
+//
+//
+//
+// Example: cpu.physical_cores(), cpu.logical_cores(), cpu.hyperthreaded()
 
 // Embedded 5x7 font (ASCII 32-95)
 global int[] font = {

@@ -1,4 +1,10 @@
 // Example: Variables and Types
+//
+//
+//
+//
+//
+//
 function main() {
     var int x = 100;          // 64-bit signed integer
     var int count = 42;       // another integer

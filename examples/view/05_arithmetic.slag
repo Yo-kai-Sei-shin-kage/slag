@@ -1,4 +1,10 @@
 // Example: Arithmetic
+//
+//
+//
+//
+//
+//
 function main() {
     var int a = 15;
     var int b = 4;

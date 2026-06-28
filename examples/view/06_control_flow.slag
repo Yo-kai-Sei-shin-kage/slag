@@ -1,4 +1,10 @@
 // Example: Control Flow
+//
+//
+//
+//
+//
+//
 function main() {
     var int x = 10;
 

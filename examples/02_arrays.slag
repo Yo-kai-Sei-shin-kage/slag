@@ -1,5 +1,11 @@
-// Example: Local Arrays
-// Demonstrates: array declaration, initialization, indexing, .len
+// Local Arrays
+//
+//
+//
+//
+//
+//
+// Example: array declaration, initialization, indexing, .len
 
 // Embedded 5x7 font (ASCII 32-95)
 global int[] font = {

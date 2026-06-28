@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.10 — Draft**
+**Version 0.11**
 
 ---
 
@@ -492,6 +492,18 @@ fill_triangle_affine(x0, y0, u0, v0, x1, y1, u1, v1, x2, y2, u2, v2, tex_ptr, te
 ```
 
 PS1-style affine texture-mapped triangle. UV coordinates are linearly interpolated without perspective correction. The texture must be in RGB565 format (2 bytes per pixel).
+
+```
+fill_triangle_persp(x0, y0, z0, u0, v0, x1, y1, z1, u1, v1, x2, y2, z2, u2, v2, tex_ptr, tex_w, tex_h);
+```
+
+PS2-style perspective-correct texture-mapped triangle. Interpolates 1/z, u/z, v/z per scanline and divides to recover true UV coordinates, eliminating texture warping on angled surfaces.
+
+```
+fill_triangle_pcolor(verts, tex_ptr, tex_w, tex_h);
+```
+
+Perspective-correct textured triangle with per-vertex colors. The `verts` parameter points to 24 consecutive int64 values (3 vertices × 8 values each: x, y, z, u, v, r, g, b). Texture color is multiplied by interpolated vertex color, enabling Gouraud-style shading combined with texturing.
 
 ### 12.4 Flush
 
@@ -995,7 +1007,7 @@ function main() {
 | 0.8     | Config file parsing, examples directory with interactive browser | ✅ Complete |
 | 0.9     | Bit shifts (bit.shl/shr), mouse capture, multi-window TLS   | ✅ Complete |
 | 0.10    | Matrix stack (mat.*), affine texture mapping, BMP loading, mesh management, procedural textures (tex.*) | ✅ Complete |
-| 0.11    | Perspective-correct texture mapping, combined texture+vertex color triangles | 🔲 Planned  |
+| 0.11    | Perspective-correct texture mapping (fill_triangle_persp, fill_triangle_pcolor) | ✅ Complete |
 | 0.12    | Alpha-blended triangles, backface culling, near-plane clipping | 🔲 Planned  |
 | 0.13    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
 | 0.14    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |

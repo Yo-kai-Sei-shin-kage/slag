@@ -1,4 +1,10 @@
 // Example: Threads
+//
+//
+//
+//
+//
+//
 function main() {
     println("starting threads");
 

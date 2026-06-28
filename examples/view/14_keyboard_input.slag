@@ -1,4 +1,10 @@
 // Example: Keyboard Input
+//
+//
+//
+//
+//
+//
 global int x = 200;                    // use globals for event handlers
 
 function main() {

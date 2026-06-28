@@ -90,6 +90,8 @@ Slag is under active development. The pipeline currently supports:
     - `fill_triangle_gradient(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)` — per-vertex color (Gouraud-style) scanline rasterizer with linear interpolation along edges and across spans (smooth color blending across a triangle's interior)
     - `fill_triangle_z(x0,y0,z0, x1,y1,z1, x2,y2,z2, r,g,b)` — depth-tested triangle rasterizer; x/y are int screen coords, z values are float depth; pixels only drawn if closer than existing z-buffer value
     - `fill_triangle_affine(x0,y0,u0,v0, x1,y1,u1,v1, x2,y2,u2,v2, tex_ptr,tex_w,tex_h)` — PS1-style affine texture-mapped triangle; UV coords interpolated linearly (no perspective correction); texture is RGB565 format (2 bytes/pixel)
+    - `fill_triangle_persp(x0,y0,z0,u0,v0, x1,y1,z1,u1,v1, x2,y2,z2,u2,v2, tex_ptr,tex_w,tex_h)` — PS2-style perspective-correct texture-mapped triangle; interpolates 1/z, u/z, v/z for correct texture mapping on angled surfaces
+    - `fill_triangle_pcolor(verts, tex_ptr,tex_w,tex_h)` — perspective-correct textured triangle with per-vertex colors; verts is pointer to 24 int64s (3 vertices × 8 values: x,y,z,u,v,r,g,b); texture color multiplied by interpolated vertex color
     - `zbuffer.clear()` — resets the z-buffer to max depth (call at start of each frame)
     - `time.now_ms()` — milliseconds since system start (`GetTickCount`), useful for fps counters and frame timing
     - `time.now_us()` — microseconds via `QueryPerformanceCounter`/`QueryPerformanceFrequency`; high-resolution timing for benchmarks and precise frame timing

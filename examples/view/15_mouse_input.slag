@@ -1,4 +1,10 @@
 // Example: Mouse Input
+//
+//
+//
+//
+//
+//
 global int mx = 0;
 global int my = 0;
 

@@ -1,5 +1,11 @@
-// Example: Memory Operations
-// Demonstrates: mem.alloc(), mem.free(), mem.peek8(), mem.poke8(), mem.peek64(), mem.poke64()
+// Memory Operations
+//
+//
+//
+//
+//
+//
+// Example: mem.alloc(), mem.free(), mem.peek8(), mem.poke8(), mem.peek64(), mem.poke64()
 
 // Embedded 5x7 font (ASCII 32-95)
 global int[] font = {

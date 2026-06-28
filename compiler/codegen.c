@@ -1147,6 +1147,11 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // fill_triangle_persp(x0,y0,z0,u0,v0,x1,y1,z1,u1,v1,x2,y2,z2,u2,v2,tex_ptr,tex_w,tex_h)
             emit(cg, "    ; fill_triangle_persp()");
             emit_user_call(cg, "slag_fill_triangle_persp", args);
+        } else if (strcmp(name, "fill_triangle_pcolor") == 0) {
+            // fill_triangle_pcolor(verts, tex_ptr, tex_w, tex_h)
+            // verts: ptr to 24 int64s (3 vertices x 8 values: x,y,z,u,v,r,g,b)
+            emit(cg, "    ; fill_triangle_pcolor()");
+            emit_user_call(cg, "slag_fill_triangle_pcolor", args);
         } else if (strcmp(name, "zbuffer") == 0) {
             emit(cg, "    ; zbuffer stub");
         } else {

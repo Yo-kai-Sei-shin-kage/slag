@@ -1,5 +1,11 @@
-// Example: Pixel Drawing
-// Demonstrates: pixel(x, y, r, g, b) for individual pixel access
+// Pixel Drawing
+//
+//
+//
+//
+//
+//
+// Example: pixel(x, y, r, g, b) for individual pixel access
 
 function main() {
     window.open(400, 300, "Pixel Example");
