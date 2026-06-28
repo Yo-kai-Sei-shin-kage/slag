@@ -209,8 +209,9 @@ fi
 
 echo "Building the Slag compiler..."
 cd "$COMPILER_DIR"
-gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \
-    window_runtime.c net_runtime.c mem_runtime.c simd_runtime.c
+x86_64-w64-mingw32-gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \
+    window_runtime.c net_runtime.c mem_runtime.c matrix_runtime.c \
+    simd_runtime.c mesh_runtime.c texture_runtime.c
 
 # Decide the expected binary name per platform. On Cygwin/MSYS, GCC always
 # emits a .exe regardless of the -o name; on Linux it is extensionless.

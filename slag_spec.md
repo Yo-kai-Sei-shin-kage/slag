@@ -450,6 +450,7 @@ window.is_open()                     // returns 1 if open, 0 if closed
 window.close();                      // post WM_CLOSE to the window
 window.capture_mouse();              // capture mouse, clip to window, hide cursor
 window.release_mouse();              // release capture, show cursor
+window.native();                     // returns native resolution as "WxH" string
 ```
 
 **Thread-Local Storage (TLS):** Window state is stored per-thread via `TlsAlloc`/`TlsSetValue`, enabling multiple independent windows from a single program. Each thread that calls `window.open()` gets its own window with separate framebuffer, z-buffer, and event handling.
@@ -485,6 +486,12 @@ fill_triangle_z(x0, y0, z0, x1, y1, z1, x2, y2, z2, r, g, b);
 ```
 
 Flat-shaded triangle with per-pixel depth testing against the active z-buffer. A pixel is drawn only when its depth is less than the stored value.
+
+```
+fill_triangle_affine(x0, y0, u0, v0, x1, y1, u1, v1, x2, y2, u2, v2, tex_ptr, tex_w, tex_h);
+```
+
+PS1-style affine texture-mapped triangle. UV coordinates are linearly interpolated without perspective correction. The texture must be in RGB565 format (2 bytes per pixel).
 
 ### 12.4 Flush
 
@@ -712,6 +719,57 @@ simd.rgb565_pack(dest, r, g, b)      // combine to RGB565
 simd.rgb565_blend(dest, a, b, alpha) // alpha blend (alpha: 8×16-bit, 0-256)
 ```
 
+
+### 14.5 BMP Image Loading — `mesh.*`
+
+Load and query 24-bit uncompressed BMP images:
+
+```
+var str data = readfile("image.bmp");
+var int ptr = data;
+var int w = mesh.bmp_width(ptr);
+var int h = mesh.bmp_height(ptr);
+var int rgb = mesh.bmp_pixel(ptr, x, y);   // returns 0x00RRGGBB
+var int gray = mesh.bmp_gray(ptr, x, y);   // returns 0-255
+```
+
+### 14.6 Mesh Management — `mesh.*`
+
+Create and manipulate 3D meshes (vertices are 16.16 fixed-point):
+
+```
+var int m = mesh.create(100, 200);           // 100 verts, 200 faces
+mesh.set_vertex(m, i, x, y, z);              // set vertex i
+mesh.set_face(m, f, v0, v1, v2);             // set face f
+var int vx = mesh.get_vertex_x(m, i);        // query vertex
+var int vy = mesh.get_vertex_y(m, i);
+var int vz = mesh.get_vertex_z(m, i);
+var int vi = mesh.get_face(m, f, 0);         // query face (0/1/2)
+var int nv = mesh.vertex_count(m);
+var int nf = mesh.face_count(m);
+mesh.destroy(m);                             // free mesh
+```
+
+Generate terrain from heightmap:
+
+```
+var int terrain = mesh.from_heightmap(bmp_ptr, scale_xz, scale_y);
+```
+
+### 14.7 Procedural Textures — `tex.*`
+
+Generate procedural texture values (returns 0-255):
+
+```
+var int c = tex.checker(x, y, 32);           // checkerboard
+var int gh = tex.gradient_h(x, 256);         // horizontal gradient
+var int gv = tex.gradient_v(y, 256);         // vertical gradient
+var int b = tex.brick(x, y, 64, 32, 2);      // brick pattern
+var int n = tex.noise2d(x, y, seed);         // hash-based noise
+var int p = tex.perlin2d(x, y, freq, seed);  // Perlin noise
+var int w = tex.wood(x, y, rings, seed);     // wood grain
+var int m = tex.marble(x, y, freq, seed);    // marble veins
+```
 ---
 
 ## 15. Compiler Architecture
@@ -751,12 +809,15 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `pixel(x,y,r,g,b)`             | Write pixel to framebuffer                         |
 | `fill_triangle(...)`            | Flat-shaded scanline triangle                      |
 | `fill_triangle_gradient(...)`   | Gouraud-shaded scanline triangle                   |
+| `fill_triangle_z(...)`          | Depth-tested flat-shaded triangle                  |
+| `fill_triangle_affine(...)`     | PS1-style affine textured triangle (RGB565)        |
 | `window.open(w,h,title)`        | Open graphical window on its own thread            |
 | `window.close()`                | Post WM_CLOSE to window                            |
 | `window.is_open()`              | Returns 1 if window is open                        |
 | `window.flush()`                | Blit framebuffer to window (~60fps cap)            |
 | `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
 | `window.release_mouse()`        | Release capture, show cursor                       |
+| `window.native()`               | Returns native resolution as "WxH" string          |
 | `zbuffer.clear()`               | Reset depth buffer                                 |
 | `time.now_ms()`                 | Milliseconds since system start (GetTickCount)     |
 | `time.now_us()`                 | Microseconds (QueryPerformanceCounter, high-res)   |
@@ -802,6 +863,21 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `simd.rgb565_unpack(r,g,b,px)`  | Extract R/G/B from 8 RGB565 pixels                 |
 | `simd.rgb565_pack(d,r,g,b)`     | Pack R/G/B to 8 RGB565 pixels                      |
 | `simd.rgb565_blend(d,a,b,α)`    | Alpha blend 8 RGB565 pixels                        |
+| `mesh.bmp_width/height(ptr)`    | BMP image dimensions                               |
+| `mesh.bmp_pixel(ptr,x,y)`       | BMP pixel as 0x00RRGGBB                            |
+| `mesh.bmp_gray(ptr,x,y)`        | BMP grayscale value 0-255                          |
+| `mesh.create(v,f)`              | Allocate mesh with v vertices, f faces             |
+| `mesh.destroy(h)`               | Free mesh memory                                   |
+| `mesh.set/get_vertex_*(h,i,...)` | Vertex access (16.16 fixed-point)                 |
+| `mesh.set/get_face(h,i,...)`    | Face vertex indices                                |
+| `mesh.from_heightmap(ptr,sx,sy)` | Generate terrain from grayscale BMP               |
+| `mesh.vertex/face_count(h)`     | Query mesh size                                    |
+| `tex.checker(x,y,size)`         | Checkerboard pattern (0 or 255)                    |
+| `tex.gradient_h/v(coord,size)`  | Linear gradient 0-255                              |
+| `tex.brick(x,y,bw,bh,m)`        | Brick pattern (0=mortar, 255=brick)                |
+| `tex.noise2d(x,y,seed)`         | Hash-based noise 0-255                             |
+| `tex.perlin2d(x,y,freq,seed)`   | Perlin noise 0-255                                 |
+| `tex.wood/marble(x,y,...)`      | Organic texture patterns                           |
 | `net.start()` / `net.end()`     | Begin / end a networking session (ws2_32)          |
 | `net.bind(port)`                | Socket + bind + listen (no block)                  |
 | `net.accept()`                  | Block for a peer on the bound socket               |
