@@ -1,5 +1,11 @@
-// Example: Arithmetic
-// Demonstrates: $((...)) blocks, $variable references, operators
+// Arithmetic
+//
+//
+//
+//
+//
+//
+// Example: $((...)) blocks, $variable references, operators
 
 // Embedded 5x7 font (ASCII 32-95)
 global int[] font = {

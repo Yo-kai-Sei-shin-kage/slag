@@ -1,4 +1,10 @@
 // Example: Memory Operations
+//
+//
+//
+//
+//
+//
 function main() {
     var int buf = mem.alloc(64);       // allocate 64 bytes, returns address
 

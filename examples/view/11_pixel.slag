@@ -1,4 +1,10 @@
 // Example: Pixel Drawing
+//
+//
+//
+//
+//
+//
 function main() {
     window.open(400, 300, "Pixels");
 

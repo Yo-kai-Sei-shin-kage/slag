@@ -1,5 +1,11 @@
-// Example: Window Management
-// Demonstrates: window.open(), window.is_open(), window.flush()
+// Window Management
+//
+//
+//
+//
+//
+//
+// Example: window.open(), window.is_open(), window.flush()
 
 function main() {
     // Open a window with specific dimensions and title

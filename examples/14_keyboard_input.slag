@@ -1,5 +1,11 @@
-// Example: Keyboard Input
-// Demonstrates: on key_down handler, movement with WASD keys
+// Keyboard Input
+//
+//
+//
+//
+//
+//
+// Example: on key_down handler, movement with WASD keys
 
 global int player_x = 200;
 global int player_y = 150;

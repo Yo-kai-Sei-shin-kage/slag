@@ -1,4 +1,10 @@
 // Example: Networking
+//
+//
+//
+//
+//
+//
 function main() {
     net.start();                       // initialize networking
 

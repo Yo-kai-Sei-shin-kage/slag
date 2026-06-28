@@ -1,5 +1,11 @@
-// Example: Z-Buffered Triangle
-// Demonstrates: fill_triangle_z(x0, y0, z0, x1, y1, z1, x2, y2, z2, r, g, b)
+// Z-Buffered Triangle
+//
+//
+//
+//
+//
+//
+// Example: fill_triangle_z(x0, y0, z0, x1, y1, z1, x2, y2, z2, r, g, b)
 // Shows depth ordering by drawing "back" triangle first, "front" triangle last
 // Z-buffer ensures correct visibility regardless of draw order
 

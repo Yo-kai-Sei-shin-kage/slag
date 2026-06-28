@@ -1,5 +1,11 @@
-// Example: Network API Demo
-// Demonstrates: net.start(), net.connect(), net.send_buf(), net.end()
+// Network API Demo
+//
+//
+//
+//
+//
+//
+// Example: net.start(), net.connect(), net.send_buf(), net.end()
 // Shows networking initialization and connection attempt in real-time
 
 // Embedded 5x7 font (ASCII 32-95)

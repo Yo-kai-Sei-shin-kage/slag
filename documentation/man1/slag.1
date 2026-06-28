@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-06-24" "slag 0.9" "Slag Programming Language"
+.TH SLAG 1 "2026-06-28" "slag 0.11" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -249,6 +249,17 @@ than the value already stored in the depth buffer.
 PS1-style affine texture-mapped triangle. UV coordinates are linearly
 interpolated without perspective correction. The texture must be in
 RGB565 format (2 bytes per pixel, RRRRRGGG GGGBBBBB).
+.TP
+.BI fill_triangle_persp( x0 , " y0" , " z0" , " u0" , " v0" ", ..." , " tex_ptr" , " tex_w" , " tex_h" )
+PS2-style perspective-correct texture-mapped triangle. Interpolates 1/z,
+u/z, v/z and divides to recover true UV coordinates, eliminating texture
+warping on angled surfaces.
+.TP
+.BI fill_triangle_pcolor( verts , " tex_ptr" , " tex_w" , " tex_h" )
+Perspective-correct textured triangle with per-vertex colors. The
+.I verts
+parameter points to 24 int64 values (3 vertices x 8 values: x,y,z,u,v,r,g,b).
+Texture color is multiplied by interpolated vertex color.
 .TP
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.

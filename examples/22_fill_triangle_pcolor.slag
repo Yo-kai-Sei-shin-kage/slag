@@ -1,0 +1,82 @@
+// Textured Triangle with Vertex Colors
+//
+//
+//
+//
+//
+//
+// Example: Texture modulated by per-vertex RGB
+
+global int verts = 0;
+global int tex = 0;
+global int tex_w = 64;
+global int tex_h = 64;
+
+function make_texture() {
+    tex = mem.alloc(8192);
+    var int y = 0;
+    while (y < tex_h) {
+        var int x = 0;
+        while (x < tex_w) {
+            var int c = tex.checker(x, y, 8);
+            var int rgb565 = 0;
+            if (c == 255) {
+                rgb565 = 65535;
+            }
+            var int off = $(($y * $tex_w + $x));
+            var int byteoff = $(($off * 2));
+            var int hi = bit.shr(rgb565, 8);
+            mem.poke8(tex, byteoff, rgb565);
+            mem.poke8(tex, $(($byteoff + 1)), hi);
+            x = $(($x + 1));
+        }
+        y = $(($y + 1));
+    }
+    return;
+}
+
+function set_vert(int i, int x, int y, int z, int u, int v, int r, int g, int b) {
+    var int base = $(($i * 8));
+    mem.poke64(verts, base, x);
+    mem.poke64(verts, $(($base + 1)), y);
+    mem.poke64(verts, $(($base + 2)), z);
+    mem.poke64(verts, $(($base + 3)), u);
+    mem.poke64(verts, $(($base + 4)), v);
+    mem.poke64(verts, $(($base + 5)), r);
+    mem.poke64(verts, $(($base + 6)), g);
+    mem.poke64(verts, $(($base + 7)), b);
+    return;
+}
+
+function main() {
+    verts = mem.alloc(192);
+    make_texture();
+    window.open(800, 400, "Vertex Colors + Texture");
+
+    on key_down(int key) {
+        if (key == 27) {
+            window.close();
+        }
+    }
+
+    while (window.is_open()) {
+        fill_triangle(0, 0, 800, 0, 800, 400, 30, 30, 40);
+        fill_triangle(0, 0, 800, 400, 0, 400, 30, 30, 40);
+
+        set_vert(0, 100, 50, 100, 0, 0, 255, 0, 0);
+        set_vert(1, 300, 50, 400, 63, 0, 0, 255, 0);
+        set_vert(2, 200, 350, 400, 32, 63, 0, 0, 255);
+        fill_triangle_pcolor(verts, tex, tex_w, tex_h);
+
+        set_vert(0, 500, 50, 100, 0, 0, 255, 255, 255);
+        set_vert(1, 700, 50, 400, 63, 0, 255, 255, 255);
+        set_vert(2, 600, 350, 400, 32, 63, 255, 255, 255);
+        fill_triangle_pcolor(verts, tex, tex_w, tex_h);
+
+        window.flush();
+    }
+
+    mem.free(verts);
+    mem.free(tex);
+    return;
+}

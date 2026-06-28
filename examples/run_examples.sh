@@ -18,33 +18,40 @@ clear_screen() {
     clear
 }
 
+draw_line() {
+    local cols="$(tput cols)"
+    printf "${BLUE}"
+    printf '─%.0s' $(seq 1 "$cols")
+    printf "${NC}\n"
+}
+
 show_header() {
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}           ${YELLOW}Slag Language Examples Browser${NC}                  ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}              ${YELLOW}Slag Language Examples Browser${NC}                ${CYAN}║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
 
 list_examples() {
     echo -e "${GREEN}Available Examples:${NC}"
-    echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
+    draw_line
 
     local i=1 name desc line
-    for file in "$SCRIPT_DIR"/*.slag; do
+    for file in $(ls -1 "$SCRIPT_DIR"/*.slag 2>/dev/null | sort); do
         if [ -f "$file" ]; then
             name="${file##*/}"
             name="${name%.slag}"
-            # Read first 2 lines using bash built-in
+            # Read line 8 for description (after 6 blank comment lines)
             desc=""
-            { read -r line; read -r line; } < "$file"
+            line=$(sed -n '8p' "$file")
             [[ "$line" == "// Example:"* ]] && desc="${line#// Example: }"
             [ -z "$desc" ] && desc="$name"
-            printf "${YELLOW}%2d${NC}) %-20s - %s\n" "$i" "$name" "$desc"
+            printf "${YELLOW}%2d${NC}) %-25s    %s\n" "$i" "${name:3}" "- $desc"
             i=$((i + 1))
         fi
     done
 
-    echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
+    draw_line
     echo ""
     echo -e "${CYAN} v${NC}) View source code of an example"
     echo -e "${CYAN} r${NC}) Run an example"
@@ -55,7 +62,7 @@ list_examples() {
 get_example_file() {
     local num=$1
     local i=1
-    for file in "$SCRIPT_DIR"/*.slag; do
+    for file in $(ls -1 "$SCRIPT_DIR"/*.slag 2>/dev/null | sort); do
         if [ -f "$file" ]; then
             if [ "$i" -eq "$num" ]; then
                 echo "$file"
@@ -69,7 +76,7 @@ get_example_file() {
 get_view_file() {
     local num=$1
     local i=1
-    for file in "$VIEW_DIR"/*.slag; do
+    for file in $(ls -1 "$VIEW_DIR"/*.slag 2>/dev/null | sort); do
         if [ -f "$file" ]; then
             if [ "$i" -eq "$num" ]; then
                 echo "$file"
@@ -82,7 +89,7 @@ get_view_file() {
 
 count_examples() {
     local count=0
-    for file in "$SCRIPT_DIR"/*.slag; do
+    for file in $(ls -1 "$SCRIPT_DIR"/*.slag 2>/dev/null | sort); do
         if [ -f "$file" ]; then
             count=$((count + 1))
         fi
@@ -95,13 +102,13 @@ view_source() {
     clear_screen
     show_header
     echo -e "${GREEN}Source: ${YELLOW}$(basename "$file")${NC}"
-    echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
+    draw_line
 
     # Show source with line numbers
     cat -n "$file"
 
     echo ""
-    echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
+    draw_line
     echo -e "Press ${YELLOW}Enter${NC} to return to menu..."
     read
 }
@@ -121,7 +128,7 @@ run_example() {
 
     # Compile
     echo -e "${CYAN}[1/3]${NC} Running slag compiler..."
-    if ! "$COMPILER_DIR/slag" "$file" 2>&1; then
+    if ! "$COMPILER_DIR/slag" "$basename.slag" 2>&1; then
         echo -e "${RED}Compilation failed!${NC}"
         echo "Press Enter to continue..."
         read

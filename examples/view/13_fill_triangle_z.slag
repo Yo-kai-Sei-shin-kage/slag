@@ -1,4 +1,10 @@
 // Example: Z-Buffered Triangle
+//
+//
+//
+//
+//
+//
 function main() {
     window.open(400, 300, "Z-Buffer");
 

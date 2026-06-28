@@ -1,5 +1,11 @@
-// Example: Functions
-// Demonstrates: function definition, parameters, return values, calling
+// Functions
+//
+//
+//
+//
+//
+//
+// Example: function definition, parameters, return values, calling
 
 // Embedded 5x7 font (ASCII 32-95)
 global int[] font = {
