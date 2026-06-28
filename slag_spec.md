@@ -1017,7 +1017,7 @@ To achieve PS2-era rendering at 60fps, the following features are required:
 - Linear fog (blend to fog color based on z-depth)
 
 **Performance targets:**
-- 10K+ textured triangles per frame at 640x480
+- 10K+ textured triangles per frame at 1920x1080 (native 1080p)
 - Sub-16ms frame time (60fps)
 - SIMD-accelerated rasterization where possible
 
