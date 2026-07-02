@@ -6,11 +6,11 @@
 //
 //
 function add(int a, int b) {           // takes two int parameters
-    return int $(($a + $b));           // returns an int
+    return int a + b;           // returns an int
 }
 
 function square(int n) {
-    return int $(($n * $n));
+    return int n * n;
 }
 
 function greet() {

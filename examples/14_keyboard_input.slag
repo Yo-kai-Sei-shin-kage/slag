@@ -18,21 +18,21 @@ function main() {
         // WASD movement
         // W = 87, A = 65, S = 83, D = 68
         if (keycode == 87) {
-            player_y = $(($player_y - 10));
+            player_y = player_y - 10;
         }
         if (keycode == 83) {
-            player_y = $(($player_y + 10));
+            player_y = player_y + 10;
         }
         if (keycode == 65) {
-            player_x = $(($player_x - 10));
+            player_x = player_x - 10;
         }
         if (keycode == 68) {
-            player_x = $(($player_x + 10));
+            player_x = player_x + 10;
         }
 
         // Space = 32 - change color
         if (keycode == 32) {
-            player_color = $(($player_color + 50));
+            player_color = player_color + 50;
             if (player_color > 255) {
                 player_color = 50;
             }
@@ -54,15 +54,13 @@ function main() {
     }
 
     while (window.is_open()) {
-        // Clear
-        fill_triangle(0, 0, 400, 0, 400, 300, 25, 25, 35);
-        fill_triangle(0, 0, 400, 300, 0, 300, 25, 25, 35);
+        window.clear(25, 25, 35);
 
         // Draw player square
-        var int x2 = $(($player_x + 40));
-        var int y2 = $(($player_y + 40));
-        fill_triangle(player_x, player_y, x2, player_y, x2, y2, player_color, 150, 255);
-        fill_triangle(player_x, player_y, x2, y2, player_x, y2, player_color, 150, 255);
+        local int x2 = player_x + 40;
+        local int y2 = player_y + 40;
+        fill_triangle(player_x, player_y, x2, y2, x2, player_y, player_color, 150, 255);
+        fill_triangle(player_x, player_y, player_x, y2, x2, y2, player_color, 150, 255);
 
         window.flush();
     }

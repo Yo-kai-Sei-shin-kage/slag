@@ -105,7 +105,6 @@ static TokenType keyword_type(const char *text) {
     if (strcmp(text, "false") == 0)    return TOK_KW_FALSE;
     if (strcmp(text, "function") == 0) return TOK_KW_FUNCTION;
     if (strcmp(text, "return") == 0)   return TOK_KW_RETURN;
-    if (strcmp(text, "var") == 0)      return TOK_KW_VAR;
     if (strcmp(text, "thread") == 0)   return TOK_KW_THREAD;
     if (strcmp(text, "sync") == 0)     return TOK_KW_SYNC;
     if (strcmp(text, "lock") == 0)     return TOK_KW_LOCK;
@@ -260,54 +259,6 @@ static Token scan_regex(Lexer *lex, int start_line, int start_col) {
     return tok;
 }
 
-// Scan $identifier or the $(( opener.
-static Token scan_dollar(Lexer *lex, int start_line, int start_col) {
-    advance(lex); // $
-
-    if (peek(lex) == '(' && peek_at(lex, 1) == '(') {
-        advance(lex); // (
-        advance(lex); // (
-        Token tok;
-        tok.type = TOK_DOLLAR_LPAREN_LPAREN;
-        tok.text = dup_range("$((", 0, 3);
-        tok.line = start_line;
-        tok.col = start_col;
-        tok.int_val = 0;
-        tok.float_val = 0.0;
-        return tok;
-    }
-
-    if (is_ident_start(peek(lex))) {
-        size_t start = lex->pos;
-        while (is_ident_char(peek(lex))) {
-            advance(lex);
-        }
-        size_t n = lex->pos - start;
-        char *text = malloc(n + 2);
-        text[0] = '$';
-        memcpy(text + 1, lex->src + start, n);
-        text[n + 1] = '\0';
-
-        Token tok;
-        tok.type = TOK_DOLLAR_IDENT;
-        tok.text = text;
-        tok.line = start_line;
-        tok.col = start_col;
-        tok.int_val = 0;
-        tok.float_val = 0.0;
-        return tok;
-    }
-
-    Token tok;
-    tok.type = TOK_UNKNOWN;
-    tok.text = dup_range("$", 0, 1);
-    tok.line = start_line;
-    tok.col = start_col;
-    tok.int_val = 0;
-    tok.float_val = 0.0;
-    return tok;
-}
-
 // Heuristic to distinguish a regex literal from a division operator.
 // Division only follows a value-producing token; otherwise, if a closing
 // '/' exists before end of line or ';', treat as regex.
@@ -319,7 +270,6 @@ static int looks_like_regex_start(Lexer *lex, TokenType prev_type) {
         case TOK_STR_LIT:
         case TOK_RPAREN:
         case TOK_RBRACKET:
-        case TOK_DOLLAR_IDENT:
             return 0;
         default:
             break;
@@ -371,12 +321,6 @@ Token lexer_next(Lexer *lex) {
 
     if (c == '"') {
         Token tok = scan_string(lex, start_line, start_col);
-        last_type = tok.type;
-        return tok;
-    }
-
-    if (c == '$') {
-        Token tok = scan_dollar(lex, start_line, start_col);
         last_type = tok.type;
         return tok;
     }
@@ -491,7 +435,6 @@ const char *token_type_name(TokenType type) {
         case TOK_KW_FALSE: return "KW_FALSE";
         case TOK_KW_FUNCTION: return "KW_FUNCTION";
         case TOK_KW_RETURN: return "KW_RETURN";
-        case TOK_KW_VAR: return "KW_VAR";
         case TOK_KW_THREAD: return "KW_THREAD";
         case TOK_KW_SYNC: return "KW_SYNC";
         case TOK_KW_LOCK: return "KW_LOCK";
@@ -500,8 +443,6 @@ const char *token_type_name(TokenType type) {
         case TOK_KW_FLUSH: return "KW_FLUSH";
         case TOK_KW_ON: return "KW_ON";
         case TOK_KW_VOID: return "KW_VOID";
-        case TOK_DOLLAR_LPAREN_LPAREN: return "DOLLAR_LPAREN_LPAREN";
-        case TOK_DOLLAR_IDENT: return "DOLLAR_IDENT";
         case TOK_LPAREN: return "LPAREN";
         case TOK_RPAREN: return "RPAREN";
         case TOK_LBRACE: return "LBRACE";

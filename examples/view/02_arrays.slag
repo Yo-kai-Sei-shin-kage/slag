@@ -6,8 +6,8 @@
 //
 //
 function main() {
-    var int[] values = {10, 25, 42, 99, 7};  // fixed-size array
-    var int len = values.len;                 // .len returns count
+    global int[] values = {10, 25, 42, 99, 7};  // fixed-size array
+    local int len = values.len;                 // .len returns count
 
     println(values[0]);                       // index access (zero-based)
     println(values[2]);                       // prints 42

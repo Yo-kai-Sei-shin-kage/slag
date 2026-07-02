@@ -24,7 +24,6 @@ typedef enum {
     TOK_KW_FALSE,
     TOK_KW_FUNCTION,
     TOK_KW_RETURN,
-    TOK_KW_VAR,
     TOK_KW_THREAD,
     TOK_KW_SYNC,
     TOK_KW_LOCK,
@@ -35,12 +34,6 @@ typedef enum {
     TOK_KW_VOID,
     TOK_KW_GLOBAL,
     TOK_KW_LOCAL,
-
-    // $(( opener for arithmetic blocks
-    TOK_DOLLAR_LPAREN_LPAREN,  // $((
-
-    // $identifier (variable reference inside $(( )))
-    TOK_DOLLAR_IDENT,
 
     // Punctuation / operators
     TOK_LPAREN,       // (

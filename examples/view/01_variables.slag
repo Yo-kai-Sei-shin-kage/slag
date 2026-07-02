@@ -6,11 +6,11 @@
 //
 //
 function main() {
-    var int x = 100;          // 64-bit signed integer
-    var int count = 42;       // another integer
-    var float pi = 3.14159;   // 64-bit IEEE 754 double
-    var bool active = true;   // boolean (true/false)
-    var str name = "Slag";    // immutable string (ptr+len)
+    local int x = 100;          // 64-bit signed integer
+    local int count = 42;       // another integer
+    local float pi = 3.14159;   // 64-bit IEEE 754 double
+    local bool active = true;   // boolean (true/false)
+    local str name = "Slag";    // immutable string (ptr+len)
 
     println(x);               // print integer to console
     println(count);

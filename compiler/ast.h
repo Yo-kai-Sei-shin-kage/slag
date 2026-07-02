@@ -33,8 +33,6 @@ typedef enum {
     EXPR_BOOL_LIT,      // true / false
     EXPR_REGEX_LIT,     // /.../
     EXPR_IDENT,         // foo
-    EXPR_DOLLAR_IDENT,  // $foo (only valid inside ARITH blocks)
-    EXPR_ARITH,         // $(( ... )) - wraps a sub-expression tree
     EXPR_BINARY,        // a + b, a < b, etc.
     EXPR_UNARY,         // !a, -a
     EXPR_LOGICAL,       // a && b, a || b
@@ -63,13 +61,8 @@ struct Expr {
         int bool_val;          // EXPR_BOOL_LIT (0/1)
 
         struct {
-            char *value;        // EXPR_STR_LIT, EXPR_REGEX_LIT,
-                                 // EXPR_IDENT, EXPR_DOLLAR_IDENT
+            char *value;        // EXPR_STR_LIT, EXPR_REGEX_LIT, EXPR_IDENT
         } str;
-
-        struct {
-            Expr *inner;        // EXPR_ARITH: the expression inside $(( ))
-        } arith;
 
         struct {
             TokenType op;        // TOK_PLUS, TOK_MINUS, TOK_LT, etc.
@@ -116,8 +109,7 @@ struct Expr {
 // ---------------------------------------------------------------------
 
 typedef enum {
-    STMT_VAR_DECL,      // var TYPE name = expr;
-    STMT_ARRAY_DECL,    // var TYPE[size] name = {...};  or  var TYPE[] name = expr;
+    STMT_ARRAY_DECL,    // global/local TYPE[size] name = {...};
     STMT_ASSIGN,        // name = expr;   or  name[index] = expr;
     STMT_IF,            // if (cond) { ... } else { ... }
     STMT_WHILE,         // while (cond) { ... }

@@ -13,25 +13,25 @@ global int tex_h = 64;
 
 function make_texture() {
     tex = mem.alloc(8192);
-    var int y = 0;
+    local int y = 0;
     while (y < tex_h) {
-        var int x = 0;
+        local int x = 0;
         while (x < tex_w) {
-            var int c = tex.checker(x, y, 8);
-            var int rgb565 = 0;
+            local int c = tex.checker(x, y, 8);
+            local int rgb565 = 0;
             if (c == 255) {
                 rgb565 = 2016;
             } else {
                 rgb565 = 31;
             }
-            var int off = $(($y * $tex_w + $x));
-            var int byteoff = $(($off * 2));
-            var int hi = bit.shr(rgb565, 8);
+            local int off = y * tex_w + x;
+            local int byteoff = off * 2;
+            local int hi = bit.shr(rgb565, 8);
             mem.poke8(tex, byteoff, rgb565);
-            mem.poke8(tex, $(($byteoff + 1)), hi);
-            x = $(($x + 1));
+            mem.poke8(tex, byteoff + 1, hi);
+            x = x + 1;
         }
-        y = $(($y + 1));
+        y = y + 1;
     }
     return;
 }
@@ -47,14 +47,13 @@ function main() {
     }
 
     while (window.is_open()) {
-        fill_triangle(0, 0, 800, 0, 800, 400, 30, 30, 40);
-        fill_triangle(0, 0, 800, 400, 0, 400, 30, 30, 40);
+        window.clear(30, 30, 40);
 
-        fill_triangle_affine(50, 50, 0, 0, 350, 80, 63, 0, 200, 350, 0, 63, tex, tex_w, tex_h);
-        fill_triangle_affine(350, 80, 63, 0, 300, 380, 63, 63, 200, 350, 0, 63, tex, tex_w, tex_h);
+        fill_triangle_affine(50, 50, 0, 0, 200, 350, 0, 63, 350, 80, 63, 0, tex, tex_w, tex_h);
+        fill_triangle_affine(350, 80, 63, 0, 200, 350, 0, 63, 300, 380, 63, 63, tex, tex_w, tex_h);
 
-        fill_triangle_persp(450, 50, 100, 0, 0, 750, 80, 400, 63, 0, 600, 350, 400, 0, 63, tex, tex_w, tex_h);
-        fill_triangle_persp(750, 80, 400, 63, 0, 700, 380, 100, 63, 63, 600, 350, 400, 0, 63, tex, tex_w, tex_h);
+        fill_triangle_persp(450, 50, 100, 0, 0, 600, 350, 400, 0, 63, 750, 80, 400, 63, 0, tex, tex_w, tex_h);
+        fill_triangle_persp(750, 80, 400, 63, 0, 600, 350, 400, 0, 63, 700, 380, 100, 63, 63, tex, tex_w, tex_h);
 
         window.flush();
     }

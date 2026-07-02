@@ -6,23 +6,23 @@
 //
 //
 function main() {
-    var int a = 15;
-    var int b = 4;
+    local int a = 15;
+    local int b = 4;
 
-    println($(($a + $b)));             // addition: 19
-    println($(($a - $b)));             // subtraction: 11
-    println($(($a * $b)));             // multiplication: 60
-    println($(($a / $b)));             // division: 3
-    println($(($a % $b)));             // modulo (remainder): 3
-    println($(($a * 2 + $b)));         // combined: 34
+    println(a + b);             // addition: 19
+    println(a - b);             // subtraction: 11
+    println(a * b);             // multiplication: 60
+    println(a / b);             // division: 3
+    println(a % b);             // modulo (remainder): 3
+    println(a * 2 + b);         // combined: 34
 
-    var float x = 3.5;
-    var float y = 1.2;
+    local float x = 3.5;
+    local float y = 1.2;
 
-    println($(($x + $y)));             // float addition: 4.7
-    println($(($x - $y)));             // float subtraction: 2.3
-    println($(($x * $y)));             // float multiplication: 4.2
-    println($(($x / $y)));             // float division: ~2.916
+    println(x + y);             // float addition: 4.7
+    println(x - y);             // float subtraction: 2.3
+    println(x * y);             // float multiplication: 4.2
+    println(x / y);             // float division: ~2.916
 
     return;
 }

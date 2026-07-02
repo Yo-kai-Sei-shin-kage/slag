@@ -176,15 +176,6 @@ static void print_expr(const Expr *e, int depth) {
         case EXPR_IDENT:
             printf("Ident %s\n", e->as.str.value);
             break;
-        case EXPR_DOLLAR_IDENT:
-            printf("DollarIdent %s\n", e->as.str.value);
-            break;
-        case EXPR_ARITH:
-            printf("Arith $((\n");
-            print_expr(e->as.arith.inner, depth + 1);
-            print_indent(depth);
-            printf("))\n");
-            break;
         case EXPR_BINARY:
             printf("Binary %s\n", binop_name(e->as.binary.op));
             print_expr(e->as.binary.left, depth + 1);
@@ -243,11 +234,6 @@ static void print_stmt(const Stmt *s, int depth) {
     print_indent(depth);
 
     switch (s->kind) {
-        case STMT_VAR_DECL:
-            printf("VarDecl %s %s =\n", slag_type_name(s->as.var_decl.type), s->as.var_decl.name);
-            print_expr(s->as.var_decl.init, depth + 1);
-            break;
-
         case STMT_ARRAY_DECL:
             printf("ArrayDecl %s[] %s =\n", slag_type_name(s->as.array_decl.elem_type), s->as.array_decl.name);
             if (s->as.array_decl.size_expr) {
@@ -333,6 +319,16 @@ static void print_stmt(const Stmt *s, int depth) {
             }
             printf(")\n");
             print_stmtlist(&s->as.on_handler.body, depth + 1);
+            break;
+
+        case STMT_GLOBAL_DECL:
+            printf("GlobalDecl %s %s =\n", slag_type_name(s->as.var_decl.type), s->as.var_decl.name);
+            print_expr(s->as.var_decl.init, depth + 1);
+            break;
+
+        case STMT_LOCAL_DECL:
+            printf("LocalDecl %s %s =\n", slag_type_name(s->as.var_decl.type), s->as.var_decl.name);
+            print_expr(s->as.var_decl.init, depth + 1);
             break;
 
         default:

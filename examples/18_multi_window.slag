@@ -5,43 +5,39 @@
 //
 //
 //
-// Example: Opening two windows from a single program using TLS + threads
+// Example: Two windows from a single program using TLS + threads
 
 global int running = 1;
 
-function red_window() {
-    window.open(300, 200, "Window 1 - Red");
-    var int frame = 0;
-    while ($running == 1) {
-        if (window.is_open() == 0) {
-            running = 0;
-        }
-        var int pulse = $((100 + $frame % 100));
-        fill_triangle(0, 0, 300, 0, 300, 200, pulse, 30, 30);
-        fill_triangle(0, 0, 300, 200, 0, 200, pulse, 30, 30);
-        window.flush();
-        frame = $(($frame + 1));
-    }
-}
-
-function blue_window() {
-    window.open(300, 200, "Window 2 - Blue");
-    var int frame = 0;
-    while ($running == 1) {
-        if (window.is_open() == 0) {
-            running = 0;
-        }
-        var int pulse = $((100 + $frame % 100));
-        fill_triangle(0, 0, 300, 0, 300, 200, 30, 30, pulse);
-        fill_triangle(0, 0, 300, 200, 0, 200, 30, 30, pulse);
-        window.flush();
-        frame = $(($frame + 1));
-    }
-}
-
 function main() {
-    thread { red_window(); }
-    thread { blue_window(); }
+    thread {
+        window.open(300, 200, "Window 2 - Blue");
+        local int frame = 0;
+        while (running == 1) {
+            if (window.is_open() == 0) {
+                running = 0;
+            }
+            window.clear(30, 30, 80);
+            window.text(50, 50, "BLUE WINDOW", 100, 100, 255);
+            window.text(50, 80, frame, 200, 200, 255);
+            window.flush();
+            frame = frame + 1;
+        }
+    }
+    
+    window.open(300, 200, "Window 1 - Red");
+    local int frame = 0;
+    while (running == 1) {
+        if (window.is_open() == 0) {
+            running = 0;
+        }
+        window.clear(80, 30, 30);
+        window.text(50, 50, "RED WINDOW", 255, 100, 100);
+        window.text(50, 80, frame, 255, 200, 200);
+        window.flush();
+        frame = frame + 1;
+    }
+    
     sync {}
     return int 0;
 }

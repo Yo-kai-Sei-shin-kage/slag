@@ -9,7 +9,9 @@
 
 global int cam_x = 0;
 global int cam_y = 0;
+global int floor_y = 0;
 global int cam_z = -800;
+global int grid_verts = 0;
 global int cam_yaw = 0;
 global int cam_pitch = 0;
 global int move_fwd = 0;
@@ -24,66 +26,9 @@ global int mouse_down = 0;
 global int mouse_captured = 0;
 
 // Font data (5x7 bitmap font, 5 bytes per character, ASCII 32-95)
-global int[] font = {
-    0,0,0,0,0, 0,0,95,0,0, 0,7,0,7,0, 20,127,20,127,20, 36,42,127,42,18,
-    35,19,8,100,98, 54,73,85,34,80, 0,5,3,0,0, 0,28,34,65,0, 0,65,34,28,0,
-    20,8,62,8,20, 8,8,62,8,8, 0,80,48,0,0, 8,8,8,8,8, 0,96,96,0,0, 32,16,8,4,2,
-    62,81,73,69,62, 0,66,127,64,0, 66,97,81,73,70, 33,65,69,75,49, 24,20,18,127,16,
-    39,69,69,69,57, 60,74,73,73,48, 1,113,9,5,3, 54,73,73,73,54, 6,73,73,41,30,
-    0,54,54,0,0, 0,86,54,0,0, 8,20,34,65,0, 20,20,20,20,20, 0,65,34,20,8,
-    2,1,81,9,6, 50,73,121,65,62, 126,17,17,17,126, 127,73,73,73,54, 62,65,65,65,34,
-    127,65,65,34,28, 127,73,73,73,65, 127,9,9,9,1, 62,65,73,73,122, 127,8,8,8,127,
-    0,65,127,65,0, 32,64,65,63,1, 127,8,20,34,65, 127,64,64,64,64, 127,2,12,2,127,
-    127,4,8,16,127, 62,65,65,65,62, 127,9,9,9,6, 62,65,81,33,94, 127,9,25,41,70,
-    38,73,73,73,50, 1,1,127,1,1, 63,64,64,64,63, 31,32,64,32,31, 63,64,56,64,63,
-    99,20,8,20,99, 7,8,112,8,7, 97,81,73,69,67, 0,127,65,65,0, 2,4,8,16,32,
-    0,65,65,127,0, 4,2,1,2,4, 64,64,64,64,64
-};
-global int[] pow2 = {1, 2, 4, 8, 16, 32, 64, 128};
-
-// Draw character at 2x scale (10x14 pixels)
-function draw_char_big(int x, int y, int ch, int r, int g, int b) {
-    if (ch < 32) { return; }
-    if (ch > 95) { if (ch >= 97) { if (ch <= 122) { ch = $(($ch - 32)); } } }
-    if (ch > 95) { return; }
-    var int idx = $((($ch - 32) * 5));
-    var int col = 0;
-    while (col < 5) {
-        var int bits = font[$(($idx + $col))];
-        var int row = 0;
-        while (row < 7) {
-            var int bit = $((($bits / pow2[$row]) % 2));
-            if (bit) {
-                var int px = $(($x + $col * 2));
-                var int py = $(($y + $row * 2));
-                pixel(px, py, r, g, b);
-                pixel($(($px + 1)), py, r, g, b);
-                pixel(px, $(($py + 1)), r, g, b);
-                pixel($(($px + 1)), $(($py + 1)), r, g, b);
-            }
-            row = $(($row + 1));
-        }
-        col = $(($col + 1));
-    }
-    return;
-}
-
-// Draw string at 2x scale
-function draw_text_big(int x, int y, int ptr, int r, int g, int b) {
-    var int i = 0;
-    var int cx = x;
-    while (i < 50) {
-        var int ch = mem.peek8(ptr, i);
-        if (ch == 0) { return; }
-        draw_char_big(cx, y, ch, r, g, b);
-        cx = $(($cx + 12));
-        i = $(($i + 1));
-    }
-    return;
-}
-
 function main() {
     window.open(1024, 768, "3D Pyramid - WASD + Mouse");
+    grid_verts = mem.alloc(3624040);
 
     on key_down(int keycode) {
         if (keycode == 87) { move_fwd = 1; }
@@ -122,425 +67,365 @@ function main() {
     }
 
     on mouse_move(int mx, int my) {
-        var int dx = $(($mx - $last_mx));
-        var int dy = $(($my - $last_my));
+        local int dx = mx - last_mx;
+        local int dy = my - last_my;
         if (mouse_down) {
             // Left click held = look around
-            cam_yaw = $(($cam_yaw + $dx));
-            cam_pitch = $(($cam_pitch - $dy * 3));
-            if ($(($cam_pitch > 800))) { cam_pitch = 800; }
-            if ($(($cam_pitch < -800))) { cam_pitch = -800; }
+            cam_yaw = cam_yaw + dx;
+            cam_pitch = cam_pitch - dy * 3;
+            if (cam_pitch > 800) { cam_pitch = 800; }
+            if (cam_pitch < -800) { cam_pitch = -800; }
         }
         last_mx = mx;
         last_my = my;
     }
 
-    var int frame = 0;
-    var int hw = 512;
-    var int hh = 384;
-    var int fov = 400;
-    var int fog_dist = 7500;
-    var int fog_r = 85;
-    var int fog_g = 90;
-    var int fog_b = 105;
+    local int frame = 0;
+    local int hw = 512;
+    local int hh = 384;
+    local int fov = 400;
+    local int fog_dist = 2500;
+    local int fog_r = 85;
+    local int fog_g = 90;
+    local int fog_b = 105;
 
     // Control text
-    var str ctrl1 = "WASD - MOVE";
-    var str ctrl2 = "Q/E - UP/DOWN";
-    var str ctrl3 = "MOUSE - LOOK";
-    var str ctrl4 = "ESC - RELEASE";
+    local str ctrl1 = "WASD - MOVE";
+    local str ctrl2 = "Q/E - UP/DOWN";
+    local str ctrl3 = "MOUSE - LOOK";
+    local str ctrl4 = "ESC - RELEASE";
 
     while (window.is_open()) {
+        window.clear(50, 80, 140);
+
         // Camera movement
-        var float yaw_rad = $(($cam_yaw * 0.01));
-        var float cos_yaw = cos(yaw_rad);
-        var float sin_yaw = sin(yaw_rad);
-        var int speed = 8;
+        local float yaw_rad = cam_yaw * 0.01;
+        local float cos_yaw = cos(yaw_rad);
+        local float sin_yaw = sin(yaw_rad);
+        local int speed = 8;
 
         if (move_fwd) {
-            cam_x = $(($cam_x + $sin_yaw * $speed));
-            cam_z = $(($cam_z + $cos_yaw * $speed));
+            cam_x = cam_x + sin_yaw * speed;
+            cam_z = cam_z + cos_yaw * speed;
         }
         if (move_back) {
-            cam_x = $(($cam_x - $sin_yaw * $speed));
-            cam_z = $(($cam_z - $cos_yaw * $speed));
+            cam_x = cam_x - sin_yaw * speed;
+            cam_z = cam_z - cos_yaw * speed;
         }
         if (move_left) {
-            cam_x = $(($cam_x - $cos_yaw * $speed));
-            cam_z = $(($cam_z + $sin_yaw * $speed));
+            cam_x = cam_x - cos_yaw * speed;
+            cam_z = cam_z + sin_yaw * speed;
         }
         if (move_right) {
-            cam_x = $(($cam_x + $cos_yaw * $speed));
-            cam_z = $(($cam_z - $sin_yaw * $speed));
+            cam_x = cam_x + cos_yaw * speed;
+            cam_z = cam_z - sin_yaw * speed;
         }
-        if (move_up) {
-            cam_y = $(($cam_y - $speed));
+
+        // Calculate ground level
+        local int g_seed = cam_x * 374761393 + cam_z * 668265263;
+        local int g_hash = (g_seed * g_seed * 15731 + 789221) / 65536;
+        local int g_h = ((g_hash % 50 + 50) % 50 - 25);
+        local int ground_y = 100 + g_h - 200;
+        local int target_min = ground_y + 100;
+
+        // Smoothly adjust floor toward terrain
+        if (floor_y < target_min) {
+            floor_y = floor_y + 1;
         }
+        if (floor_y > target_min) {
+            floor_y = floor_y - 1;
+        }
+
+        // E raises camera
         if (move_down) {
-            cam_y = $(($cam_y + $speed));
+            cam_y = cam_y + speed;
+        }
+
+        // Q lowers camera toward floor
+        if (move_up) {
+            if (cam_y > floor_y) {
+                cam_y = cam_y - speed;
+                if (cam_y < floor_y) {
+                    cam_y = floor_y;
+                }
+            }
+        }
+
+        // Camera follows floor when at or below it
+        if (cam_y < floor_y) {
+            cam_y = floor_y;
         }
 
         // Horizon shifts with pitch
-        var int horizon = $(($hh + $cam_pitch));
+        local int horizon = hh + cam_pitch;
 
         // Clear sky
-        fill_triangle_gradient(0, 0, 50, 80, 140, 1024, 0, 50, 80, 140, 1024, horizon, fog_r, fog_g, fog_b);
-        fill_triangle_gradient(0, 0, 50, 80, 140, 1024, horizon, fog_r, fog_g, fog_b, 0, horizon, fog_r, fog_g, fog_b);
+        fill_triangle_gradient(0, 0, 50, 80, 140, 1024, horizon, fog_r, fog_g, fog_b, 1024, 0, 50, 80, 140);
+        fill_triangle_gradient(0, 0, 50, 80, 140, 0, horizon, fog_r, fog_g, fog_b, 1024, horizon, fog_r, fog_g, fog_b);
         // Ground base
-        fill_triangle_gradient(0, horizon, fog_r, fog_g, fog_b, 1024, horizon, fog_r, fog_g, fog_b, 1024, 768, 95, 60, 42);
-        fill_triangle_gradient(0, horizon, fog_r, fog_g, fog_b, 1024, 768, 95, 60, 42, 0, 768, 95, 60, 42);
+        fill_triangle_gradient(0, horizon, fog_r, fog_g, fog_b, 1024, 768, 95, 60, 42, 1024, horizon, fog_r, fog_g, fog_b);
+        fill_triangle_gradient(0, horizon, fog_r, fog_g, fog_b, 0, 768, 95, 60, 42, 1024, 768, 95, 60, 42);
 
-        // Ground grid - PS1-style (~5000 polys: 50x50 tiles, 2 tris each, large area)
-        var int grid_size = 500;
-        var int gx = 0;
-        while ($(($gx < 150))) {
-            var int gy = 0;
-            while ($(($gy < 150))) {
-                // Grid tile world position (centered on camera)
-                var int tile_x = $(( ($gx - 75) * $grid_size + ($cam_x / $grid_size) * $grid_size));
-                var int tile_z = $(( ($gy - 75) * $grid_size + ($cam_z / $grid_size) * $grid_size));
+        // Ground grid with shared vertex buffer (301x301 for subdivision)
+        local int half_grid = 250;
+        local int base_h = 50;
+        local int min_z = 10;
+        local int fog_denom = fog_dist * fog_dist / 255;
+        local int cam_snap_x = (cam_x / half_grid) * half_grid;
+        local int cam_snap_z = (cam_z / half_grid) * half_grid;
 
-                // Tile corners and midpoints (2x2 subdivision = 8 triangles)
-                var int half = $(($grid_size / 2));
-                var int c0x = tile_x;
-                var int c0z = tile_z;
-                var int c1x = $(($tile_x + $grid_size));
-                var int c1z = tile_z;
-                var int c2x = $(($tile_x + $grid_size));
-                var int c2z = $(($tile_z + $grid_size));
-                var int c3x = tile_x;
-                var int c3z = $(($tile_z + $grid_size));
-                // Midpoints
-                var int m01x = $(($tile_x + $half));
-                var int m01z = tile_z;
-                var int m12x = $(($tile_x + $grid_size));
-                var int m12z = $(($tile_z + $half));
-                var int m23x = $(($tile_x + $half));
-                var int m23z = $(($tile_z + $grid_size));
-                var int m30x = tile_x;
-                var int m30z = $(($tile_z + $half));
-                var int cmx = $(($tile_x + $half));
-                var int cmz = $(($tile_z + $half));
+        // Pass 1: compute all 301x301 vertices
+        local int vy = 0;
+        while (vy < 301) {
+            local int vx = 0;
+            while (vx < 301) {
+                local int world_x = (vx - 150) * half_grid + cam_snap_x;
+                local int world_z = (vy - 150) * half_grid + cam_snap_z;
 
-                        // Hash for heights - corners
-                        var int seed0 = $(($c0x * 374761393 + $c0z * 668265263));
-                        var int seed1 = $(($c1x * 374761393 + $c1z * 668265263));
-                        var int seed2 = $(($c2x * 374761393 + $c2z * 668265263));
-                        var int seed3 = $(($c3x * 374761393 + $c3z * 668265263));
-                        var int hash0 = $((($seed0 * $seed0 * 15731 + 789221) / 65536));
-                        var int hash1 = $((($seed1 * $seed1 * 15731 + 789221) / 65536));
-                        var int hash2 = $((($seed2 * $seed2 * 15731 + 789221) / 65536));
-                        var int hash3 = $((($seed3 * $seed3 * 15731 + 789221) / 65536));
-                        var int h0 = $(( ($hash0 % 50 + 50) % 50 - 25 ));
-                        var int h1 = $(( ($hash1 % 50 + 50) % 50 - 25 ));
-                        var int h2 = $(( ($hash2 % 50 + 50) % 50 - 25 ));
-                        var int h3 = $(( ($hash3 % 50 + 50) % 50 - 25 ));
-                        // Hash for heights - midpoints
-                        var int seed01 = $(($m01x * 374761393 + $m01z * 668265263));
-                        var int seed12 = $(($m12x * 374761393 + $m12z * 668265263));
-                        var int seed23 = $(($m23x * 374761393 + $m23z * 668265263));
-                        var int seed30 = $(($m30x * 374761393 + $m30z * 668265263));
-                        var int seedcm = $(($cmx * 374761393 + $cmz * 668265263));
-                        var int hash01 = $((($seed01 * $seed01 * 15731 + 789221) / 65536));
-                        var int hash12 = $((($seed12 * $seed12 * 15731 + 789221) / 65536));
-                        var int hash23 = $((($seed23 * $seed23 * 15731 + 789221) / 65536));
-                        var int hash30 = $((($seed30 * $seed30 * 15731 + 789221) / 65536));
-                        var int hashcm = $((($seedcm * $seedcm * 15731 + 789221) / 65536));
-                        var int h01 = $(( ($hash01 % 50 + 50) % 50 - 25 ));
-                        var int h12 = $(( ($hash12 % 50 + 50) % 50 - 25 ));
-                        var int h23 = $(( ($hash23 % 50 + 50) % 50 - 25 ));
-                        var int h30 = $(( ($hash30 % 50 + 50) % 50 - 25 ));
-                        var int hcm = $(( ($hashcm % 50 + 50) % 50 - 25 ));
+                // Hash for height
+                local int seed = world_x * 374761393 + world_z * 668265263;
+                local int hash = (seed * seed * 15731 + 789221) / 65536;
+                local int h = ((hash % 50 + 50) % 50 - 25);
 
-                // Transform to camera space - corners
-                var int dx0 = $(($c0x - $cam_x));
-                var int dz0 = $(($c0z - $cam_z));
-                var int dx1 = $(($c1x - $cam_x));
-                var int dz1 = $(($c1z - $cam_z));
-                var int dx2 = $(($c2x - $cam_x));
-                var int dz2 = $(($c2z - $cam_z));
-                var int dx3 = $(($c3x - $cam_x));
-                var int dz3 = $(($c3z - $cam_z));
-                // Transform to camera space - midpoints
-                var int dx01 = $(($m01x - $cam_x));
-                var int dz01 = $(($m01z - $cam_z));
-                var int dx12 = $(($m12x - $cam_x));
-                var int dz12 = $(($m12z - $cam_z));
-                var int dx23 = $(($m23x - $cam_x));
-                var int dz23 = $(($m23z - $cam_z));
-                var int dx30 = $(($m30x - $cam_x));
-                var int dz30 = $(($m30z - $cam_z));
-                var int dxcm = $(($cmx - $cam_x));
-                var int dzcm = $(($cmz - $cam_z));
+                // Camera transform
+                local int dx = world_x - cam_x;
+                local int dz = world_z - cam_z;
+                local int rx = dx * cos_yaw - dz * sin_yaw;
+                local int rz = dx * sin_yaw + dz * cos_yaw;
 
-                // Rotate by -yaw - corners
-                var int vx0 = $(($dx0 * $cos_yaw - $dz0 * $sin_yaw));
-                var int vz0 = $(($dx0 * $sin_yaw + $dz0 * $cos_yaw));
-                var int vx1 = $(($dx1 * $cos_yaw - $dz1 * $sin_yaw));
-                var int vz1 = $(($dx1 * $sin_yaw + $dz1 * $cos_yaw));
-                var int vx2 = $(($dx2 * $cos_yaw - $dz2 * $sin_yaw));
-                var int vz2 = $(($dx2 * $sin_yaw + $dz2 * $cos_yaw));
-                var int vx3 = $(($dx3 * $cos_yaw - $dz3 * $sin_yaw));
-                var int vz3 = $(($dx3 * $sin_yaw + $dz3 * $cos_yaw));
-                // Rotate by -yaw - midpoints
-                var int vx01 = $(($dx01 * $cos_yaw - $dz01 * $sin_yaw));
-                var int vz01 = $(($dx01 * $sin_yaw + $dz01 * $cos_yaw));
-                var int vx12 = $(($dx12 * $cos_yaw - $dz12 * $sin_yaw));
-                var int vz12 = $(($dx12 * $sin_yaw + $dz12 * $cos_yaw));
-                var int vx23 = $(($dx23 * $cos_yaw - $dz23 * $sin_yaw));
-                var int vz23 = $(($dx23 * $sin_yaw + $dz23 * $cos_yaw));
-                var int vx30 = $(($dx30 * $cos_yaw - $dz30 * $sin_yaw));
-                var int vz30 = $(($dx30 * $sin_yaw + $dz30 * $cos_yaw));
-                var int vxcm = $(($dxcm * $cos_yaw - $dzcm * $sin_yaw));
-                var int vzcm = $(($dxcm * $sin_yaw + $dzcm * $cos_yaw));
+                // Projection
+                local int pz = rz;
+                if (pz < min_z) { pz = min_z; }
+                local int sx = hw + rx * fov / pz;
+                local int sy = hh + cam_pitch + (base_h + h + cam_y) * fov / pz;
 
-                // Project - clamp z to minimum for close tiles
-                var int base_h = 50;
-                var int min_z = 10;
-                var int pz0 = vz0; if ($(($pz0 < $min_z))) { pz0 = min_z; }
-                var int pz1 = vz1; if ($(($pz1 < $min_z))) { pz1 = min_z; }
-                var int pz2 = vz2; if ($(($pz2 < $min_z))) { pz2 = min_z; }
-                var int pz3 = vz3; if ($(($pz3 < $min_z))) { pz3 = min_z; }
-                var int pz01 = vz01; if ($(($pz01 < $min_z))) { pz01 = min_z; }
-                var int pz12 = vz12; if ($(($pz12 < $min_z))) { pz12 = min_z; }
-                var int pz23 = vz23; if ($(($pz23 < $min_z))) { pz23 = min_z; }
-                var int pz30 = vz30; if ($(($pz30 < $min_z))) { pz30 = min_z; }
-                var int pzcm = vzcm; if ($(($pzcm < $min_z))) { pzcm = min_z; }
-                // Only render if at least one corner is in front
-                var int max_vz = vz0;
-                if ($(($vz1 > $max_vz))) { max_vz = vz1; }
-                if ($(($vz2 > $max_vz))) { max_vz = vz2; }
-                if ($(($vz3 > $max_vz))) { max_vz = vz3; }
-                if ($(($max_vz > 0))) {
-                                // Screen coords - corners
-                                var int sy0 = $(($hh + $cam_pitch + ($base_h + $h0 + $cam_y) * $fov / $pz0));
-                                var int sy1 = $(($hh + $cam_pitch + ($base_h + $h1 + $cam_y) * $fov / $pz1));
-                                var int sy2 = $(($hh + $cam_pitch + ($base_h + $h2 + $cam_y) * $fov / $pz2));
-                                var int sy3 = $(($hh + $cam_pitch + ($base_h + $h3 + $cam_y) * $fov / $pz3));
-                                var int sx0 = $(($hw + $vx0 * $fov / $pz0));
-                                var int sx1 = $(($hw + $vx1 * $fov / $pz1));
-                                var int sx2 = $(($hw + $vx2 * $fov / $pz2));
-                                var int sx3 = $(($hw + $vx3 * $fov / $pz3));
-                                // Screen coords - midpoints
-                                var int sy01 = $(($hh + $cam_pitch + ($base_h + $h01 + $cam_y) * $fov / $pz01));
-                                var int sy12 = $(($hh + $cam_pitch + ($base_h + $h12 + $cam_y) * $fov / $pz12));
-                                var int sy23 = $(($hh + $cam_pitch + ($base_h + $h23 + $cam_y) * $fov / $pz23));
-                                var int sy30 = $(($hh + $cam_pitch + ($base_h + $h30 + $cam_y) * $fov / $pz30));
-                                var int sycm = $(($hh + $cam_pitch + ($base_h + $hcm + $cam_y) * $fov / $pzcm));
-                                var int sx01 = $(($hw + $vx01 * $fov / $pz01));
-                                var int sx12 = $(($hw + $vx12 * $fov / $pz12));
-                                var int sx23 = $(($hw + $vx23 * $fov / $pz23));
-                                var int sx30 = $(($hw + $vx30 * $fov / $pz30));
-                                var int sxcm = $(($hw + $vxcm * $fov / $pzcm));
+                // Color from hash
+                local int cr = 35 + ((hash % 45 + 45) % 45);
+                local int cg = 40 + ((hash / 2 % 45 + 45) % 45);
+                local int cb = 20 + ((hash / 5 % 30 + 30) % 30);
 
-                                // Per-vertex colors - dirt and grass (use positive modulo)
-                                var int cr0 = $((35 + (($hash0 % 45 + 45) % 45)));
-                                var int cg0 = $((40 + (($hash0 / 2 % 45 + 45) % 45)));
-                                var int cb0 = $((20 + (($hash0 / 5 % 30 + 30) % 30)));
-                                var int cr1 = $((35 + (($hash1 % 45 + 45) % 45)));
-                                var int cg1 = $((40 + (($hash1 / 2 % 45 + 45) % 45)));
-                                var int cb1 = $((20 + (($hash1 / 5 % 30 + 30) % 30)));
-                                var int cr2 = $((35 + (($hash2 % 45 + 45) % 45)));
-                                var int cg2 = $((40 + (($hash2 / 2 % 45 + 45) % 45)));
-                                var int cb2 = $((20 + (($hash2 / 5 % 30 + 30) % 30)));
-                                var int cr3 = $((35 + (($hash3 % 45 + 45) % 45)));
-                                var int cg3 = $((40 + (($hash3 / 2 % 45 + 45) % 45)));
-                                var int cb3 = $((20 + (($hash3 / 5 % 30 + 30) % 30)));
-                                var int cr01 = $((35 + (($hash01 % 45 + 45) % 45)));
-                                var int cg01 = $((40 + (($hash01 / 2 % 45 + 45) % 45)));
-                                var int cb01 = $((20 + (($hash01 / 5 % 30 + 30) % 30)));
-                                var int cr12 = $((35 + (($hash12 % 45 + 45) % 45)));
-                                var int cg12 = $((40 + (($hash12 / 2 % 45 + 45) % 45)));
-                                var int cb12 = $((20 + (($hash12 / 5 % 30 + 30) % 30)));
-                                var int cr23 = $((35 + (($hash23 % 45 + 45) % 45)));
-                                var int cg23 = $((40 + (($hash23 / 2 % 45 + 45) % 45)));
-                                var int cb23 = $((20 + (($hash23 / 5 % 30 + 30) % 30)));
-                                var int cr30 = $((35 + (($hash30 % 45 + 45) % 45)));
-                                var int cg30 = $((40 + (($hash30 / 2 % 45 + 45) % 45)));
-                                var int cb30 = $((20 + (($hash30 / 5 % 30 + 30) % 30)));
-                                var int crcm = $((35 + (($hashcm % 45 + 45) % 45)));
-                                var int cgcm = $((40 + (($hashcm / 2 % 45 + 45) % 45)));
-                                var int cbcm = $((20 + (($hashcm / 5 % 30 + 30) % 30)));
+                // Fog
+                local int f = rz * rz / fog_denom;
+                if (f > 255) { f = 255; }
+                if (f < 0) { f = 0; }
+                local int r = cr + (fog_r - cr) * f / 255;
+                local int g = cg + (fog_g - cg) * f / 255;
+                local int b = cb + (fog_b - cb) * f / 255;
 
-                                // Per-vertex fog
-                                var int fog_denom = $(($fog_dist * $fog_dist / 255));
-                                var int f0 = $(($vz0 * $vz0 / $fog_denom));
-                                var int f1 = $(($vz1 * $vz1 / $fog_denom));
-                                var int f2 = $(($vz2 * $vz2 / $fog_denom));
-                                var int f3 = $(($vz3 * $vz3 / $fog_denom));
-                                var int f01 = $(($vz01 * $vz01 / $fog_denom));
-                                var int f12 = $(($vz12 * $vz12 / $fog_denom));
-                                var int f23 = $(($vz23 * $vz23 / $fog_denom));
-                                var int f30 = $(($vz30 * $vz30 / $fog_denom));
-                                var int fcm = $(($vzcm * $vzcm / $fog_denom));
-                                if ($(($f0 > 255))) { f0 = 255; }
-                                if ($(($f1 > 255))) { f1 = 255; }
-                                if ($(($f2 > 255))) { f2 = 255; }
-                                if ($(($f3 > 255))) { f3 = 255; }
-                                if ($(($f01 > 255))) { f01 = 255; }
-                                if ($(($f12 > 255))) { f12 = 255; }
-                                if ($(($f23 > 255))) { f23 = 255; }
-                                if ($(($f30 > 255))) { f30 = 255; }
-                                if ($(($fcm > 255))) { fcm = 255; }
-                                // Fogged colors - corners
-                                var int r0 = $(($cr0 + ($fog_r - $cr0) * $f0 / 255));
-                                var int g0 = $(($cg0 + ($fog_g - $cg0) * $f0 / 255));
-                                var int b0 = $(($cb0 + ($fog_b - $cb0) * $f0 / 255));
-                                var int r1 = $(($cr1 + ($fog_r - $cr1) * $f1 / 255));
-                                var int g1 = $(($cg1 + ($fog_g - $cg1) * $f1 / 255));
-                                var int b1 = $(($cb1 + ($fog_b - $cb1) * $f1 / 255));
-                                var int r2 = $(($cr2 + ($fog_r - $cr2) * $f2 / 255));
-                                var int g2 = $(($cg2 + ($fog_g - $cg2) * $f2 / 255));
-                                var int b2 = $(($cb2 + ($fog_b - $cb2) * $f2 / 255));
-                                var int r3 = $(($cr3 + ($fog_r - $cr3) * $f3 / 255));
-                                var int g3 = $(($cg3 + ($fog_g - $cg3) * $f3 / 255));
-                                var int b3 = $(($cb3 + ($fog_b - $cb3) * $f3 / 255));
-                                // Fogged colors - midpoints
-                                var int r01 = $(($cr01 + ($fog_r - $cr01) * $f01 / 255));
-                                var int g01 = $(($cg01 + ($fog_g - $cg01) * $f01 / 255));
-                                var int b01 = $(($cb01 + ($fog_b - $cb01) * $f01 / 255));
-                                var int r12 = $(($cr12 + ($fog_r - $cr12) * $f12 / 255));
-                                var int g12 = $(($cg12 + ($fog_g - $cg12) * $f12 / 255));
-                                var int b12 = $(($cb12 + ($fog_b - $cb12) * $f12 / 255));
-                                var int r23 = $(($cr23 + ($fog_r - $cr23) * $f23 / 255));
-                                var int g23 = $(($cg23 + ($fog_g - $cg23) * $f23 / 255));
-                                var int b23 = $(($cb23 + ($fog_b - $cb23) * $f23 / 255));
-                                var int r30 = $(($cr30 + ($fog_r - $cr30) * $f30 / 255));
-                                var int g30 = $(($cg30 + ($fog_g - $cg30) * $f30 / 255));
-                                var int b30 = $(($cb30 + ($fog_b - $cb30) * $f30 / 255));
-                                var int rcm = $(($crcm + ($fog_r - $crcm) * $fcm / 255));
-                                var int gcm = $(($cgcm + ($fog_g - $cgcm) * $fcm / 255));
-                                var int bcm = $(($cbcm + ($fog_b - $cbcm) * $fcm / 255));
+                // Store in buffer: (vy * 301 + vx) * 40
+                local int off = (vy * 301 + vx) * 40;
+                mem.poke64(grid_verts, off, sx);
+                mem.poke64(grid_verts, off + 8, sy);
+                mem.poke64(grid_verts, off + 16, r);
+                mem.poke64(grid_verts, off + 24, g);
+                mem.poke64(grid_verts, off + 32, b);
 
-                                // Draw 8 triangles (4 sub-quads)
-                                // Sub-quad 0: c0, m01, cm, m30
-                                fill_triangle_gradient(sx0, sy0, r0, g0, b0, sx01, sy01, r01, g01, b01, sxcm, sycm, rcm, gcm, bcm);
-                                fill_triangle_gradient(sx0, sy0, r0, g0, b0, sxcm, sycm, rcm, gcm, bcm, sx30, sy30, r30, g30, b30);
-                                // Sub-quad 1: m01, c1, m12, cm
-                                fill_triangle_gradient(sx01, sy01, r01, g01, b01, sx1, sy1, r1, g1, b1, sx12, sy12, r12, g12, b12);
-                                fill_triangle_gradient(sx01, sy01, r01, g01, b01, sx12, sy12, r12, g12, b12, sxcm, sycm, rcm, gcm, bcm);
-                                // Sub-quad 2: cm, m12, c2, m23
-                                fill_triangle_gradient(sxcm, sycm, rcm, gcm, bcm, sx12, sy12, r12, g12, b12, sx2, sy2, r2, g2, b2);
-                                fill_triangle_gradient(sxcm, sycm, rcm, gcm, bcm, sx2, sy2, r2, g2, b2, sx23, sy23, r23, g23, b23);
-                                // Sub-quad 3: m30, cm, m23, c3
-                                fill_triangle_gradient(sx30, sy30, r30, g30, b30, sxcm, sycm, rcm, gcm, bcm, sx23, sy23, r23, g23, b23);
-                                fill_triangle_gradient(sx30, sy30, r30, g30, b30, sx23, sy23, r23, g23, b23, sx3, sy3, r3, g3, b3);
-                }
-                gy = $(($gy + 1));
+                vx = vx + 1;
             }
-            gx = $(($gx + 1));
+            vy = vy + 1;
+        }
+
+        // Pass 2: draw 150x150 tiles with 8 triangles each (CW winding)
+        local int ty = 0;
+        while (ty < 150) {
+            local int tx = 0;
+            while (tx < 150) {
+                // Grid indices: tile spans 2x2 in 301 grid
+                local int gx = tx * 2;
+                local int gy = ty * 2;
+
+                // 9 vertex offsets: corners + midpoints + center
+                local int i_c0 = (gy * 301 + gx) * 40;
+                local int i_m01 = (gy * 301 + gx + 1) * 40;
+                local int i_c1 = (gy * 301 + gx + 2) * 40;
+                local int i_m30 = ((gy + 1) * 301 + gx) * 40;
+                local int i_cm = ((gy + 1) * 301 + gx + 1) * 40;
+                local int i_m12 = ((gy + 1) * 301 + gx + 2) * 40;
+                local int i_c3 = ((gy + 2) * 301 + gx) * 40;
+                local int i_m23 = ((gy + 2) * 301 + gx + 1) * 40;
+                local int i_c2 = ((gy + 2) * 301 + gx + 2) * 40;
+
+                // Fetch all 9 vertices
+                local int sx0 = mem.peek64(grid_verts, i_c0);
+                local int sy0 = mem.peek64(grid_verts, i_c0 + 8);
+                local int r0 = mem.peek64(grid_verts, i_c0 + 16);
+                local int g0 = mem.peek64(grid_verts, i_c0 + 24);
+                local int b0 = mem.peek64(grid_verts, i_c0 + 32);
+
+                local int sx01 = mem.peek64(grid_verts, i_m01);
+                local int sy01 = mem.peek64(grid_verts, i_m01 + 8);
+                local int r01 = mem.peek64(grid_verts, i_m01 + 16);
+                local int g01 = mem.peek64(grid_verts, i_m01 + 24);
+                local int b01 = mem.peek64(grid_verts, i_m01 + 32);
+
+                local int sx1 = mem.peek64(grid_verts, i_c1);
+                local int sy1 = mem.peek64(grid_verts, i_c1 + 8);
+                local int r1 = mem.peek64(grid_verts, i_c1 + 16);
+                local int g1 = mem.peek64(grid_verts, i_c1 + 24);
+                local int b1 = mem.peek64(grid_verts, i_c1 + 32);
+
+                local int sx30 = mem.peek64(grid_verts, i_m30);
+                local int sy30 = mem.peek64(grid_verts, i_m30 + 8);
+                local int r30 = mem.peek64(grid_verts, i_m30 + 16);
+                local int g30 = mem.peek64(grid_verts, i_m30 + 24);
+                local int b30 = mem.peek64(grid_verts, i_m30 + 32);
+
+                local int sxcm = mem.peek64(grid_verts, i_cm);
+                local int sycm = mem.peek64(grid_verts, i_cm + 8);
+                local int rcm = mem.peek64(grid_verts, i_cm + 16);
+                local int gcm = mem.peek64(grid_verts, i_cm + 24);
+                local int bcm = mem.peek64(grid_verts, i_cm + 32);
+
+                local int sx12 = mem.peek64(grid_verts, i_m12);
+                local int sy12 = mem.peek64(grid_verts, i_m12 + 8);
+                local int r12 = mem.peek64(grid_verts, i_m12 + 16);
+                local int g12 = mem.peek64(grid_verts, i_m12 + 24);
+                local int b12 = mem.peek64(grid_verts, i_m12 + 32);
+
+                local int sx3 = mem.peek64(grid_verts, i_c3);
+                local int sy3 = mem.peek64(grid_verts, i_c3 + 8);
+                local int r3 = mem.peek64(grid_verts, i_c3 + 16);
+                local int g3 = mem.peek64(grid_verts, i_c3 + 24);
+                local int b3 = mem.peek64(grid_verts, i_c3 + 32);
+
+                local int sx23 = mem.peek64(grid_verts, i_m23);
+                local int sy23 = mem.peek64(grid_verts, i_m23 + 8);
+                local int r23 = mem.peek64(grid_verts, i_m23 + 16);
+                local int g23 = mem.peek64(grid_verts, i_m23 + 24);
+                local int b23 = mem.peek64(grid_verts, i_m23 + 32);
+
+                local int sx2 = mem.peek64(grid_verts, i_c2);
+                local int sy2 = mem.peek64(grid_verts, i_c2 + 8);
+                local int r2 = mem.peek64(grid_verts, i_c2 + 16);
+                local int g2 = mem.peek64(grid_verts, i_c2 + 24);
+                local int b2 = mem.peek64(grid_verts, i_c2 + 32);
+
+                // Draw 8 triangles (CW winding for ground visible from above)
+                fill_triangle_gradient(sx0, sy0, r0, g0, b0, sx01, sy01, r01, g01, b01, sxcm, sycm, rcm, gcm, bcm);
+                fill_triangle_gradient(sx0, sy0, r0, g0, b0, sxcm, sycm, rcm, gcm, bcm, sx30, sy30, r30, g30, b30);
+                fill_triangle_gradient(sx01, sy01, r01, g01, b01, sx1, sy1, r1, g1, b1, sx12, sy12, r12, g12, b12);
+                fill_triangle_gradient(sx01, sy01, r01, g01, b01, sx12, sy12, r12, g12, b12, sxcm, sycm, rcm, gcm, bcm);
+                fill_triangle_gradient(sxcm, sycm, rcm, gcm, bcm, sx12, sy12, r12, g12, b12, sx2, sy2, r2, g2, b2);
+                fill_triangle_gradient(sxcm, sycm, rcm, gcm, bcm, sx2, sy2, r2, g2, b2, sx23, sy23, r23, g23, b23);
+                fill_triangle_gradient(sx30, sy30, r30, g30, b30, sxcm, sycm, rcm, gcm, bcm, sx23, sy23, r23, g23, b23);
+                fill_triangle_gradient(sx30, sy30, r30, g30, b30, sx23, sy23, r23, g23, b23, sx3, sy3, r3, g3, b3);
+
+                tx = tx + 1;
+            }
+            ty = ty + 1;
         }
 
         // Pyramid world position (stationary)
-        var int pyr_x = 0;
-        var int pyr_z = 500;
+        local int pyr_x = 0;
+        local int pyr_z = 500;
 
         // Pyramid verts (world space) - stationary
-        var int apex_y = -150;
-        var int base_y = 50;
+        local int apex_y = -150;
+        local int base_y = 50;
 
         // World coords (fixed position)
-        var int w_ax = pyr_x;
-        var int w_az = pyr_z;
-        var int w0x = pyr_x;
-        var int w0z = $(($pyr_z - 100));
-        var int w1x = $(($pyr_x - 87));
-        var int w1z = $(($pyr_z + 50));
-        var int w2x = $(($pyr_x + 87));
-        var int w2z = $(($pyr_z + 50));
+        local int w_ax = pyr_x;
+        local int w_az = pyr_z;
+        local int w0x = pyr_x;
+        local int w0z = pyr_z - 100;
+        local int w1x = pyr_x - 87;
+        local int w1z = pyr_z + 50;
+        local int w2x = pyr_x + 87;
+        local int w2z = pyr_z + 50;
 
         // Transform to camera space (translate then rotate by -yaw)
-        var int tx_a = $(($w_ax - $cam_x));
-        var int tz_a = $(($w_az - $cam_z));
-        var int tx_0 = $(($w0x - $cam_x));
-        var int tz_0 = $(($w0z - $cam_z));
-        var int tx_1 = $(($w1x - $cam_x));
-        var int tz_1 = $(($w1z - $cam_z));
-        var int tx_2 = $(($w2x - $cam_x));
-        var int tz_2 = $(($w2z - $cam_z));
+        local int tx_a = w_ax - cam_x;
+        local int tz_a = w_az - cam_z;
+        local int tx_0 = w0x - cam_x;
+        local int tz_0 = w0z - cam_z;
+        local int tx_1 = w1x - cam_x;
+        local int tz_1 = w1z - cam_z;
+        local int tx_2 = w2x - cam_x;
+        local int tz_2 = w2z - cam_z;
 
         // Rotate by -yaw
-        var int cx_a = $(($tx_a * $cos_yaw - $tz_a * $sin_yaw));
-        var int cz_a = $(($tx_a * $sin_yaw + $tz_a * $cos_yaw));
-        var int cx_0 = $(($tx_0 * $cos_yaw - $tz_0 * $sin_yaw));
-        var int cz_0 = $(($tx_0 * $sin_yaw + $tz_0 * $cos_yaw));
-        var int cx_1 = $(($tx_1 * $cos_yaw - $tz_1 * $sin_yaw));
-        var int cz_1 = $(($tx_1 * $sin_yaw + $tz_1 * $cos_yaw));
-        var int cx_2 = $(($tx_2 * $cos_yaw - $tz_2 * $sin_yaw));
-        var int cz_2 = $(($tx_2 * $sin_yaw + $tz_2 * $cos_yaw));
+        local int cx_a = tx_a * cos_yaw - tz_a * sin_yaw;
+        local int cz_a = tx_a * sin_yaw + tz_a * cos_yaw;
+        local int cx_0 = tx_0 * cos_yaw - tz_0 * sin_yaw;
+        local int cz_0 = tx_0 * sin_yaw + tz_0 * cos_yaw;
+        local int cx_1 = tx_1 * cos_yaw - tz_1 * sin_yaw;
+        local int cz_1 = tx_1 * sin_yaw + tz_1 * cos_yaw;
+        local int cx_2 = tx_2 * cos_yaw - tz_2 * sin_yaw;
+        local int cz_2 = tx_2 * sin_yaw + tz_2 * cos_yaw;
 
         // Perspective projection
-        var int min_z = 10;
+        local int min_z = 10;
 
         // Only draw if in front of camera
-        if ($(($cz_a > $min_z))) {
-            var int sx_a = $(($hw + $cx_a * $fov / $cz_a));
-            var int sy_a = $(($hh + $cam_pitch + ($apex_y + $cam_y) * $fov / $cz_a));
+        if (cz_a > min_z) {
+            local int sx_a = hw + cx_a * fov / cz_a;
+            local int sy_a = (hh + cam_pitch + (apex_y + cam_y) * fov / cz_a);
 
-            if ($(($cz_0 > $min_z))) {
-                if ($(($cz_1 > $min_z))) {
-                    if ($(($cz_2 > $min_z))) {
-                        var int sx_0 = $(($hw + $cx_0 * $fov / $cz_0));
-                        var int sy_0 = $(($hh + $cam_pitch + ($base_y + $cam_y) * $fov / $cz_0));
-                        var int sx_1 = $(($hw + $cx_1 * $fov / $cz_1));
-                        var int sy_1 = $(($hh + $cam_pitch + ($base_y + $cam_y) * $fov / $cz_1));
-                        var int sx_2 = $(($hw + $cx_2 * $fov / $cz_2));
-                        var int sy_2 = $(($hh + $cam_pitch + ($base_y + $cam_y) * $fov / $cz_2));
+            if (cz_0 > min_z) {
+                if (cz_1 > min_z) {
+                    if (cz_2 > min_z) {
+                        local int sx_0 = hw + cx_0 * fov / cz_0;
+                        local int sy_0 = (hh + cam_pitch + (base_y + cam_y) * fov / cz_0);
+                        local int sx_1 = hw + cx_1 * fov / cz_1;
+                        local int sy_1 = (hh + cam_pitch + (base_y + cam_y) * fov / cz_1);
+                        local int sx_2 = hw + cx_2 * fov / cz_2;
+                        local int sy_2 = (hh + cam_pitch + (base_y + cam_y) * fov / cz_2);
 
                         // Draw faces (simple depth shade)
-                        var int avg_z = $(($cz_0 + $cz_1 + $cz_2));
-                        var int shade = $((200 - $avg_z / 8));
-                        if ($(($shade > 220))) { shade = 220; }
-                        if ($(($shade < 60))) { shade = 60; }
+                        local int avg_z = cz_0 + cz_1 + cz_2;
+                        local int shade = 200 - avg_z / 8;
+                        if (shade > 220) { shade = 220; }
+                        if (shade < 60) { shade = 60; }
 
                         // Per-vertex fog for pyramid
-                        var int pyr_fog_denom = $(($fog_dist * $fog_dist / 255));
-                        var int fa = $(($cz_a * $cz_a / $pyr_fog_denom));
-                        var int f0 = $(($cz_0 * $cz_0 / $pyr_fog_denom));
-                        var int f1 = $(($cz_1 * $cz_1 / $pyr_fog_denom));
-                        var int f2 = $(($cz_2 * $cz_2 / $pyr_fog_denom));
-                        if ($(($fa > 255))) { fa = 255; }
-                        if ($(($f0 > 255))) { f0 = 255; }
-                        if ($(($f1 > 255))) { f1 = 255; }
-                        if ($(($f2 > 255))) { f2 = 255; }
+                        local int pyr_fog_denom = fog_dist * fog_dist / 255;
+                        local int fa = cz_a * cz_a / pyr_fog_denom;
+                        local int f0 = cz_0 * cz_0 / pyr_fog_denom;
+                        local int f1 = cz_1 * cz_1 / pyr_fog_denom;
+                        local int f2 = cz_2 * cz_2 / pyr_fog_denom;
+                        if (fa > 255) { fa = 255; }
+                        if (f0 > 255) { f0 = 255; }
+                        if (f1 > 255) { f1 = 255; }
+                        if (f2 > 255) { f2 = 255; }
 
                         // Apex color (fogged)
-                        var int ar = $(($shade + ($fog_r - $shade) * $fa / 255));
-                        var int ag = $((($shade * 3 / 4) + ($fog_g - $shade * 3 / 4) * $fa / 255));
-                        var int ab = $((40 + ($fog_b - 40) * $fa / 255));
+                        local int ar = (shade + (fog_r - shade) * fa / 255);
+                        local int ag = ((shade * 3 / 4) + (fog_g - shade * 3 / 4) * fa / 255);
+                        local int ab = (40 + (fog_b - 40) * fa / 255);
 
                         // Base vertex 0 color (fogged)
-                        var int pr0 = $(($shade + ($fog_r - $shade) * $f0 / 255));
-                        var int pg0 = $((($shade * 3 / 4) + ($fog_g - $shade * 3 / 4) * $f0 / 255));
-                        var int pb0 = $((40 + ($fog_b - 40) * $f0 / 255));
+                        local int pr0 = (shade + (fog_r - shade) * f0 / 255);
+                        local int pg0 = ((shade * 3 / 4) + (fog_g - shade * 3 / 4) * f0 / 255);
+                        local int pb0 = (40 + (fog_b - 40) * f0 / 255);
 
                         // Base vertex 1 color (fogged)
-                        var int pr1 = $(($shade + ($fog_r - $shade) * $f1 / 255));
-                        var int pg1 = $((($shade * 3 / 4) + ($fog_g - $shade * 3 / 4) * $f1 / 255));
-                        var int pb1 = $((40 + ($fog_b - 40) * $f1 / 255));
+                        local int pr1 = (shade + (fog_r - shade) * f1 / 255);
+                        local int pg1 = ((shade * 3 / 4) + (fog_g - shade * 3 / 4) * f1 / 255);
+                        local int pb1 = (40 + (fog_b - 40) * f1 / 255);
 
                         // Base vertex 2 color (fogged)
-                        var int pr2 = $(($shade + ($fog_r - $shade) * $f2 / 255));
-                        var int pg2 = $((($shade * 3 / 4) + ($fog_g - $shade * 3 / 4) * $f2 / 255));
-                        var int pb2 = $((40 + ($fog_b - 40) * $f2 / 255));
+                        local int pr2 = (shade + (fog_r - shade) * f2 / 255);
+                        local int pg2 = ((shade * 3 / 4) + (fog_g - shade * 3 / 4) * f2 / 255);
+                        local int pb2 = (40 + (fog_b - 40) * f2 / 255);
 
-                        fill_triangle_gradient(sx_a, sy_a, ar, ag, ab, sx_0, sy_0, pr0, pg0, pb0, sx_1, sy_1, pr1, pg1, pb1);
-                        fill_triangle_gradient(sx_a, sy_a, ar, ag, ab, sx_1, sy_1, pr1, pg1, pb1, sx_2, sy_2, pr2, pg2, pb2);
-                        fill_triangle_gradient(sx_a, sy_a, ar, ag, ab, sx_2, sy_2, pr2, pg2, pb2, sx_0, sy_0, pr0, pg0, pb0);
+                        fill_triangle_gradient(sx_a, sy_a, ar, ag, ab, sx_1, sy_1, pr1, pg1, pb1, sx_0, sy_0, pr0, pg0, pb0);
+                        fill_triangle_gradient(sx_a, sy_a, ar, ag, ab, sx_2, sy_2, pr2, pg2, pb2, sx_1, sy_1, pr1, pg1, pb1);
+                        fill_triangle_gradient(sx_a, sy_a, ar, ag, ab, sx_0, sy_0, pr0, pg0, pb0, sx_2, sy_2, pr2, pg2, pb2);
                     }
                 }
             }
         }
 
         // Draw controls text (top-left, 2x scale)
-        draw_text_big(10, 10, ctrl1, 255, 255, 255);
-        draw_text_big(10, 28, ctrl2, 255, 255, 255);
-        draw_text_big(10, 46, ctrl3, 255, 255, 255);
-        draw_text_big(10, 64, ctrl4, 255, 255, 255);
+        window.text(10, 10, ctrl1, 255, 255, 255);
+        window.text(10, 28, ctrl2, 255, 255, 255);
+        window.text(10, 46, ctrl3, 255, 255, 255);
+        window.text(10, 64, ctrl4, 255, 255, 255);
 
         window.flush();
-        frame = $(($frame + 1));
+        frame = frame + 1;
     }
 
+    mem.free(grid_verts);
     return int 0;
 }

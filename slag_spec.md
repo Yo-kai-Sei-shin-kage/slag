@@ -64,7 +64,7 @@ int   float   str   bool
 if    else    while
 true  false
 function    return
-var   global   local
+global   local
 thread  sync  lock
 window  pixel  flush
 ```
@@ -115,22 +115,25 @@ Strings are immutable. Manipulation produces new string values.
 
 ## 5. Variable Declarations
 
-```
-var int x = 10;
-var float pi = 3.14159;
-var bool active = true;
-var str name = "slag";
-var int[4] data = {1, 2, 3, 4};
-```
+Every variable must be declared with an explicit scope modifier — `global` or `local`. There is no unscoped declaration form.
 
 All variables must be initialized at declaration. Type inference is not supported — the type must always be stated explicitly.
 
+### 5.1 Local Variables
 
-### 5.1 Variable Scope Modifiers
+```
+local int x = 10;
+local float pi = 3.14159;
+local bool active = true;
+local str name = "slag";
+local int[4] data = {1, 2, 3, 4};
+```
 
-Variables can be declared with scope modifiers to control their visibility and storage:
+Local variables are declared inside functions or blocks and are:
+- Stack-allocated
+- Scoped to the enclosing block
 
-#### Global Variables
+### 5.2 Global Variables
 
 ```
 global int counter = 0;
@@ -142,7 +145,7 @@ Global variables are declared at file scope (outside any function) and are:
 - Accessible from any function in the program
 - Initialized at compile-time with literal values
 
-#### Global Arrays
+### 5.3 Global Arrays
 
 ```
 global int[] xpos = {50, 150, 250, 350};
@@ -155,31 +158,27 @@ Global arrays are declared at file scope and are:
 - Support `.len` to get the array length
 - Initialized with brace-enclosed literal values
 
-#### Local Variables
+### 5.4 Local Arrays
 
 ```
-local int x = 10;
-local float temp = 0.0;
+local int[] digits = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 ```
 
-Local variables are declared inside functions or blocks and are:
-- Stack-allocated (same as `var`)
-- Scoped to the enclosing block
+Local arrays follow the same stack-allocated, block-scoped rules as other local variables.
 
-The `var` keyword remains available for standard function-local variables.
 ---
 
 ## 6. Arithmetic Expressions
 
-### 6.1 The $(( )) Construct
+### 6.1 Direct Infix Arithmetic
 
-`$(( ))` is the universal arithmetic construct for all numeric expressions — integer and float alike. Variables inside are referenced with a `$` prefix, consistent with bash syntax. The result type is determined by the declared types of the operands.
+Arithmetic operators work directly on expressions — no wrapper syntax or `$` variable prefix is required. The result type is determined by the declared types of the operands.
 
 ```
-var int sum = $(($a + $b));
-var float area = $((3.14159 * $radius * $radius));
-var int remainder = $(($x % $y));
-var float velocity = $(($distance / $time));
+local int sum = a + b;
+local float area = 3.14159 * radius * radius;
+local int remainder = x % y;
+local float velocity = distance / time;
 ```
 
 Supported operators:
@@ -243,7 +242,7 @@ while (condition) {
 No `for` loop syntax. Counted iteration is expressed as `while` with an explicit counter:
 
 ```
-var int i = 0;
+local int i = 0;
 while (i < 10) {
     // body
     i = i + 1;
@@ -256,11 +255,11 @@ while (i < 10) {
 
 ```
 function add(int a, int b) {
-    return int $(($a + $b));
+    return int a + b;
 }
 
 function area(float r) {
-    return float $((3.14159 * $r * $r));
+    return float 3.14159 * r * r;
 }
 
 function greet(str name) {
@@ -283,7 +282,7 @@ function greet(str name) {
 ### 9.1 String Literals
 
 ```
-var str path = "/var/log/app.log";
+local str path = "/var/log/app.log";
 ```
 
 
@@ -291,7 +290,7 @@ var str path = "/var/log/app.log";
 ### 9.3 File Reading
 
 ```
-var str content = readfile("data.txt");
+local str content = readfile("data.txt");
 ```
 
 Returns the full file contents as a `str`. File I/O uses `kernel32.dll` directly — no CRT file functions.
@@ -302,23 +301,23 @@ Text configuration files can be parsed by combining `readfile()` with `mem.peek8
 
 ```
 function parse_int(int ptr, int start, int end) {
-    var int val = 0;
-    var int i = start;
+    local int val = 0;
+    local int i = start;
     while (i < end) {
-        var int byte = mem.peek8(ptr, i);
+        local int byte = mem.peek8(ptr, i);
         if (byte >= 48) {
             if (byte <= 57) {
-                val = $(($val * 10 + $byte - 48));
+                val = val * 10 + byte - 48;
             }
         }
-        i = $(($i + 1));
+        i = i + 1;
     }
     return int val;
 }
 
 function main() {
-    var str config = readfile("settings.txt");
-    var int ptr = config;
+    local str config = readfile("settings.txt");
+    local int ptr = config;
     // Parse line-by-line, looking for newline (10) or null (0)
     // ...
 }
@@ -333,7 +332,7 @@ This enables runtime configuration without recompilation. See the `config_tests/
 ```
 print("Hello, world\n");
 println("Line with newline");
-var str input = readline();
+local str input = readline();
 ```
 
 All terminal I/O uses Win32 console handles directly via `kernel32.dll`.
@@ -467,6 +466,8 @@ Writes a single BGRA pixel to the framebuffer at `(x, y)`. Out-of-bounds coordin
 
 ### 12.3 Triangle Rasterization
 
+All `fill_triangle*` variants perform backface culling: a triangle whose vertices wind counter-clockwise in screen space is discarded before rasterization. Vertices must be supplied in clockwise (CW) winding order to be drawn.
+
 ```
 fill_triangle(x0, y0, x1, y1, x2, y2, r, g, b);
 ```
@@ -587,6 +588,22 @@ input.in_bbox(mx, my)   // axis-aligned hit test; returns 1 if inside
 
 ---
 
+### 12.10 Clear & Text
+
+```
+window.clear(r, g, b);
+```
+
+Fills the entire DIB framebuffer with a solid BGRA color via `rep stosd`. Typically called once per frame before drawing.
+
+```
+window.text(x, y, value, r, g, b);
+```
+
+Draws `value` (a `str` or `int`) as text at `(x, y)` using GDI `TextOutA` against the window's memory DC, with `SetBkMode(TRANSPARENT)` and the given RGB color via `SetTextColor`. Renders into the same DIB surface that `window.flush()` blits, so text composites with pixel/triangle output drawn earlier in the frame.
+
+---
+
 ## 13. 3D Rendering
 
 ### 13.1 Overview
@@ -638,8 +655,8 @@ Per-face Lambertian lighting can be implemented in Slag: compute each face norma
   - `mem.free(ptr)` — `HeapFree`
   - `mem.poke8(ptr, byteoff, val)` / `mem.peek8(ptr, byteoff)` — single-byte
     store/load at a byte offset
-  - `mem.poke64(ptr, wordoff, val)` / `mem.peek64(ptr, wordoff)` — 8-byte
-    store/load at a word offset (byte offset = `wordoff * 8`)
+  - `mem.poke64(ptr, byteoff, val)` / `mem.peek64(ptr, byteoff)` — 8-byte
+    store/load at a byte offset
 - Accessors are **unchecked** and **inlined** — each `peek`/`poke` compiles to a single `mov` emitted directly at the call site (no function-call overhead), benchmarked at ~0.3 ns/op, comparable to native array access.
   Bounds are the programmer's responsibility (as in C). `alloc` returning `0`
   is the only built-in safety signal
@@ -657,9 +674,9 @@ bit.shr(value, count)   // unsigned right shift — inlined to shr instruction
 
 **16.16 Fixed-Point Example:**
 ```
-var int fixed = bit.shl(3, 16);           // 3 << 16 = 196608 (3.0 in 16.16)
-var int product = bit.shr($(($a * $b)), 16);  // fixed multiply
-var int back = bit.shr(fixed, 16);        // convert back to int = 3
+local int fixed = bit.shl(3, 16);           // 3 << 16 = 196608 (3.0 in 16.16)
+local int product = bit.shr(a * b, 16);     // fixed multiply
+local int back = bit.shr(fixed, 16);        // convert back to int = 3
 ```
 
 These are inlined to single CPU instructions with no function-call overhead.
@@ -694,8 +711,8 @@ All coordinates use 16.16 fixed-point format. Convert integers with `bit.shl(n, 
 mat.identity();
 mat.translate(bit.shl(100, 16), bit.shl(200, 16), 0);
 mat.rotate_z(64);  // 90 degrees (64/256 * 360)
-var int x = mat.transform_x(bit.shl(50, 16), 0, 0);
-var int screen_x = bit.shr(x, 16);
+local int x = mat.transform_x(bit.shl(50, 16), 0, 0);
+local int screen_x = bit.shr(x, 16);
 ```
 
 ### 14.4 SIMD — `simd.*`
@@ -737,12 +754,12 @@ simd.rgb565_blend(dest, a, b, alpha) // alpha blend (alpha: 8×16-bit, 0-256)
 Load and query 24-bit uncompressed BMP images:
 
 ```
-var str data = readfile("image.bmp");
-var int ptr = data;
-var int w = mesh.bmp_width(ptr);
-var int h = mesh.bmp_height(ptr);
-var int rgb = mesh.bmp_pixel(ptr, x, y);   // returns 0x00RRGGBB
-var int gray = mesh.bmp_gray(ptr, x, y);   // returns 0-255
+local str data = readfile("image.bmp");
+local int ptr = data;
+local int w = mesh.bmp_width(ptr);
+local int h = mesh.bmp_height(ptr);
+local int rgb = mesh.bmp_pixel(ptr, x, y);   // returns 0x00RRGGBB
+local int gray = mesh.bmp_gray(ptr, x, y);   // returns 0-255
 ```
 
 ### 14.6 Mesh Management — `mesh.*`
@@ -750,22 +767,22 @@ var int gray = mesh.bmp_gray(ptr, x, y);   // returns 0-255
 Create and manipulate 3D meshes (vertices are 16.16 fixed-point):
 
 ```
-var int m = mesh.create(100, 200);           // 100 verts, 200 faces
+local int m = mesh.create(100, 200);           // 100 verts, 200 faces
 mesh.set_vertex(m, i, x, y, z);              // set vertex i
 mesh.set_face(m, f, v0, v1, v2);             // set face f
-var int vx = mesh.get_vertex_x(m, i);        // query vertex
-var int vy = mesh.get_vertex_y(m, i);
-var int vz = mesh.get_vertex_z(m, i);
-var int vi = mesh.get_face(m, f, 0);         // query face (0/1/2)
-var int nv = mesh.vertex_count(m);
-var int nf = mesh.face_count(m);
+local int vx = mesh.get_vertex_x(m, i);        // query vertex
+local int vy = mesh.get_vertex_y(m, i);
+local int vz = mesh.get_vertex_z(m, i);
+local int vi = mesh.get_face(m, f, 0);         // query face (0/1/2)
+local int nv = mesh.vertex_count(m);
+local int nf = mesh.face_count(m);
 mesh.destroy(m);                             // free mesh
 ```
 
 Generate terrain from heightmap:
 
 ```
-var int terrain = mesh.from_heightmap(bmp_ptr, scale_xz, scale_y);
+local int terrain = mesh.from_heightmap(bmp_ptr, scale_xz, scale_y);
 ```
 
 ### 14.7 Procedural Textures — `tex.*`
@@ -773,14 +790,14 @@ var int terrain = mesh.from_heightmap(bmp_ptr, scale_xz, scale_y);
 Generate procedural texture values (returns 0-255):
 
 ```
-var int c = tex.checker(x, y, 32);           // checkerboard
-var int gh = tex.gradient_h(x, 256);         // horizontal gradient
-var int gv = tex.gradient_v(y, 256);         // vertical gradient
-var int b = tex.brick(x, y, 64, 32, 2);      // brick pattern
-var int n = tex.noise2d(x, y, seed);         // hash-based noise
-var int p = tex.perlin2d(x, y, freq, seed);  // Perlin noise
-var int w = tex.wood(x, y, rings, seed);     // wood grain
-var int m = tex.marble(x, y, freq, seed);    // marble veins
+local int c = tex.checker(x, y, 32);           // checkerboard
+local int gh = tex.gradient_h(x, 256);         // horizontal gradient
+local int gv = tex.gradient_v(y, 256);         // vertical gradient
+local int b = tex.brick(x, y, 64, 32, 2);      // brick pattern
+local int n = tex.noise2d(x, y, seed);         // hash-based noise
+local int p = tex.perlin2d(x, y, freq, seed);  // Perlin noise
+local int w = tex.wood(x, y, rings, seed);     // wood grain
+local int m = tex.marble(x, y, freq, seed);    // marble veins
 ```
 ---
 
@@ -823,9 +840,13 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `fill_triangle_gradient(...)`   | Gouraud-shaded scanline triangle                   |
 | `fill_triangle_z(...)`          | Depth-tested flat-shaded triangle                  |
 | `fill_triangle_affine(...)`     | PS1-style affine textured triangle (RGB565)        |
+| `fill_triangle_persp(...)`      | PS2-style perspective-correct textured triangle    |
+| `fill_triangle_pcolor(...)`     | Perspective-correct textured triangle, per-vertex color |
 | `window.open(w,h,title)`        | Open graphical window on its own thread            |
 | `window.close()`                | Post WM_CLOSE to window                            |
 | `window.is_open()`              | Returns 1 if window is open                        |
+| `window.clear(r,g,b)`           | Fill framebuffer with a solid color                |
+| `window.text(x,y,val,r,g,b)`    | Draw str/int text at (x,y) via GDI TextOutA        |
 | `window.flush()`                | Blit framebuffer to window (~60fps cap)            |
 | `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
 | `window.release_mouse()`        | Release capture, show cursor                       |
@@ -852,8 +873,8 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `mem.free(ptr)`                 | Free a heap buffer                                 |
 | `mem.poke8(ptr,off,v)`          | Store byte v at ptr[off]                           |
 | `mem.peek8(ptr,off)`            | Load byte at ptr[off] -> int                       |
-| `mem.poke64(ptr,woff,v)`        | Store 8 bytes at ptr + woff*8                      |
-| `mem.peek64(ptr,woff)`          | Load 8 bytes at ptr + woff*8 -> int                |
+| `mem.poke64(ptr,byteoff,v)`     | Store 8 bytes at ptr + byteoff                     |
+| `mem.peek64(ptr,byteoff)`       | Load 8 bytes at ptr + byteoff -> int               |
 | `bit.shl(val,count)`            | Left shift (inlined to shl instruction)            |
 | `bit.shr(val,count)`            | Unsigned right shift (inlined to shr instruction)  |
 | `mat.identity()`                | Reset current matrix to identity                   |
@@ -918,8 +939,8 @@ function main() {
 
 ```
 function main() {
-    var float radius = 5.0;
-    var float area = $((3.14159 * $radius * $radius));
+    local float radius = 5.0;
+    local float area = 3.14159 * radius * radius;
     println(area);
     return;
 }
@@ -929,7 +950,7 @@ function main() {
 
 ```
 function main() {
-    var str content = readfile("data.txt");
+    local str content = readfile("data.txt");
     println(content);
     return;
 }
@@ -976,12 +997,12 @@ function main() {
 function main() {
     println(cpu.safe_thread_limit());
 
-    var int i = 0;
+    local int i = 0;
     while (i < cpu.safe_thread_limit()) {
         thread {
             // parallel work unit
         }
-        i = $(($i + 1));
+        i = i + 1;
     }
 
     sync {
@@ -1008,23 +1029,26 @@ function main() {
 | 0.9     | Bit shifts (bit.shl/shr), mouse capture, multi-window TLS   | ✅ Complete |
 | 0.10    | Matrix stack (mat.*), affine texture mapping, BMP loading, mesh management, procedural textures (tex.*) | ✅ Complete |
 | 0.11    | Perspective-correct texture mapping (fill_triangle_persp, fill_triangle_pcolor) | ✅ Complete |
-| 0.12    | Alpha-blended triangles, backface culling, near-plane clipping | 🔲 Planned  |
-| 0.13    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
-| 0.14    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
+| 0.12    | Backface culling on all fill_triangle* variants, window.clear/window.text (GDI overlay text), `global`/`local` as the sole declaration syntax (removed `var` and `$((...))`), mem.peek64/poke64 changed to byte-offset addressing | ✅ Complete |
+| 0.13    | Per-triangle alpha blending, near-plane triangle clipping   | 🔲 Planned  |
+| 0.14    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
+| 0.15    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ### PS2-Era Graphics Target (60fps)
 
 To achieve PS2-era rendering at 60fps, the following features are required:
 
-**Core rendering (0.11-0.12):**
+**Core rendering (0.11-0.12, complete):**
 - Perspective-correct texture interpolation (1/z correction per scanline)
 - Gouraud shading combined with texturing
+- Backface culling (signed-area winding test, applied to all fill_triangle* variants)
+
+**Core rendering (0.13, planned):**
 - Per-triangle alpha blending / transparency
-- Backface culling (dot product of view vector and face normal)
 - Near-plane triangle clipping (Sutherland-Hodgman)
 
-**Visual quality (0.13):**
+**Visual quality (0.14):**
 - Bilinear texture filtering (4-tap weighted average)
 - Linear fog (blend to fog color based on z-depth)
 
@@ -1035,4 +1059,4 @@ To achieve PS2-era rendering at 60fps, the following features are required:
 
 ---
 
-*Slag Language Specification v0.10 — Subject to revision*
+*Slag Language Specification v0.12 — Subject to revision*

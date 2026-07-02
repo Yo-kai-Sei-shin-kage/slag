@@ -47,7 +47,7 @@ function main() {
 
     on mouse_wheel(int delta) {
         // Resize box with scroll wheel
-        box_size = $(($box_size + $delta * 5));
+        box_size = box_size + delta * 5;
         if (box_size < 20) {
             box_size = 20;
         }
@@ -57,24 +57,22 @@ function main() {
     }
 
     while (window.is_open()) {
-        // Clear
-        fill_triangle(0, 0, 400, 0, 400, 300, 30, 30, 40);
-        fill_triangle(0, 0, 400, 300, 0, 300, 30, 30, 40);
+        window.clear(30, 30, 40);
 
         // Draw box at mouse position
-        var int half = $(($box_size / 2));
-        var int x1 = $(($mouse_x - $half));
-        var int y1 = $(($mouse_y - $half));
-        var int x2 = $(($mouse_x + $half));
-        var int y2 = $(($mouse_y + $half));
+        local int half = box_size / 2;
+        local int x1 = mouse_x - half;
+        local int y1 = mouse_y - half;
+        local int x2 = mouse_x + half;
+        local int y2 = mouse_y + half;
 
-        fill_triangle(x1, y1, x2, y1, x2, y2, box_color_r, box_color_g, box_color_b);
-        fill_triangle(x1, y1, x2, y2, x1, y2, box_color_r, box_color_g, box_color_b);
+        fill_triangle(x1, y1, x2, y2, x2, y1, box_color_r, box_color_g, box_color_b);
+        fill_triangle(x1, y1, x1, y2, x2, y2, box_color_r, box_color_g, box_color_b);
 
         // Draw click indicator
         if (is_clicking == 1) {
-            fill_triangle(10, 10, 30, 10, 30, 30, 255, 255, 100);
-            fill_triangle(10, 10, 30, 30, 10, 30, 255, 255, 100);
+            fill_triangle(10, 10, 30, 30, 30, 10, 255, 255, 100);
+            fill_triangle(10, 10, 10, 30, 30, 30, 255, 255, 100);
         }
 
         window.flush();

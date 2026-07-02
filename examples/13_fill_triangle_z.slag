@@ -6,50 +6,22 @@
 //
 //
 // Example: fill_triangle_z(x0, y0, z0, x1, y1, z1, x2, y2, z2, r, g, b)
-// Shows depth ordering by drawing "back" triangle first, "front" triangle last
-// Z-buffer ensures correct visibility regardless of draw order
+// Shows depth ordering with z-buffer
 
 function main() {
-    window.open(400, 300, "Z-Buffer Triangle Example");
-
-    var int frame = 0;
-    var int phase = 0;
+    window.open(400, 300, "Z-Buffer Demo");
 
     while (window.is_open()) {
-        // Clear screen and z-buffer
+        window.clear(30, 30, 40);
         zbuffer.clear();
-        fill_triangle(0, 0, 400, 0, 400, 300, 30, 30, 40);
-        fill_triangle(0, 0, 400, 300, 0, 300, 30, 30, 40);
 
-        // Cycle through phases every 60 frames
-        frame = $(($frame + 1));
-        if (frame > 60) {
-            frame = 0;
-            phase = $(($phase + 1));
-            if (phase > 2) {
-                phase = 0;
-            }
-        }
-
-        // Phase 0: Red in front (z=100), Blue middle (z=300), Green back (z=500)
-        // Phase 1: Blue in front (z=100), Green middle (z=300), Red back (z=500)
-        // Phase 2: Green in front (z=100), Red middle (z=300), Blue back (z=500)
-
-        if (phase == 0) {
-            fill_triangle_z(100, 50, 100, 250, 50, 100, 175, 180, 100, 255, 80, 80);
-            fill_triangle_z(50, 120, 300, 200, 120, 300, 125, 250, 300, 80, 80, 255);
-            fill_triangle_z(150, 100, 500, 300, 100, 500, 225, 230, 500, 80, 255, 80);
-        }
-        if (phase == 1) {
-            fill_triangle_z(50, 120, 100, 200, 120, 100, 125, 250, 100, 80, 80, 255);
-            fill_triangle_z(150, 100, 300, 300, 100, 300, 225, 230, 300, 80, 255, 80);
-            fill_triangle_z(100, 50, 500, 250, 50, 500, 175, 180, 500, 255, 80, 80);
-        }
-        if (phase == 2) {
-            fill_triangle_z(150, 100, 100, 300, 100, 100, 225, 230, 100, 80, 255, 80);
-            fill_triangle_z(100, 50, 300, 250, 50, 300, 175, 180, 300, 255, 80, 80);
-            fill_triangle_z(50, 120, 500, 200, 120, 500, 125, 250, 500, 80, 80, 255);
-        }
+        // Vertices wound clockwise for backface culling
+        // Red triangle (front, z=10)
+        fill_triangle_z(100, 50, 10, 175, 200, 10, 250, 50, 10, 255, 80, 80);
+        // Blue triangle (middle, z=20)
+        fill_triangle_z(50, 100, 20, 125, 250, 20, 200, 100, 20, 80, 80, 255);
+        // Green triangle (back, z=30)
+        fill_triangle_z(150, 80, 30, 225, 230, 30, 300, 80, 30, 80, 255, 80);
 
         window.flush();
     }

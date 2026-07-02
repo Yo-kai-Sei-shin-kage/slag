@@ -7,8 +7,8 @@
 //
 function main() {
     window.open(400, 300, "PColor Triangle");
-    var int verts = mem.alloc(192);
-    var int tex = mem.alloc(2);
+    local int verts = mem.alloc(192);
+    local int tex = mem.alloc(2);
     mem.poke8(tex, 0, 255);
     mem.poke8(tex, 1, 255);
 

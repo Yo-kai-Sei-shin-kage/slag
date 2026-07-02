@@ -6,7 +6,7 @@
 //
 //
 function main() {
-    var int buf = mem.alloc(64);       // allocate 64 bytes, returns address
+    local int buf = mem.alloc(64);       // allocate 64 bytes, returns address
 
     mem.poke8(buf, 0, 72);             // store byte 72 at offset 0
     mem.poke8(buf, 1, 73);             // store byte 73 at offset 1
@@ -14,8 +14,8 @@ function main() {
     println(mem.peek8(buf, 0));        // read byte at offset 0, prints 72
     println(mem.peek8(buf, 1));        // read byte at offset 1, prints 73
 
-    mem.poke64(buf, 1, 12345);         // store 8-byte value at word offset 1
-    println(mem.peek64(buf, 1));       // read it back, prints 12345
+    mem.poke64(buf, 8, 12345);         // store 8-byte value at byte offset 8
+    println(mem.peek64(buf, 8));       // read it back, prints 12345
 
     mem.free(buf);                     // free the buffer
     return;

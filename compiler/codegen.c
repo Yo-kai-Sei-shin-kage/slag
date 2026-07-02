@@ -68,9 +68,9 @@ typedef struct Global {
     ExprList arr_init;    // initializer list (arrays)
 } Global;
 
-#define MAX_GLOBALS 256
+#define MAX_GLOBALS 2048
 
-#define MAX_LOCALS 256
+#define MAX_LOCALS 2048
 
 typedef struct Codegen {
     FILE *out;            // output assembly file
@@ -264,9 +264,9 @@ static Global *alloc_global_array(Codegen *cg, const char *name, SlagType elem_t
 }
 
 // For a TYPE_STR local, returns the stack offset of its length slot
-// (always 8 bytes below the pointer slot).
+// (8 bytes above the pointer slot).
 static int str_len_offset(const Local *loc) {
-    return loc->offset - 8;
+    return loc->offset + 8;
 }
 
 // Non-static wrappers for use by window_runtime.c
@@ -321,8 +321,7 @@ static void emit_str_expr(Codegen *cg, const Expr *e) {
             emit_load_str_lit(cg, e);
             break;
 
-        case EXPR_IDENT:
-        case EXPR_DOLLAR_IDENT: {
+        case EXPR_IDENT: {
             Local *loc = find_local(cg, e->as.str.value);
             if (loc) {
                 emit_load_str_local(cg, loc);
@@ -345,10 +344,6 @@ static void emit_str_expr(Codegen *cg, const Expr *e) {
         case EXPR_MEMBER_CALL:
             // readfile/readline/match etc. return ptr in rax, len in rdx.
             emit_call_expr(cg, e);
-            break;
-
-        case EXPR_ARITH:
-            emit_str_expr(cg, e->as.arith.inner);
             break;
 
         default:
@@ -417,16 +412,13 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
         case EXPR_BOOL_LIT:  return TYPE_BOOL;
         case EXPR_STR_LIT:   return TYPE_STR;
         case EXPR_REGEX_LIT: return TYPE_STR;
-        case EXPR_IDENT:
-        case EXPR_DOLLAR_IDENT: {
+        case EXPR_IDENT: {
             Local *loc = find_local(cg, e->as.str.value);
             if (loc) return loc->type;
             Global *g = find_global(cg, e->as.str.value);
             if (g) return g->type;
             return hint;
         }
-        case EXPR_ARITH:
-            return expr_type(cg, e->as.arith.inner, hint);
         case EXPR_BINARY: {
             // If either operand is float, result is float.
             SlagType lt = expr_type(cg, e->as.binary.left, hint);
@@ -442,8 +434,7 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
             if (strcmp(e->as.member.member, "len") == 0) return TYPE_INT;
             // cpu.* topology fields and window.open (the bare-member
             // read of the open/closed flag) are all int-typed globals.
-            if (e->as.member.base->kind == EXPR_IDENT ||
-                e->as.member.base->kind == EXPR_DOLLAR_IDENT) {
+            if (e->as.member.base->kind == EXPR_IDENT) {
                 const char *base_name = e->as.member.base->as.str.value;
                 if (strcmp(base_name, "cpu") == 0) return TYPE_INT;
                 if (strcmp(base_name, "window") == 0) return TYPE_INT;
@@ -457,8 +448,7 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
             return TYPE_INT;
         }
         case EXPR_INDEX: {
-            if (e->as.index.base->kind == EXPR_IDENT ||
-                e->as.index.base->kind == EXPR_DOLLAR_IDENT) {
+            if (e->as.index.base->kind == EXPR_IDENT) {
                 Local *loc = find_local(cg, e->as.index.base->as.str.value);
                 if (loc && loc->is_array) return loc->elem_type;
                 Global *glb = find_global(cg, e->as.index.base->as.str.value);
@@ -492,8 +482,7 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    mov  rax, %d", e->as.bool_val);
             break;
 
-        case EXPR_IDENT:
-        case EXPR_DOLLAR_IDENT: {
+        case EXPR_IDENT: {
             Local *loc = find_local(cg, e->as.str.value);
             if (loc) {
                 if (loc->type == TYPE_FLOAT) {
@@ -518,10 +507,6 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             }
             break;
         }
-
-        case EXPR_ARITH:
-            emit_int_expr(cg, e->as.arith.inner);
-            break;
 
         case EXPR_UNARY:
             emit_int_expr(cg, e->as.unary.operand);
@@ -666,8 +651,7 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             // Load base address, compute offset, load qword.
             Local *loc = NULL;
             Global *glb = NULL;
-            if (e->as.index.base->kind == EXPR_IDENT ||
-                e->as.index.base->kind == EXPR_DOLLAR_IDENT) {
+            if (e->as.index.base->kind == EXPR_IDENT) {
                 loc = find_local(cg, e->as.index.base->as.str.value);
                 if (!loc) {
                     glb = find_global(cg, e->as.index.base->as.str.value);
@@ -767,8 +751,7 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    cvtsi2sd xmm0, rax");
             break;
 
-        case EXPR_IDENT:
-        case EXPR_DOLLAR_IDENT: {
+        case EXPR_IDENT: {
             Local *loc = find_local(cg, e->as.str.value);
             if (loc) {
                 if (loc->type == TYPE_INT) {
@@ -793,10 +776,6 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
             }
             break;
         }
-
-        case EXPR_ARITH:
-            emit_float_expr(cg, e->as.arith.inner);
-            break;
 
         case EXPR_UNARY:
             emit_float_expr(cg, e->as.unary.operand);
@@ -842,8 +821,7 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
         case EXPR_INDEX: {
             Local *loc = NULL;
             Global *glb = NULL;
-            if (e->as.index.base->kind == EXPR_IDENT ||
-                e->as.index.base->kind == EXPR_DOLLAR_IDENT) {
+            if (e->as.index.base->kind == EXPR_IDENT) {
                 loc = find_local(cg, e->as.index.base->as.str.value);
                 if (!loc) {
                     glb = find_global(cg, e->as.index.base->as.str.value);
@@ -1229,6 +1207,76 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_window_flush");
             emit_call_epilogue(cg, 0);
         }
+        // window.clear(r, g, b) - clear DIB buffer to solid color
+        else if (strcmp(member, "clear") == 0 && args->count >= 3) {
+            emit(cg, "    ; window.clear");
+            emit_int_expr(cg, args->items[0]);  // r
+            emit(cg, "    mov  r12, rax");
+            emit_int_expr(cg, args->items[1]);  // g
+            emit(cg, "    mov  r13, rax");
+            emit_int_expr(cg, args->items[2]);  // b
+            emit(cg, "    mov  r8,  rax");
+            emit(cg, "    mov  rcx, r12");
+            emit(cg, "    mov  rdx, r13");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_window_clear");
+            emit_call_epilogue(cg, 0);
+        }
+        // window.text(x, y, str|int, r, g, b) - draw text at x,y with color
+        else if (strcmp(member, "text") == 0 && args->count >= 6) {
+            emit(cg, "    ; window.text");
+            emit(cg, "    push r12");
+            emit(cg, "    push r13");
+            emit(cg, "    push r14");
+            emit(cg, "    push r15");
+            // eval x, y
+            emit_int_expr(cg, args->items[0]);
+            emit(cg, "    mov  r12, rax");
+            emit_int_expr(cg, args->items[1]);
+            emit(cg, "    mov  r13, rax");
+            // detect type of 3rd arg (text content)
+            SlagType text_type = expr_type(cg, args->items[2], TYPE_STR);
+            if (text_type == TYPE_INT) {
+                // int: convert via _slag_itoa
+                emit(cg, "    sub  rsp, 24");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    lea  rdx, [rsp]");
+                emit(cg, "    call _slag_itoa");
+                emit(cg, "    mov  r15, rax");      // len
+                emit(cg, "    lea  r14, [rsp]");    // ptr
+            } else {
+                // str
+                emit(cg, "    sub  rsp, 24");       // balance stack
+                emit_str_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax");
+                emit(cg, "    mov  r15, rdx");
+            }
+            // eval r, g, b
+            emit_int_expr(cg, args->items[3]);
+            emit(cg, "    push rax");
+            emit_int_expr(cg, args->items[4]);
+            emit(cg, "    push rax");
+            emit_int_expr(cg, args->items[5]);
+            emit(cg, "    mov  r10, rax");
+            emit(cg, "    pop  r11");
+            emit(cg, "    pop  rax");
+            // setup call
+            emit(cg, "    sub  rsp, 56");
+            emit(cg, "    mov  [rsp+32], rax");
+            emit(cg, "    mov  [rsp+40], r11");
+            emit(cg, "    mov  [rsp+48], r10");
+            emit(cg, "    mov  rcx, r12");
+            emit(cg, "    mov  rdx, r13");
+            emit(cg, "    mov  r8,  r14");
+            emit(cg, "    mov  r9,  r15");
+            emit(cg, "    call _slag_window_text");
+            emit(cg, "    add  rsp, 80");          // 56 + 24
+            emit(cg, "    pop  r15");
+            emit(cg, "    pop  r14");
+            emit(cg, "    pop  r13");
+            emit(cg, "    pop  r12");
+        }
         // window.is_open() -> int (0 or 1) - TLS-based
         else if (strcmp(member, "is_open") == 0) {
             emit(cg, "    ; window.is_open (TLS)");
@@ -1531,26 +1579,26 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    movzx rax, byte [r12 + rax]");
             }
         }
-        // mem.poke64(ptr, wordoff, val)
+        // mem.poke64(ptr, byteoff, val)
         else if (strcmp(member, "poke64") == 0) {
             emit(cg, "    ; mem.poke64 (inlined)");
             if (args->count >= 3) {
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    mov  r13, rax        ; wordoff");
+                emit(cg, "    mov  r13, rax        ; byteoff");
                 emit_int_expr(cg, args->items[2]);
-                emit(cg, "    mov  [r12 + r13*8], rax");
+                emit(cg, "    mov  [r12 + r13], rax");
             }
         }
-        // mem.peek64(ptr, wordoff) -> int
+        // mem.peek64(ptr, byteoff) -> int
         else if (strcmp(member, "peek64") == 0) {
             emit(cg, "    ; mem.peek64 (inlined)");
             if (args->count >= 2) {
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    mov  rax, [r12 + rax*8]");
+                emit(cg, "    mov  rax, [r12 + rax]");
             }
         }
         // cpu.physical_cores() -> int
@@ -2291,32 +2339,6 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
     switch (s->kind) {
 
         // ------------------------------------------------------------------
-        // var TYPE name = expr;
-        // ------------------------------------------------------------------
-
-            case STMT_VAR_DECL: {
-            Local *loc = alloc_local(cg,
-                s->as.var_decl.name,
-                s->as.var_decl.type,
-                0, TYPE_UNKNOWN, 0);
-
-            SlagType t = s->as.var_decl.type;
-            emit(cg, "    ; var %s %s", slag_type_name(t), s->as.var_decl.name);
-
-            if (t == TYPE_FLOAT) {
-                emit_float_expr(cg, s->as.var_decl.init);
-                emit(cg, "    movsd [rbp%+d], xmm0", loc->offset);
-            } else if (t == TYPE_STR) {
-                emit_str_expr(cg, s->as.var_decl.init);
-                emit_store_str_local(cg, loc);
-            } else {
-                emit_int_expr(cg, s->as.var_decl.init);
-                emit(cg, "    mov  [rbp%+d], rax", loc->offset);
-            }
-            break;
-        }
-
-        // ------------------------------------------------------------------
         // global TYPE name = expr;
         // ------------------------------------------------------------------
         case STMT_GLOBAL_DECL: {
@@ -2416,8 +2438,7 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
             const Expr *target = s->as.assign.target;
             const Expr *value  = s->as.assign.value;
 
-            if (target->kind == EXPR_IDENT ||
-                target->kind == EXPR_DOLLAR_IDENT) {
+            if (target->kind == EXPR_IDENT) {
                 Local *loc = find_local(cg, target->as.str.value);
                 if (loc) {
                     emit(cg, "    ; assign %s", loc->name);
@@ -2456,28 +2477,49 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
 
                 // array[index] = value
                 Local *loc = NULL;
-                if (target->as.index.base->kind == EXPR_IDENT ||
-                    target->as.index.base->kind == EXPR_DOLLAR_IDENT) {
+                Global *glb = NULL;
+                if (target->as.index.base->kind == EXPR_IDENT) {
                     loc = find_local(cg, target->as.index.base->as.str.value);
+                    if (!loc) {
+                        glb = find_global(cg, target->as.index.base->as.str.value);
+                    }
                 }
-                if (!loc) {
+                if (!loc && !glb) {
                     fprintf(stderr, "codegen error: array assign to undeclared\n");
                     break;
                 }
-                emit(cg, "    ; assign %s[idx]", loc->name);
-                // Compute index into r10.
-                emit_int_expr(cg, target->as.index.index);
-                emit(cg, "    mov  r10, rax");
-                // Compute value.
-                if (loc->elem_type == TYPE_FLOAT) {
-                    emit_float_expr(cg, value);
-                    emit(cg, "    lea  rax, [rbp%+d]", loc->offset);
-                    emit(cg, "    movsd [rax + r10*8], xmm0");
+                if (loc) {
+                    emit(cg, "    ; assign %s[idx]", loc->name);
+                    // Compute index into r10.
+                    emit_int_expr(cg, target->as.index.index);
+                    emit(cg, "    mov  r10, rax");
+                    // Compute value.
+                    if (loc->elem_type == TYPE_FLOAT) {
+                        emit_float_expr(cg, value);
+                        emit(cg, "    lea  rax, [rbp%+d]", loc->offset);
+                        emit(cg, "    movsd [rax + r10*8], xmm0");
+                    } else {
+                        emit_int_expr(cg, value);
+                        emit(cg, "    mov  r11, rax");
+                        emit(cg, "    lea  rax, [rbp%+d]", loc->offset);
+                        emit(cg, "    mov  [rax + r10*8], r11");
+                    }
                 } else {
-                    emit_int_expr(cg, value);
-                    emit(cg, "    mov  r11, rax");
-                    emit(cg, "    lea  rax, [rbp%+d]", loc->offset);
-                    emit(cg, "    mov  [rax + r10*8], r11");
+                    emit(cg, "    ; assign %s[idx] (global)", glb->name);
+                    // Compute index into r10.
+                    emit_int_expr(cg, target->as.index.index);
+                    emit(cg, "    mov  r10, rax");
+                    // Compute value.
+                    if (glb->elem_type == TYPE_FLOAT) {
+                        emit_float_expr(cg, value);
+                        emit(cg, "    lea  rax, [_globarr%d]", glb->label_id);
+                        emit(cg, "    movsd [rax + r10*8], xmm0");
+                    } else {
+                        emit_int_expr(cg, value);
+                        emit(cg, "    mov  r11, rax");
+                        emit(cg, "    lea  rax, [_globarr%d]", glb->label_id);
+                        emit(cg, "    mov  [rax + r10*8], r11");
+                    }
                 }
             }
             break;
@@ -2686,9 +2728,6 @@ static int calculate_frame_size(const StmtList *list) {
         const Stmt *s = list->items[i];
         if (!s) continue;
            switch (s->kind) {
-            case STMT_VAR_DECL:
-                size += (s->as.var_decl.type == TYPE_STR) ? 16 : 8;
-                break;
             case STMT_LOCAL_DECL:
                 size += (s->as.var_decl.type == TYPE_STR) ? 16 : 8;
                 break;
@@ -3406,6 +3445,7 @@ static void emit_imports(Codegen *cg) {
     emit(cg, "extern HeapAlloc");
     emit(cg, "extern HeapFree");
     emit(cg, "extern InitializeCriticalSection");
+    emit(cg, "extern TlsAlloc");
     emit(cg, "extern EnterCriticalSection");
     emit(cg, "extern LeaveCriticalSection");
     emit(cg, "extern QueryPerformanceCounter");
@@ -3446,6 +3486,13 @@ static void emit_startup(Codegen *cg) {
     emit(cg, "    sub  rsp, 32");
     emit(cg, "    call InitializeCriticalSection");
     emit(cg, "    add  rsp, 32");
+    emit(cg, "");
+    emit(cg, "    ; init window TLS slot");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    call TlsAlloc");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, "    mov  [_window_tls_index], rax");
+    emit(cg, "    mov  qword [_window_tls_init], 1");
     emit(cg, "");
     emit(cg, "    call _slag_detect_cpu_topology");
     emit(cg, "");

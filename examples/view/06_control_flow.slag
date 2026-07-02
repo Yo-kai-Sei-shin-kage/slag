@@ -6,7 +6,7 @@
 //
 //
 function main() {
-    var int x = 10;
+    local int x = 10;
 
     if (x > 5) {                       // if condition
         println("x is big");
@@ -14,10 +14,10 @@ function main() {
         println("x is small");
     }
 
-    var int i = 0;
+    local int i = 0;
     while (i < 3) {                    // while loop
         println(i);
-        i = $(($i + 1));
+        i = i + 1;
     }
 
     return;

@@ -6,8 +6,8 @@
 //   mem.free(ptr)                -> (void)
 //   mem.poke8(ptr, byteoff, v)   -> store low byte of v at ptr[byteoff]
 //   mem.peek8(ptr, byteoff)      -> int, zero-extended byte at ptr[byteoff]
-//   mem.poke64(ptr, wordoff, v)  -> store 8-byte v at ptr + wordoff*8
-//   mem.peek64(ptr, wordoff)     -> int, 8 bytes at ptr + wordoff*8
+//   mem.poke64(ptr, byteoff, v)  -> store 8-byte v at ptr + byteoff
+//   mem.peek64(ptr, byteoff)     -> int, 8 bytes at ptr + byteoff
 //
 // Pointers are plain 64-bit ints (the heap address). Accessors are
 // unchecked — a single mov each — for maximum speed on CPU-bound work.
@@ -94,17 +94,17 @@ void emit_mem_runtime(Codegen *cg) {
     E("    ret");
     E("");
 
-    // _slag_mem_poke64(ptr=rcx, wordoff=rdx, val=r8)
-    E("; --- _slag_mem_poke64 (rcx=ptr, rdx=wordoff, r8=val) ---");
+    // _slag_mem_poke64(ptr=rcx, byteoff=rdx, val=r8)
+    E("; --- _slag_mem_poke64 (rcx=ptr, rdx=byteoff, r8=val) ---");
     E("_slag_mem_poke64:");
-    E("    mov  [rcx + rdx*8], r8");
+    E("    mov  [rcx + rdx], r8");
     E("    ret");
     E("");
 
-    // _slag_mem_peek64(ptr=rcx, wordoff=rdx) -> rax
-    E("; --- _slag_mem_peek64 (rcx=ptr, rdx=wordoff) -> rax ---");
+    // _slag_mem_peek64(ptr=rcx, byteoff=rdx) -> rax
+    E("; --- _slag_mem_peek64 (rcx=ptr, rdx=byteoff) -> rax ---");
     E("_slag_mem_peek64:");
-    E("    mov  rax, [rcx + rdx*8]");
+    E("    mov  rax, [rcx + rdx]");
     E("    ret");
     E("");
 }

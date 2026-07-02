@@ -16,14 +16,14 @@ cd examples
 ./run_examples.sh
 ```
 
-This launches a terminal interface where you can view source code and run any of the 17 included examples covering variables, arrays, functions, graphics, threading, networking, and more.
+This launches a terminal interface where you can view source code and run any of the 22 included examples covering variables, arrays, functions, graphics, threading, networking, and more.
 
 ## Status
 
 Slag is under active development. The pipeline currently supports:
 
-- **Lexer** — full tokenization including `$((...))` arithmetic blocks, `$variable` references, and all core keywords/operators.
-- **Parser** — complete recursive descent parser producing a full AST: functions, typed variable and array declarations (with global/local scope modifiers), if/else/else-if, while, typed returns, thread/sync/lock blocks, and `on` event handlers.
+- **Lexer** — full tokenization of all core keywords/operators; arithmetic is plain infix expression syntax, no wrapper blocks or sigils.
+- **Parser** — complete recursive descent parser producing a full AST: functions, typed variable and array declarations (declared exclusively with `global`/`local` scope modifiers), if/else/else-if, while, typed returns, thread/sync/lock blocks, and `on` event handlers.
 - **Code generator** — emits NASM x86-64 Win64 assembly. Working:
   - Integer and float arithmetic, comparisons, logical short-circuit operators
   - Mixed int/float expressions auto-promote (int operands are converted with `cvtsi2sd`); assigning a float expression to an `int` truncates via `cvttsd2si`. No cast syntax is required
@@ -49,7 +49,7 @@ Slag is under active development. The pipeline currently supports:
     - `mem.alloc(nbytes)` — `HeapAlloc` (zero-initialized); returns the buffer address as an int, or 0 on failure
     - `mem.free(ptr)` — `HeapFree`
     - `mem.poke8(ptr, byteoff, val)` / `mem.peek8(ptr, byteoff)` — single-byte store/load at a byte offset (for network/crypto byte streams)
-    - `mem.poke64(ptr, wordoff, val)` / `mem.peek64(ptr, wordoff)` — 8-byte store/load at a word offset (`wordoff*8` bytes; for bulk moves and bignum limbs)
+    - `mem.poke64(ptr, byteoff, val)` / `mem.peek64(ptr, byteoff)` — 8-byte store/load at a byte offset (for bulk moves and bignum limbs)
   - **Bit manipulation — `bit.*`** (inlined to single CPU instructions, no function-call overhead):
     - `bit.shl(val, count)` — left shift; enables 16.16 fixed-point: `bit.shl(n, 16)` converts int to fixed
     - `bit.shr(val, count)` — unsigned right shift; `bit.shr(fixed, 16)` converts fixed to int
@@ -85,7 +85,9 @@ Slag is under active development. The pipeline currently supports:
     - `window.capture_mouse()` — captures mouse, clips cursor to window, hides cursor (for FPS-style controls)
     - `window.release_mouse()` — releases mouse capture, shows cursor
     - `window.native()` — returns native screen resolution as "WxH" string (e.g., "1920x1080")
-  - **Rasterization and timing builtins**:
+    - `window.clear(r, g, b)` — fills the DIB framebuffer with a solid color via `rep stosd`
+    - `window.text(x, y, value, r, g, b)` — draws a `str` or `int` as text at `(x, y)` via GDI `TextOutA` against the window's memory DC, composited into the same DIB surface `window.flush()` blits
+  - **Rasterization and timing builtins** (all `fill_triangle*` variants perform backface culling — a signed-area winding test discards counter-clockwise triangles, so vertices must be supplied in clockwise (CW) order to be drawn):
     - `fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)` — flat-shaded scanline triangle rasterizer, writes directly to the framebuffer with no per-pixel call overhead; bounds-clamped
     - `fill_triangle_gradient(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)` — per-vertex color (Gouraud-style) scanline rasterizer with linear interpolation along edges and across spans (smooth color blending across a triangle's interior)
     - `fill_triangle_z(x0,y0,z0, x1,y1,z1, x2,y2,z2, r,g,b)` — depth-tested triangle rasterizer; x/y are int screen coords, z values are float depth; pixels only drawn if closer than existing z-buffer value
@@ -129,7 +131,7 @@ Slag is under active development. The pipeline currently supports:
 
 - Dynamic arrays; passing arrays as function parameters (use global arrays or `mem.alloc` + pointers to share buffers across functions instead)
 - Per-vertex (Gouraud) lighting on meshes — the gradient rasterizer exists, but the cube demo currently uses flat per-face lighting
-- Back-face culling — the cube demos rely on draw order or z-buffer
+- Per-triangle alpha blending and near-plane clipping (planned for 0.13)
 - Built-in 3D math/rendering primitives (matrix types, texture mapping) — not strictly needed, since rotation/projection/rasterization pipelines can already be written in Slag itself (see the cube demos)
 - Encrypted P2P via Windows CNG (`bcrypt.dll`) Diffie-Hellman key exchange + AES — planned next; the networking and buffer primitives it depends on are now in place
 - Self-hosting compiler
@@ -180,10 +182,10 @@ function main() {
         pixel(mx, my, 255, 255, 0);
     }
 
-    var int x = 0;
+    local int x = 0;
     while (x < 320) {
         pixel(x, 100, 0, 255, 0);
-        x = $(($x + 1));
+        x = x + 1;
     }
     window.flush();
 
@@ -249,12 +251,12 @@ function main() {
     net.accept();
     if (net.ack() == 0) { println("accept failed"); net.end(); return; }
 
-    var int buf = mem.alloc(64);
-    var int n = net.recv_buf(buf, 64);
-    var int i = 0;
+    local int buf = mem.alloc(64);
+    local int n = net.recv_buf(buf, 64);
+    local int i = 0;
     while (i < n) {
         println(mem.peek8(buf, i));
-        i = $(( $i + 1 ));
+        i = i + 1;
     }
     mem.free(buf);
     net.end();
@@ -270,7 +272,7 @@ function main() {
     net.connect("127.0.0.1", 5555);
     if (net.ack() == 0) { println("connect failed"); net.end(); return; }
 
-    var int buf = mem.alloc(64);
+    local int buf = mem.alloc(64);
     mem.poke8(buf, 0, 72);   // H
     mem.poke8(buf, 1, 73);   // I
     net.send_buf(buf, 2);
@@ -282,7 +284,7 @@ function main() {
 
 ## Examples Directory
 
-The `examples/` directory contains 17 complete, runnable Slag programs demonstrating language features:
+The `examples/` directory contains 22 complete, runnable Slag programs demonstrating language features:
 
 | # | Example | Description |
 |---|---------|-------------|
@@ -290,7 +292,7 @@ The `examples/` directory contains 17 complete, runnable Slag programs demonstra
 | 02 | arrays | Fixed-size array operations |
 | 03 | global_arrays | File-scope shared arrays |
 | 04 | functions | User-defined functions and calls |
-| 05 | arithmetic | The `$((...))` expression syntax |
+| 05 | arithmetic | Direct infix arithmetic expression syntax |
 | 06 | control_flow | if/else and while loops |
 | 07 | strings | String handling and manipulation |
 | 08 | cpu_info | CPU topology detection |
@@ -303,6 +305,11 @@ The `examples/` directory contains 17 complete, runnable Slag programs demonstra
 | 15 | mouse_input | Mouse event handlers |
 | 16 | net_client | TCP networking API demo |
 | 17 | threads | Multi-threaded concurrency |
+| 18 | multi_window | Multiple independent windows via TLS |
+| 19 | 3d_terrain | Heightmap-based 3D terrain rendering |
+| 20 | solar_system | Hierarchical matrix-stack transforms |
+| 21 | fill_triangle_persp | Perspective-correct texture mapping |
+| 22 | fill_triangle_pcolor | Perspective-correct textured triangle, per-vertex color |
 
 Run the interactive browser with `./examples/run_examples.sh`, or compile individual examples with `slagrun examples/01_variables.slag`.
 

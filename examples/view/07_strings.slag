@@ -6,13 +6,13 @@
 //
 //
 function main() {
-    var str greeting = "Hello";        // string literal
-    var str name = "Slag";
+    local str greeting = "Hello";        // string literal
+    local str name = "Slag";
 
     println(greeting);                 // print string
     println(name);
 
-    var str file = readfile("data.txt");  // read file into string
+    local str file = readfile("data.txt");  // read file into string
     println(file);
 
     return;

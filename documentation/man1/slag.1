@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-06-28" "slag 0.11" "Slag Programming Language"
+.TH SLAG 1 "2026-07-02" "slag 0.12" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -74,15 +74,18 @@ or
 Used only as a function's declared return type for functions that
 return no value.
 .SS Variables and arrays
-Variables are declared with
-.BR var :
+Every variable is declared with an explicit scope modifier,
+.B global
+or
+.BR local ;
+there is no unscoped declaration form:
 .PP
 .RS
 .nf
-var int x = 5;
-var float f = 3.14;
-var str  s = "hello";
-var int[5] nums = {10, 20, 30, 40, 50};
+local int x = 5;
+local float f = 3.14;
+local str  s = "hello";
+local int[5] nums = {10, 20, 30, 40, 50};
 .fi
 .RE
 .PP
@@ -91,7 +94,6 @@ Arrays are fixed-size and 1-dimensional. Indexing uses
 and the element count is available via
 .BR arr.len .
 .SS Variable scope
-Variables may be declared with scope modifiers:
 .TP
 .B global
 Declares a file-scope variable stored in the .data section, accessible
@@ -105,36 +107,17 @@ global str appName = "MyApp";
 .RE
 .TP
 .B local
-Declares a block-scoped variable (stack-allocated, same as
-.BR var ):
+Declares a block-scoped, stack-allocated variable:
 .PP
 .RS
 .nf
 local int x = 10;
 .fi
 .RE
-.PP
-The
-.B var
-keyword remains available for standard function-local variables.
-.SS Arithmetic: the $(( )) construct
-All numeric (int and float) expressions used in an arithmetic context
-are written inside
-.BR $((\ ...\ )) ,
-with variables referenced using a
-.B $
-prefix inside the block:
-.PP
-.RS
-.nf
-i = $(($i + 1));
-total = $(($total + nums[j]));
-.fi
-.RE
-.PP
-Outside of
-.BR $((\ ...\ )) ,
-bare identifiers are used normally, e.g. in
+.SS Arithmetic expressions
+Arithmetic operators work directly on expressions, with no wrapper
+syntax or variable sigil required. The same plain expression syntax
+is used everywhere, including
 .B if
 and
 .B while
@@ -142,6 +125,8 @@ conditions:
 .PP
 .RS
 .nf
+i = i + 1;
+total = total + nums[j];
 while (i < nums.len) { ... }
 .fi
 .RE
@@ -166,7 +151,7 @@ statement itself rather than in the function signature:
 .RS
 .nf
 function add(int a, int b) {
-    return int $(($a + $b));
+    return int a + b;
 }
 function greet(str name) {
     println(name);
@@ -224,10 +209,35 @@ Release mouse capture and show the cursor.
 Returns the native screen resolution as a string in "WxH" format
 (e.g., "1920x1080").
 .TP
+.BI window.clear( r , " g" , " b" )
+Fill the entire DIB framebuffer with a solid color via a single
+.B rep stosd
+fill. Typically called once per frame before drawing.
+.TP
+.BI window.text( x , " y" , " value" , " r" , " g" , " b" )
+Draw
+.I value
+(a
+.B str
+or
+.BR int )
+as text at
+.RI ( x , " y" )
+via GDI
+.BR TextOutA ,
+composited into the same DIB surface that
+.B window.flush()
+blits.
+.TP
 .BI pixel( x , " y" , " r" , " g" , " b" )
 Write a single RGB pixel into the framebuffer at
 .RI ( x , " y" ).
 Out-of-bounds coordinates are silently ignored.
+.PP
+All
+.B fill_triangle*
+variants below perform backface culling: a signed-area winding test
+discards triangles whose vertices are not in clockwise (CW) order.
 .TP
 .BI fill_triangle( x0 , " y0" , " x1" , " y1" , " x2" , " y2" , " r" , " g" , " b" )
 Rasterize a flat-shaded, solid-color triangle directly into the
@@ -345,8 +355,8 @@ Free a buffer obtained from mem.alloc.
 .BR mem.poke8(ptr,byteoff,val) ", " mem.peek8(ptr,byteoff)
 Store / load a single byte at a byte offset.
 .TP
-.BR mem.poke64(ptr,wordoff,val) ", " mem.peek64(ptr,wordoff)
-Store / load 8 bytes at a word offset (byte offset = wordoff times 8).
+.BR mem.poke64(ptr,byteoff,val) ", " mem.peek64(ptr,byteoff)
+Store / load 8 bytes at a byte offset.
 .SS Bit manipulation
 .TP
 .B bit.shl(value,count)
