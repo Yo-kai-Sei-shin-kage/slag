@@ -494,13 +494,15 @@ Writes a single BGRA pixel to the framebuffer at `(x, y)`. Out-of-bounds coordin
 
 ### 12.3 Triangle Rasterization
 
-All `fill_triangle*` variants perform backface culling: a triangle whose vertices wind counter-clockwise in screen space is discarded before rasterization. Vertices must be supplied in clockwise (CW) winding order to be drawn.
+All `fill_triangle*` variants perform backface culling: a triangle whose vertices wind clockwise in screen space is discarded before rasterization. Vertices must be supplied in counter-clockwise winding order, as seen on screen, to be drawn. Since screen y increases downward, this is the opposite sense of CW/CCW in standard math y-up coordinates.
 
 ```
 fill_triangle(x0, y0, x1, y1, x2, y2, r, g, b);
 ```
 
 Flat-shaded scanline triangle rasterizer. Writes directly to the framebuffer with no per-pixel call overhead. Bounds-clamped.
+
+`fill_triangle` calls are deferred into a per-frame queue (capacity 65536) rather than drawn immediately; `window.flush()` drains it. Queues below 64 triangles drain sequentially on the calling thread (thread wake/wait overhead isn't worth it at that scale); queues at or above 64 dispatch across a persistent worker pool — lazily spawned on first use, sized from `cpu.safe_thread_limit()` and capped at 32 threads — which splits the framebuffer into horizontal row bands, one band per worker. This is transparent to Slag source: no syntax changed, output is identical, only the rendering of triangle-heavy scenes gets faster on multi-core machines. SIMD-tier dispatch (using `cpu.has_avx2()`/`has_avx512f()` to select wider vectorized inner loops) is not yet implemented; the scanline fill always uses the baseline SSE2 path.
 
 ```
 fill_triangle_gradient(x0, y0, r0, g0, b0,
@@ -879,7 +881,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `window.is_open()`              | Returns 1 if window is open                        |
 | `window.clear(r,g,b)`           | Fill framebuffer with a solid color                |
 | `window.text(x,y,val,r,g,b)`    | Draw str/int text at (x,y) via GDI TextOutA        |
-| `window.flush()`                | Blit framebuffer to window (~60fps cap)            |
+| `window.flush()`                | Drain deferred fill_triangle* queue, blit to window (adaptive ~60fps cap) |
 | `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
 | `window.release_mouse()`        | Release capture, show cursor                       |
 | `window.native()`               | Returns native resolution as "WxH" string          |

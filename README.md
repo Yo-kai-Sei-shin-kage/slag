@@ -81,7 +81,7 @@ Slag is under active development. The pipeline currently supports:
   - **Windowing and software-rendered graphics**:
     - `window.open(w, h, title)` — creates a window on its own thread with a BGRA DIB framebuffer; uses TLS so multiple windows can be opened from separate threads
     - `pixel(x, y, r, g, b)` — writes a single pixel into the framebuffer; bounds-checks against the framebuffer dimensions and silently no-ops out-of-range writes (safe to draw off-screen)
-    - `window.flush()` — pumps the message queue and blits the framebuffer to the window (sleeps ~16 ms, giving a ~60fps cap)
+    - `window.flush()` — drains any deferred `fill_triangle*` calls (see below), pumps the message queue, and blits the framebuffer to the window. Frame-caps adaptively: sleeps `max(0, 16ms - work done this call)` rather than a flat 16ms, via `QueryPerformanceCounter`/`Frequency`; `window.open()` calls `timeBeginPeriod(1)` so `Sleep()` can actually honor small values instead of rounding up to the OS's default ~15.6ms tick
     - `window.is_open()` — returns 1/0, enabling `while (window.is_open()) { ... }` main loops
     - `window.close()` — requests the window close (posts `WM_CLOSE`)
     - `window.capture_mouse()` — captures mouse, clips cursor to window, hides cursor (for FPS-style controls)
@@ -89,8 +89,8 @@ Slag is under active development. The pipeline currently supports:
     - `window.native()` — returns native screen resolution as "WxH" string (e.g., "1920x1080")
     - `window.clear(r, g, b)` — fills the DIB framebuffer with a solid color via `rep stosd`
     - `window.text(x, y, value, r, g, b)` — draws a `str` or `int` as text at `(x, y)` via GDI `TextOutA` against the window's memory DC, composited into the same DIB surface `window.flush()` blits
-  - **Rasterization and timing builtins** (all `fill_triangle*` variants perform backface culling — a signed-area winding test discards counter-clockwise triangles, so vertices must be supplied in clockwise (CW) order to be drawn):
-    - `fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)` — flat-shaded scanline triangle rasterizer, writes directly to the framebuffer with no per-pixel call overhead; bounds-clamped
+  - **Rasterization and timing builtins** (all `fill_triangle*` variants perform backface culling — a signed-area winding test discards clockwise triangles, so vertices must be supplied in counter-clockwise order, as seen on screen, to be drawn; since screen y increases downward this is the opposite sense of "CW/CCW" in standard math y-up coordinates):
+    - `fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)` — flat-shaded scanline triangle rasterizer, writes directly to the framebuffer with no per-pixel call overhead; bounds-clamped. Calls are deferred into a per-frame queue (up to 65536) rather than drawn immediately; `window.flush()` drains it. Queues below 64 triangles drain sequentially on the calling thread (thread wake/wait overhead isn't worth it at that scale); queues at or above 64 dispatch across a persistent worker pool (lazily spawned, sized from `cpu.safe_thread_limit()`, capped at 32 threads), splitting the framebuffer into horizontal row bands with one band per worker. This is transparent — no syntax changes, existing programs render identical output, just faster on multi-core machines under heavy triangle load
     - `fill_triangle_gradient(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)` — per-vertex color (Gouraud-style) scanline rasterizer with linear interpolation along edges and across spans (smooth color blending across a triangle's interior)
     - `fill_triangle_z(x0,y0,z0, x1,y1,z1, x2,y2,z2, r,g,b)` — depth-tested triangle rasterizer; x/y are int screen coords, z values are float depth; pixels only drawn if closer than existing z-buffer value
     - `fill_triangle_affine(x0,y0,u0,v0, x1,y1,u1,v1, x2,y2,u2,v2, tex_ptr,tex_w,tex_h)` — PS1-style affine texture-mapped triangle; UV coords interpolated linearly (no perspective correction); texture is RGB565 format (2 bytes/pixel)
@@ -136,11 +136,12 @@ Slag is under active development. The pipeline currently supports:
 - Per-triangle alpha blending and near-plane clipping (planned for 0.13)
 - Built-in 3D math/rendering primitives (matrix types, texture mapping) — not strictly needed, since rotation/projection/rasterization pipelines can already be written in Slag itself (see the cube demos)
 - Encrypted P2P via Windows CNG (`bcrypt.dll`) Diffie-Hellman key exchange + AES — planned next; the networking and buffer primitives it depends on are now in place
+- SIMD-tier dispatch in the rasterization worker pool — `cpu.has_avx2()`/`has_avx512f()` are detected but not yet used to select wider vectorized inner loops in `fill_triangle`; the scanline fill currently always uses the baseline SSE2 path regardless of detected CPU capability
 - Self-hosting compiler
 
 ## Toolchain requirements
 
-Slag's compiler is written in C and built with MinGW-w64 GCC, targeting `x86_64-w64-mingw32`. Output assembly is assembled with NASM (`-f win64`) and linked with the MinGW-w64 linker. No CRT is linked into Slag-compiled programs; only `kernel32.dll`, `user32.dll`, `gdi32.dll`, and `ws2_32.dll` (networking) are imported as needed.
+Slag's compiler is written in C and built with MinGW-w64 GCC, targeting `x86_64-w64-mingw32`. Output assembly is assembled with NASM (`-f win64`) and linked with the MinGW-w64 linker. No CRT is linked into Slag-compiled programs; only `kernel32.dll`, `user32.dll`, `gdi32.dll`, `ws2_32.dll` (networking), and `winmm.dll` (`timeBeginPeriod`/`timeEndPeriod`, for high-resolution frame timing) are imported as needed.
 
 ## Installation
 
@@ -164,7 +165,7 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \
 ```bash
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
-x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -e _start
+x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -e _start
 # Add -mwindows to suppress console window for GUI-only programs
 ```
 

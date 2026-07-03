@@ -11,7 +11,7 @@ global int running = 1;
 
 function main() {
     thread {
-        window.open(300, 200, "Window 2 - Blue");
+        window.open(300, 200, "Window 2 - Red");
         local int frame = 0;
         while (running == 1) {
             if (window.is_open() == 0) {
@@ -25,7 +25,7 @@ function main() {
         }
     }
     
-    window.open(300, 200, "Window 1 - Red");
+    window.open(300, 200, "Window 1 - Blue");
     local int frame = 0;
     while (running == 1) {
         if (window.is_open() == 0) {

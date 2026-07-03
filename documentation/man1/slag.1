@@ -14,8 +14,11 @@ source files directly into NASM x86-64 assembly for the
 object format. Compiled programs link against no C runtime; only
 .BR kernel32.dll ,
 .BR user32.dll ,
-and
-.B gdi32.dll
+.BR gdi32.dll ,
+.BR ws2_32.dll " (networking), and"
+.B winmm.dll
+.RI ( timeBeginPeriod / timeEndPeriod ,
+for high-resolution frame timing)
 are imported, and only as needed by the features a given program uses.
 .PP
 Running
@@ -195,8 +198,19 @@ Returns 1 if the window is still open, 0 otherwise. Intended for use
 as a main-loop condition.
 .TP
 .B window.flush()
-Pump the window's message queue and blit the current framebuffer
-contents to the screen. Caps the frame rate to approximately 60 FPS.
+Drain any deferred
+.B fill_triangle*
+calls (see below), pump the window's message queue, and blit the
+current framebuffer contents to the screen. Frame-caps adaptively:
+sleeps for whatever remains of a ~16ms budget after the work this
+call actually did, rather than a flat 16ms sleep. Requires
+.B timeBeginPeriod(1)
+(called once by
+.BR window.open() )
+so
+.B Sleep()
+can honor small millisecond values instead of rounding up to the
+OS's default ~15.6ms timer tick.
 .TP
 .B window.capture_mouse()
 Capture the mouse, clip the cursor to the window bounds, and hide the
@@ -237,11 +251,23 @@ Out-of-bounds coordinates are silently ignored.
 All
 .B fill_triangle*
 variants below perform backface culling: a signed-area winding test
-discards triangles whose vertices are not in clockwise (CW) order.
+discards triangles whose vertices are not in counter-clockwise order
+as seen on screen (screen y increases downward, so this is the
+opposite sense of CW/CCW in standard math y-up coordinates).
 .TP
 .BI fill_triangle( x0 , " y0" , " x1" , " y1" , " x2" , " y2" , " r" , " g" , " b" )
 Rasterize a flat-shaded, solid-color triangle directly into the
-framebuffer.
+framebuffer. Calls are deferred into a per-frame queue (up to 65536
+triangles) rather than drawn immediately;
+.B window.flush()
+drains it. Queues below 64 triangles drain sequentially on the
+calling thread; queues at or above 64 dispatch across a persistent
+worker pool (lazily spawned, sized from
+.BR cpu.safe_thread_limit() ,
+capped at 32 threads), splitting the framebuffer into horizontal row
+bands with one band per worker. Transparent to existing programs \-
+no syntax changes, identical output, just faster under heavy
+triangle load on multi-core machines.
 .TP
 .BI fill_triangle_gradient( x0 , " y0" , " r0" , " g0" , " b0" ", ..." )
 Rasterize a triangle with independently specified per-vertex colors,
@@ -586,7 +612,7 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe \e
-    -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -e _start
+    -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -e _start
 .fi
 .RE
 .PP

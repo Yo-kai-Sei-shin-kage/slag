@@ -1,0 +1,75 @@
+// Stress test: 10,000 fill_triangle calls per frame, to exercise the
+// rasterization worker pool's pool-dispatch path (FT_POOL_THRESHOLD is
+// 64 queued triangles; this queues far above that every frame).
+//
+// Grid: 100 cols x 50 rows = 5000 cells x 2 triangles = 10000 triangles/frame.
+// Displays per-frame timing around window.flush() (where the deferred
+// queue is actually drained/dispatched), so pool-dispatch cost is visible.
+// Note: flush() also sleeps ~16ms for its frame cap, so frame_us near
+// 16000-17000 means the drain finished comfortably inside that budget;
+// a much larger number means rasterization itself blew past 16ms.
+//
+// The grid is offset below a HUD strip (0..69) that fill_triangle never
+// touches: fill_triangle is deferred and only actually rasterizes inside
+// window.flush(), so any text drawn in a region the grid also covers
+// gets painted over by the drain regardless of call order. Reserving an
+// untouched strip is the only way to keep the HUD visible.
+
+function main() {
+    window.open(1000, 570, "Stress Test - 10000 Triangles");
+
+    local int cols = 100;
+    local int rows = 50;
+    local int cell_w = 10;
+    local int cell_h = 10;
+    local int hud_h = 70;
+
+    local int last_time = time.now_us();
+    local int fps = 0;
+    local int frame_us = 0;
+
+    while (window.is_open()) {
+        window.clear(10, 10, 20);
+
+        window.text(20, 10, "FPS:", 255, 255, 100);
+        window.text(80, 10, fps, 100, 255, 100);
+        window.text(20, 30, "10000 triangles/frame", 255, 255, 100);
+        window.text(20, 50, "flush time (us):", 200, 200, 200);
+        window.text(220, 50, frame_us, 255, 255, 255);
+
+        local int row = 0;
+        while (row < rows) {
+            local int col = 0;
+            while (col < cols) {
+                local int x0 = col * cell_w;
+                local int y0 = row * cell_h + hud_h;
+                local int x1 = x0 + cell_w;
+                local int y1 = y0 + cell_h;
+
+                local int r = (col * 255) / cols;
+                local int g = (row * 255) / rows;
+                local int b = 128;
+
+                fill_triangle(x0, y0, x1, y1, x1, y0, r, g, b);
+                fill_triangle(x0, y0, x0, y1, x1, y1, r, g, b);
+
+                col = col + 1;
+            }
+            row = row + 1;
+        }
+
+        local int t0 = time.now_us();
+        window.flush();
+        local int t1 = time.now_us();
+        frame_us = t1 - t0;
+
+        local int now = time.now_us();
+        local int elapsed = now - last_time;
+        if (elapsed > 0) {
+            fps = 1000000 / elapsed;
+        }
+        last_time = now;
+    }
+
+    return int 0;
+}

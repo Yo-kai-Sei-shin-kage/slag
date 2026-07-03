@@ -1,0 +1,43 @@
+// Bisection test: same grid pattern as stress_10k_triangles.slag but
+// scaled down to ~200 triangles/frame -- just over FT_POOL_THRESHOLD (64),
+// so this still exercises the pool-dispatch path, but at a much smaller
+// scale. Used to tell apart "pool dispatch itself is broken" (this would
+// also fail) from "something scale-dependent" (this would work fine).
+
+function main() {
+    window.open(200, 200, "Bisect - 200 Triangles");
+
+    local int cols = 10;
+    local int rows = 10;
+    local int cell_w = 20;
+    local int cell_h = 20;
+
+    while (window.is_open()) {
+        window.clear(10, 10, 20);
+
+        local int row = 0;
+        while (row < rows) {
+            local int col = 0;
+            while (col < cols) {
+                local int x0 = col * cell_w;
+                local int y0 = row * cell_h;
+                local int x1 = x0 + cell_w;
+                local int y1 = y0 + cell_h;
+
+                local int r = (col * 255) / cols;
+                local int g = (row * 255) / rows;
+                local int b = 128;
+
+                fill_triangle(x0, y0, x1, y1, x1, y0, r, g, b);
+                fill_triangle(x0, y0, x0, y1, x1, y1, r, g, b);
+
+                col = col + 1;
+            }
+            row = row + 1;
+        }
+
+        window.flush();
+    }
+
+    return int 0;
+}

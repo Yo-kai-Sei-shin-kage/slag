@@ -5,19 +5,22 @@
 //
 //
 //
-// Example: cpu.physical_cores(), cpu.logical_cores()
+// Example: cpu.physical_cores(), cpu.logical_cores(), cpu.simd_detect(), cpu.has_avx2()
 
 function main() {
-    window.open(360, 200, "CPU Info");
-    
+    window.open(360, 240, "CPU Info");
+
     local int phys = cpu.physical_cores();
     local int logi = cpu.logical_cores();
     local int threads = cpu.logical_cores();
     local int safe = threads - 1;
-    
+    cpu.simd_detect();
+    local int avx2 = cpu.has_avx2();
+    local int sse42 = cpu.has_sse42();
+
     while (window.is_open()) {
         window.clear(20, 20, 40);
-        
+
         window.text(20, 20, "CPU INFO", 255, 255, 100);
         window.text(20, 50, "Physical cores:", 150, 255, 150);
         window.text(220, 50, phys, 255, 255, 255);
@@ -27,7 +30,21 @@ function main() {
         window.text(220, 90, threads, 255, 255, 255);
         window.text(20, 110, "Safe thread limit:", 150, 255, 150);
         window.text(220, 110, safe, 255, 255, 255);
-        
+
+        window.text(20, 140, "SIMD FEATURES", 255, 255, 100);
+        window.text(20, 170, "AVX2:", 150, 255, 150);
+        if (avx2 == 1) {
+            window.text(220, 170, "YES", 100, 255, 100);
+        } else {
+            window.text(220, 170, "NO", 255, 100, 100);
+        }
+        window.text(20, 190, "SSE4.2:", 150, 255, 150);
+        if (sse42 == 1) {
+            window.text(220, 190, "YES", 100, 255, 100);
+        } else {
+            window.text(220, 190, "NO", 255, 100, 100);
+        }
+
         window.flush();
     }
     return int 0;
