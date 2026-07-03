@@ -8,6 +8,8 @@
 //   mem.peek8(ptr, byteoff)      -> int, zero-extended byte at ptr[byteoff]
 //   mem.poke64(ptr, byteoff, v)  -> store 8-byte v at ptr + byteoff
 //   mem.peek64(ptr, byteoff)     -> int, 8 bytes at ptr + byteoff
+//   mem.pokef32(ptr, byteoff, f) -> store 32-bit float f at ptr + byteoff
+//                                   (inlined in codegen.c; no proc here)
 //
 // Pointers are plain 64-bit ints (the heap address). Accessors are
 // unchecked — a single mov each — for maximum speed on CPU-bound work.

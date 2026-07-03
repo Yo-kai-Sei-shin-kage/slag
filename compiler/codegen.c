@@ -1601,6 +1601,22 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  rax, [r12 + rax]");
             }
         }
+        // mem.pokef32(ptr, byteoff, floatval) - store a 32-bit float.
+        // Lets SIMD buffers be filled with readable literals instead of
+        // hand-packed IEEE-754 bit patterns. Additive: independent of the
+        // integer poke/peek paths above.
+        else if (strcmp(member, "pokef32") == 0) {
+            emit(cg, "    ; mem.pokef32 (inlined)");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; ptr");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; byteoff");
+                emit_float_expr(cg, args->items[2]);   // value -> xmm0 (double)
+                emit(cg, "    cvtsd2ss xmm0, xmm0  ; narrow to 32-bit float");
+                emit(cg, "    movss [r12 + r13], xmm0");
+            }
+        }
         // cpu.physical_cores() -> int
         else if (strcmp(member, "physical_cores") == 0) {
             emit(cg, "    ; cpu.physical_cores");
@@ -1625,6 +1641,57 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "hyperthreaded") == 0) {
             emit(cg, "    ; cpu.hyperthreaded");
             emit(cg, "    mov  rax, [_cpu_hyperthreaded]");
+        }
+        // cpu.simd_detect() -> int (re-runs CPUID feature detection; returns 1)
+        // Runs automatically at startup; this builtin lets Slag re-run it
+        // on demand. Idempotent — writes the same flag bytes each time.
+        else if (strcmp(member, "simd_detect") == 0) {
+            emit(cg, "    ; cpu.simd_detect");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call _slag_detect_simd");
+            emit(cg, "    add  rsp, 32");
+            emit(cg, "    mov  rax, 1");
+        }
+        // cpu.has_<feature>() -> int (0 or 1); single byte load of a flag.
+        else if (strcmp(member, "has_sse") == 0) {
+            emit(cg, "    ; cpu.has_sse");
+            emit(cg, "    movzx rax, byte [_simd_f_sse]");
+        }
+        else if (strcmp(member, "has_sse2") == 0) {
+            emit(cg, "    ; cpu.has_sse2");
+            emit(cg, "    movzx rax, byte [_simd_f_sse2]");
+        }
+        else if (strcmp(member, "has_sse3") == 0) {
+            emit(cg, "    ; cpu.has_sse3");
+            emit(cg, "    movzx rax, byte [_simd_f_sse3]");
+        }
+        else if (strcmp(member, "has_ssse3") == 0) {
+            emit(cg, "    ; cpu.has_ssse3");
+            emit(cg, "    movzx rax, byte [_simd_f_ssse3]");
+        }
+        else if (strcmp(member, "has_sse41") == 0) {
+            emit(cg, "    ; cpu.has_sse41");
+            emit(cg, "    movzx rax, byte [_simd_f_sse41]");
+        }
+        else if (strcmp(member, "has_sse42") == 0) {
+            emit(cg, "    ; cpu.has_sse42");
+            emit(cg, "    movzx rax, byte [_simd_f_sse42]");
+        }
+        else if (strcmp(member, "has_fma") == 0) {
+            emit(cg, "    ; cpu.has_fma");
+            emit(cg, "    movzx rax, byte [_simd_f_fma]");
+        }
+        else if (strcmp(member, "has_avx") == 0) {
+            emit(cg, "    ; cpu.has_avx");
+            emit(cg, "    movzx rax, byte [_simd_f_avx]");
+        }
+        else if (strcmp(member, "has_avx2") == 0) {
+            emit(cg, "    ; cpu.has_avx2");
+            emit(cg, "    movzx rax, byte [_simd_f_avx2]");
+        }
+        else if (strcmp(member, "has_avx512f") == 0) {
+            emit(cg, "    ; cpu.has_avx512f");
+            emit(cg, "    movzx rax, byte [_simd_f_avx512f]");
         }
         // bit.shl(value, count) -> int (left shift)
         else if (strcmp(member, "shl") == 0) {
@@ -3307,6 +3374,24 @@ static void emit_data_section(Codegen *cg) {
     emit(cg, "_cpu_hyperthreaded:    dq 0   ; 1 if any core reports LTP_PC_SMT, else 0");
     emit(cg, "");
 
+    // SIMD feature flags (populated by _slag_detect_simd at startup).
+    // Each byte is 0/1. _simd_flags is a contiguous array indexed by the
+    // SIMD_* constants below (kept in sync with the spec); the named
+    // labels alias into it so cpu.has_*() can do a single byte load.
+    emit(cg, "_simd_flags:");
+    emit(cg, "_simd_f_sse:      db 0   ; [0] SSE");
+    emit(cg, "_simd_f_sse2:     db 0   ; [1] SSE2");
+    emit(cg, "_simd_f_sse3:     db 0   ; [2] SSE3");
+    emit(cg, "_simd_f_ssse3:    db 0   ; [3] SSSE3");
+    emit(cg, "_simd_f_sse41:    db 0   ; [4] SSE4.1");
+    emit(cg, "_simd_f_sse42:    db 0   ; [5] SSE4.2");
+    emit(cg, "_simd_f_fma:      db 0   ; [6] FMA");
+    emit(cg, "_simd_f_avx:      db 0   ; [7] AVX (OS-enabled)");
+    emit(cg, "_simd_f_avx2:     db 0   ; [8] AVX2 (OS-enabled)");
+    emit(cg, "_simd_f_avx512f:  db 0   ; [9] AVX-512F (OS-enabled)");
+    emit(cg, "_simd_flags_count equ 10");
+    emit(cg, "");
+
     // SIMD constants (RGB565 masks).
     emit_simd_data(cg);
     emit(cg, "");
@@ -3495,6 +3580,7 @@ static void emit_startup(Codegen *cg) {
     emit(cg, "    mov  qword [_window_tls_init], 1");
     emit(cg, "");
     emit(cg, "    call _slag_detect_cpu_topology");
+    emit(cg, "    call _slag_detect_simd");
     emit(cg, "");
     emit(cg, "    mov  rsp, rbp");
     emit(cg, "    pop  rbp");
@@ -3644,6 +3730,131 @@ static void emit_cpu_topology_helper(Codegen *cg) {
 }
 
 // ---------------------------------------------------------------------
+// _slag_detect_simd
+//
+// Populates the _simd_f_* flag bytes via CPUID. Runs at startup and is
+// re-runnable from Slag as cpu.simd_detect().
+//
+// Sources:
+//   leaf 1  -> EDX bit 25 SSE, 26 SSE2; ECX bit 0 SSE3, 9 SSSE3,
+//              19 SSE4.1, 20 SSE4.2, 12 FMA, 27 OSXSAVE, 28 AVX
+//   leaf 7,0-> EBX bit 5 AVX2, 16 AVX-512F
+//
+// AVX/AVX2/AVX-512 are gated on the OS having enabled YMM/ZMM state:
+// OSXSAVE (leaf1 ECX bit 27) must be set, then XGETBV(XCR0) must report
+// XMM(1)+YMM(2); AVX-512 additionally needs OPMASK(5)+ZMM_hi256(6)+
+// ZMM16-31(7). Without this an AVX instruction faults (#UD) on a CPU
+// whose OS never turned the state on. cpuid/xgetbv clobber RBX (a Win64
+// nonvolatile), so it is saved and restored.
+// ---------------------------------------------------------------------
+static void emit_simd_detect_helper(Codegen *cg) {
+    emit(cg, "; --- _slag_detect_simd ---");
+    emit(cg, "_slag_detect_simd:");
+    emit(cg, "    push rbp");
+    emit(cg, "    mov  rbp, rsp");
+    emit(cg, "    push rbx                 ; nonvolatile; cpuid clobbers it");
+    emit(cg, "    push rsi");
+    emit(cg, "");
+    emit(cg, "    ; ---- leaf 1: legacy SSE/AVX feature bits ----");
+    emit(cg, "    mov  eax, 1");
+    emit(cg, "    xor  ecx, ecx");
+    emit(cg, "    cpuid");
+    emit(cg, "    ; EDX: SSE(25), SSE2(26)");
+    emit(cg, "    mov  esi, edx");
+    emit(cg, "    shr  esi, 25");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    mov  [_simd_f_sse], sil");
+    emit(cg, "    mov  esi, edx");
+    emit(cg, "    shr  esi, 26");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    mov  [_simd_f_sse2], sil");
+    emit(cg, "    ; ECX: SSE3(0), SSSE3(9), SSE4.1(19), SSE4.2(20), FMA(12)");
+    emit(cg, "    mov  esi, ecx");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    mov  [_simd_f_sse3], sil");
+    emit(cg, "    mov  esi, ecx");
+    emit(cg, "    shr  esi, 9");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    mov  [_simd_f_ssse3], sil");
+    emit(cg, "    mov  esi, ecx");
+    emit(cg, "    shr  esi, 19");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    mov  [_simd_f_sse41], sil");
+    emit(cg, "    mov  esi, ecx");
+    emit(cg, "    shr  esi, 20");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    mov  [_simd_f_sse42], sil");
+    emit(cg, "    mov  esi, ecx");
+    emit(cg, "    shr  esi, 12");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    mov  [_simd_f_fma], sil");
+    emit(cg, "");
+    emit(cg, "    ; ---- OS-enabled AVX state check ----");
+    emit(cg, "    ; require OSXSAVE (ECX bit 27) before trusting AVX/AVX2");
+    emit(cg, "    mov  esi, ecx");
+    emit(cg, "    shr  esi, 27");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    jz   .simd_no_avx        ; OS did not enable XSAVE -> no AVX");
+    emit(cg, "    ; also need AVX supported by CPU (ECX bit 28)");
+    emit(cg, "    mov  esi, ecx");
+    emit(cg, "    shr  esi, 28");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    jz   .simd_no_avx");
+    emit(cg, "    ; read XCR0");
+    emit(cg, "    xor  ecx, ecx");
+    emit(cg, "    xgetbv                   ; -> EDX:EAX = XCR0");
+    emit(cg, "    ; XMM(1)+YMM(2) must both be set for AVX");
+    emit(cg, "    mov  esi, eax");
+    emit(cg, "    and  esi, 6              ; bits 1|2");
+    emit(cg, "    cmp  esi, 6");
+    emit(cg, "    jne  .simd_no_avx");
+    emit(cg, "    mov  byte [_simd_f_avx], 1");
+    emit(cg, "    ; keep XCR0 low dword in EDX for the AVX-512 test below");
+    emit(cg, "    mov  edx, eax");
+    emit(cg, "    jmp  .simd_leaf7");
+    emit(cg, ".simd_no_avx:");
+    emit(cg, "    mov  byte [_simd_f_avx],     0");
+    emit(cg, "    mov  byte [_simd_f_avx2],    0");
+    emit(cg, "    mov  byte [_simd_f_avx512f], 0");
+    emit(cg, "    jmp  .simd_done");
+    emit(cg, "");
+    emit(cg, ".simd_leaf7:");
+    emit(cg, "    ; ---- leaf 7, subleaf 0: AVX2 / AVX-512F ----");
+    emit(cg, "    ; edx currently holds XCR0 low dword; preserve across cpuid");
+    emit(cg, "    push rdx");
+    emit(cg, "    mov  eax, 7");
+    emit(cg, "    xor  ecx, ecx");
+    emit(cg, "    cpuid                    ; EBX has the flags");
+    emit(cg, "    pop  rdx                 ; restore XCR0 low");
+    emit(cg, "    ; AVX2 = EBX bit 5 (already OS-AVX gated above)");
+    emit(cg, "    mov  esi, ebx");
+    emit(cg, "    shr  esi, 5");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    mov  [_simd_f_avx2], sil");
+    emit(cg, "    ; AVX-512F = EBX bit 16, AND OS enabled OPMASK(5)+ZMMhi(6)+ZMM16_31(7)");
+    emit(cg, "    mov  esi, ebx");
+    emit(cg, "    shr  esi, 16");
+    emit(cg, "    and  esi, 1");
+    emit(cg, "    jz   .simd_no_avx512");
+    emit(cg, "    mov  eax, edx            ; XCR0 low");
+    emit(cg, "    and  eax, 0xE0           ; bits 5|6|7");
+    emit(cg, "    cmp  eax, 0xE0");
+    emit(cg, "    jne  .simd_no_avx512");
+    emit(cg, "    mov  byte [_simd_f_avx512f], 1");
+    emit(cg, "    jmp  .simd_done");
+    emit(cg, ".simd_no_avx512:");
+    emit(cg, "    mov  byte [_simd_f_avx512f], 0");
+    emit(cg, "");
+    emit(cg, ".simd_done:");
+    emit(cg, "    pop  rsi");
+    emit(cg, "    pop  rbx");
+    emit(cg, "    mov  rsp, rbp");
+    emit(cg, "    pop  rbp");
+    emit(cg, "    ret");
+    emit(cg, "");
+}
+
+// ---------------------------------------------------------------------
 // Entry point: _start / WinMain stub
 //
 // Win64 PE console entry point. Calls _slag_startup then main,
@@ -3758,6 +3969,7 @@ void codegen_program(const Program *prog, FILE *out) {
     // Runtime helpers.
     emit_runtime_helpers(&cg);
     emit_cpu_topology_helper(&cg);
+    emit_simd_detect_helper(&cg);
     emit_window_runtime(&cg, &ev_flags);
     emit_net_runtime(&cg);
     emit_mem_runtime(&cg);

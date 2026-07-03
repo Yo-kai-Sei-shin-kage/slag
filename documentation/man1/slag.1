@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-07-02" "slag 0.12" "Slag Programming Language"
+.TH SLAG 1 "2026-07-03" "slag 0.13" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -263,7 +263,9 @@ RGB565 format (2 bytes per pixel, RRRRRGGG GGGBBBBB).
 .BI fill_triangle_persp( x0 , " y0" , " z0" , " u0" , " v0" ", ..." , " tex_ptr" , " tex_w" , " tex_h" )
 PS2-style perspective-correct texture-mapped triangle. Interpolates 1/z,
 u/z, v/z and divides to recover true UV coordinates, eliminating texture
-warping on angled surfaces.
+warping on angled surfaces. The inner loop corrects perspective every 8
+pixels and interpolates UV affinely between (classic PS2 subdivision,
+~20x fewer divisions), writing each pixel as a single 32-bit BGRA store.
 .TP
 .BI fill_triangle_pcolor( verts , " tex_ptr" , " tex_w" , " tex_h" )
 Perspective-correct textured triangle with per-vertex colors. The
@@ -318,6 +320,16 @@ fails, all
 values fall back to 1 and
 .B cpu.hyperthreaded()
 returns 0.
+.TP
+.B cpu.simd_detect()
+Re-runs CPUID/XGETBV SIMD feature detection (also run automatically at
+startup); idempotent, returns 1.
+.TP
+.BR cpu.has_sse() ", " cpu.has_sse2() ", " cpu.has_sse3() ", " cpu.has_ssse3() ", " cpu.has_sse41() ", " cpu.has_sse42() ", " cpu.has_fma() ", " cpu.has_avx() ", " cpu.has_avx2() ", " cpu.has_avx512f()
+Return 1 if the named instruction-set extension is present, else 0. The
+AVX, AVX2, and AVX\-512F predicates additionally require OS\-enabled
+register state (OSXSAVE plus XCR0), so they return 0 when the CPU
+supports the ISA but the OS has not enabled it.
 .SS Concurrency
 .B "thread { ... }"
 spawns a Win32 thread running the block body; the body is compiled to a
@@ -357,6 +369,11 @@ Store / load a single byte at a byte offset.
 .TP
 .BR mem.poke64(ptr,byteoff,val) ", " mem.peek64(ptr,byteoff)
 Store / load 8 bytes at a byte offset.
+.TP
+.BI mem.pokef32( ptr , " byteoff" , " floatval" )
+Store a 32-bit float at a byte offset (narrowed from Slag's 64-bit
+double). Lets SIMD vec4 buffers be filled with readable float literals
+instead of hand-packed IEEE-754 bit patterns.
 .SS Bit manipulation
 .TP
 .B bit.shl(value,count)

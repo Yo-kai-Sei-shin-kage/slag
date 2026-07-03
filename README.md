@@ -41,6 +41,7 @@ Slag is under active development. The pipeline currently supports:
     - `cpu.threads_per_core()` — logical / physical cores
     - `cpu.safe_thread_limit()` — logical cores − 1 (minimum 1), a conservative upper bound for worker thread count
     - `cpu.hyperthreaded()` — 1 if SMT/Hyper-Threading is active on any core (detected via `ProcessorCore.Flags`), 0 otherwise. Falls back to all-1s / hyperthreaded=0 if the API call fails
+    - `cpu.simd_detect()` — re-runs CPUID/XGETBV SIMD feature detection (also run automatically at startup); returns 1. Predicates `cpu.has_sse()`, `has_sse2/sse3/ssse3/sse41/sse42()`, `has_fma()`, `has_avx()`, `has_avx2()`, `has_avx512f()` each return 1/0. AVX/AVX2/AVX-512F additionally require OS-enabled register state (OSXSAVE + XCR0), so they report 0 if the CPU supports the ISA but the OS has not enabled it
   - **Concurrency — `thread` / `sync` / `lock`**:
     - `thread { ... }` — spawns a real Win32 thread; the block body is compiled to a standalone thread proc and launched via `CreateThread`, with the handle stored in an internal table (up to 64 outstanding threads between syncs)
     - `sync { ... }` — waits for all threads spawned since the last sync via `WaitForMultipleObjects(..., TRUE, INFINITE)`, closes their handles, and resets the table; the sync body runs after the wait
@@ -50,6 +51,7 @@ Slag is under active development. The pipeline currently supports:
     - `mem.free(ptr)` — `HeapFree`
     - `mem.poke8(ptr, byteoff, val)` / `mem.peek8(ptr, byteoff)` — single-byte store/load at a byte offset (for network/crypto byte streams)
     - `mem.poke64(ptr, byteoff, val)` / `mem.peek64(ptr, byteoff)` — 8-byte store/load at a byte offset (for bulk moves and bignum limbs)
+    - `mem.pokef32(ptr, byteoff, floatval)` — store a 32-bit float at a byte offset (narrowed from Slag's 64-bit double). Lets SIMD vec4 buffers be filled with readable literals, e.g. `mem.pokef32(a, 0, 1.0)`, instead of hand-packed IEEE-754 bit patterns
   - **Bit manipulation — `bit.*`** (inlined to single CPU instructions, no function-call overhead):
     - `bit.shl(val, count)` — left shift; enables 16.16 fixed-point: `bit.shl(n, 16)` converts int to fixed
     - `bit.shr(val, count)` — unsigned right shift; `bit.shr(fixed, 16)` converts fixed to int
@@ -92,7 +94,7 @@ Slag is under active development. The pipeline currently supports:
     - `fill_triangle_gradient(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)` — per-vertex color (Gouraud-style) scanline rasterizer with linear interpolation along edges and across spans (smooth color blending across a triangle's interior)
     - `fill_triangle_z(x0,y0,z0, x1,y1,z1, x2,y2,z2, r,g,b)` — depth-tested triangle rasterizer; x/y are int screen coords, z values are float depth; pixels only drawn if closer than existing z-buffer value
     - `fill_triangle_affine(x0,y0,u0,v0, x1,y1,u1,v1, x2,y2,u2,v2, tex_ptr,tex_w,tex_h)` — PS1-style affine texture-mapped triangle; UV coords interpolated linearly (no perspective correction); texture is RGB565 format (2 bytes/pixel)
-    - `fill_triangle_persp(x0,y0,z0,u0,v0, x1,y1,z1,u1,v1, x2,y2,z2,u2,v2, tex_ptr,tex_w,tex_h)` — PS2-style perspective-correct texture-mapped triangle; interpolates 1/z, u/z, v/z for correct texture mapping on angled surfaces
+    - `fill_triangle_persp(x0,y0,z0,u0,v0, x1,y1,z1,u1,v1, x2,y2,z2,u2,v2, tex_ptr,tex_w,tex_h)` — PS2-style perspective-correct texture-mapped triangle; interpolates 1/z, u/z, v/z for correct texture mapping on angled surfaces. The inner loop corrects perspective every 8 pixels and interpolates UV affinely between (classic PS2 subdivision, ~20× fewer divisions), writing each pixel as a single 32-bit BGRA store
     - `fill_triangle_pcolor(verts, tex_ptr,tex_w,tex_h)` — perspective-correct textured triangle with per-vertex colors; verts is pointer to 24 int64s (3 vertices × 8 values: x,y,z,u,v,r,g,b); texture color multiplied by interpolated vertex color
     - `zbuffer.clear()` — resets the z-buffer to max depth (call at start of each frame)
     - `time.now_ms()` — milliseconds since system start (`GetTickCount`), useful for fps counters and frame timing

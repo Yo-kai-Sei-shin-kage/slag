@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.11**
+**Version 0.13**
 
 ---
 
@@ -359,6 +359,34 @@ cpu.hyperthreaded()       // int — 1 if SMT detected on any core, 0 otherwise
 
 If `GetLogicalProcessorInformation` fails, all `cpu.*` values fall back to 1 and `cpu.hyperthreaded()` returns 0.
 
+#### SIMD feature detection — `cpu.simd_detect()` / `cpu.has_*()`
+
+At startup Slag also runs `CPUID` (leaf 1 and leaf 7) plus an `XGETBV`/`OSXSAVE`
+check for OS-enabled AVX state, populating a set of read-only feature flags.
+`cpu.simd_detect()` re-runs the probe on demand (it also runs automatically before
+`main`); it is idempotent and returns `1`. Each predicate returns `1` if the
+feature is present (and, for AVX/AVX2/AVX-512F, OS-enabled) or `0`:
+
+```slag
+cpu.simd_detect()   // re-run CPUID feature detection; returns 1
+cpu.has_sse()       // SSE
+cpu.has_sse2()      // SSE2
+cpu.has_sse3()      // SSE3
+cpu.has_ssse3()     // SSSE3
+cpu.has_sse41()     // SSE4.1
+cpu.has_sse42()     // SSE4.2
+cpu.has_fma()       // FMA
+cpu.has_avx()       // AVX  (OS-enabled)
+cpu.has_avx2()      // AVX2 (OS-enabled)
+cpu.has_avx512f()   // AVX-512 Foundation (OS-enabled)
+```
+
+AVX/AVX2/AVX-512F require both the CPUID feature bit **and** OS support for the
+wider register state (`OSXSAVE` set and `XCR0` reporting XMM/YMM — plus opmask and
+ZMM for AVX-512), so a predicate returns `0` when the CPU supports the ISA but the
+OS has not enabled its register state. Each predicate compiles to a single
+zero-extended byte load.
+
 ### 11.2 Thread Blocks
 
 ```
@@ -498,7 +526,7 @@ PS1-style affine texture-mapped triangle. UV coordinates are linearly interpolat
 fill_triangle_persp(x0, y0, z0, u0, v0, x1, y1, z1, u1, v1, x2, y2, z2, u2, v2, tex_ptr, tex_w, tex_h);
 ```
 
-PS2-style perspective-correct texture-mapped triangle. Interpolates 1/z, u/z, v/z per scanline and divides to recover true UV coordinates, eliminating texture warping on angled surfaces.
+PS2-style perspective-correct texture-mapped triangle. Interpolates 1/z, u/z, v/z per scanline. To keep the inner loop division-light, perspective is corrected exactly once every 8 pixels and UV is interpolated affinely between those points (the classic PS2 subdivision) — reducing per-pixel divisions ~20× versus per-pixel correction, with sub-pixel drift that is imperceptible at normal triangle sizes. Each pixel is written as a single 32-bit BGRA store.
 
 ```
 fill_triangle_pcolor(verts, tex_ptr, tex_w, tex_h);
@@ -657,6 +685,10 @@ Per-face Lambertian lighting can be implemented in Slag: compute each face norma
     store/load at a byte offset
   - `mem.poke64(ptr, byteoff, val)` / `mem.peek64(ptr, byteoff)` — 8-byte
     store/load at a byte offset
+  - `mem.pokef32(ptr, byteoff, floatval)` — store a 32-bit float at a byte
+    offset (the float is narrowed from Slag's 64-bit double via `cvtsd2ss`).
+    Lets SIMD vec4 buffers be filled with readable float literals, e.g.
+    `mem.pokef32(a, 0, 1.0)`, instead of hand-packed IEEE-754 bit patterns
 - Accessors are **unchecked** and **inlined** — each `peek`/`poke` compiles to a single `mov` emitted directly at the call site (no function-call overhead), benchmarked at ~0.3 ns/op, comparable to native array access.
   Bounds are the programmer's responsibility (as in C). `alloc` returning `0`
   is the only built-in safety signal
@@ -859,6 +891,10 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `cpu.threads_per_core()`        | Logical / physical cores                           |
 | `cpu.safe_thread_limit()`       | Logical cores − 1 (min 1)                         |
 | `cpu.hyperthreaded()`           | 1 if SMT active, 0 otherwise                       |
+| `cpu.simd_detect()`             | Re-run CPUID SIMD detection (auto-run at startup)  |
+| `cpu.has_sse/sse2/sse3/ssse3()` | ISA feature flag (1/0)                             |
+| `cpu.has_sse41/sse42/fma()`     | ISA feature flag (1/0)                             |
+| `cpu.has_avx/avx2/avx512f()`    | ISA feature flag, OS-enabled (1/0)                 |
 | `input.drag_x/y()`             | Accumulated drag offset                            |
 | `input.add_drag(dx,dy)`         | Accumulate drag delta                              |
 | `input.is_dragging()`           | Drag state flag                                    |
@@ -875,6 +911,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `mem.peek8(ptr,off)`            | Load byte at ptr[off] -> int                       |
 | `mem.poke64(ptr,byteoff,v)`     | Store 8 bytes at ptr + byteoff                     |
 | `mem.peek64(ptr,byteoff)`       | Load 8 bytes at ptr + byteoff -> int               |
+| `mem.pokef32(ptr,byteoff,f)`    | Store 32-bit float at ptr + byteoff                |
 | `bit.shl(val,count)`            | Left shift (inlined to shl instruction)            |
 | `bit.shr(val,count)`            | Unsigned right shift (inlined to shr instruction)  |
 | `mat.identity()`                | Reset current matrix to identity                   |
@@ -1030,9 +1067,10 @@ function main() {
 | 0.10    | Matrix stack (mat.*), affine texture mapping, BMP loading, mesh management, procedural textures (tex.*) | ✅ Complete |
 | 0.11    | Perspective-correct texture mapping (fill_triangle_persp, fill_triangle_pcolor) | ✅ Complete |
 | 0.12    | Backface culling on all fill_triangle* variants, window.clear/window.text (GDI overlay text), `global`/`local` as the sole declaration syntax (removed `var` and `$((...))`), mem.peek64/poke64 changed to byte-offset addressing | ✅ Complete |
-| 0.13    | Per-triangle alpha blending, near-plane triangle clipping   | 🔲 Planned  |
-| 0.14    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
-| 0.15    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
+| 0.13    | Runtime SIMD detection (`cpu.simd_detect`/`cpu.has_*` via CPUID+XGETBV), `mem.pokef32`, perspective rasterizer inner-loop optimization (8px UV subdivision, single-store BGRA writes) | ✅ Complete |
+| 0.14    | Per-triangle alpha blending, near-plane triangle clipping   | 🔲 Planned  |
+| 0.15    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
+| 0.16    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ### PS2-Era Graphics Target (60fps)
@@ -1059,4 +1097,4 @@ To achieve PS2-era rendering at 60fps, the following features are required:
 
 ---
 
-*Slag Language Specification v0.12 — Subject to revision*
+*Slag Language Specification v0.13 — Subject to revision*

@@ -1,4 +1,4 @@
-// window_runtime.c — Slag Win32 windowing runtime emitter
+﻿// window_runtime.c â€” Slag Win32 windowing runtime emitter
 //
 // Emits NASM x86-64 Win64 assembly for the window subsystem.
 // Included into the build alongside codegen.c.
@@ -9,7 +9,7 @@
 //   - window.flush() posts WM_USER+1 to the window thread for BitBlt
 //   - window.close() posts WM_CLOSE to the window
 //   - _window_open flag is set/cleared by the window thread (volatile qword)
-//   - Event handlers are weak-linked — user on key_down { } etc. override them
+//   - Event handlers are weak-linked â€” user on key_down { } etc. override them
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,7 +19,7 @@
 #include "codegen_internal.h"
 #include "window_runtime.h"
 
-// Convenience macro — uses cg_emit from codegen_internal
+// Convenience macro â€” uses cg_emit from codegen_internal
 #define E(fmt, ...) cg_emit(cg, fmt, ##__VA_ARGS__)
 
 // ---------------------------------------------------------------------
@@ -424,10 +424,10 @@ static void emit_window_thread_proc(Codegen *cg) {
 //
 // Gets window state struct from GWLP_USERDATA.
 // Handles:
-//   WM_DESTROY   — post quit, clear open flag
-//   WM_PAINT     — BitBlt DIB to window
-//   WM_USER_FLUSH— BitBlt DIB to window (from window.flush())
-//   WM_KEYDOWN/UP, WM_MOUSE* — call event handlers
+//   WM_DESTROY   â€” post quit, clear open flag
+//   WM_PAINT     â€” BitBlt DIB to window
+//   WM_USER_FLUSHâ€” BitBlt DIB to window (from window.flush())
+//   WM_KEYDOWN/UP, WM_MOUSE* â€” call event handlers
 // ---------------------------------------------------------------------
 static void emit_wndproc(Codegen *cg) {
     E("; --- _slag_wndproc ---");
@@ -500,7 +500,7 @@ static void emit_wndproc(Codegen *cg) {
     E("    jmp  .wndproc_ret");
     E("");
 
-    // WM_PAINT and WM_USER_FLUSH — BitBlt DIB to window
+    // WM_PAINT and WM_USER_FLUSH â€” BitBlt DIB to window
     E(".wndproc_paint:");
     E(".wndproc_flush:");
     E("    ; BitBlt(hdc, 0, 0, w, h, memdc, 0, 0, SRCCOPY)");
@@ -548,7 +548,7 @@ static void emit_wndproc(Codegen *cg) {
     E("    jmp  .wndproc_ret");
     E("");
 
-    // WM_MOUSEMOVE — lParam: low word = x, high word = y
+    // WM_MOUSEMOVE â€” lParam: low word = x, high word = y
     E(".wndproc_mousemove:");
     E("    mov  rcx, r15");
     E("    movsx rdx, cx              ; low 16 = x");
@@ -658,7 +658,7 @@ static void emit_wndproc(Codegen *cg) {
     E("    jmp  .wndproc_ret");
     E("");
 
-    // WM_MOUSEWHEEL — wParam high word = signed delta (multiples of 120)
+    // WM_MOUSEWHEEL â€” wParam high word = signed delta (multiples of 120)
     E(".wndproc_mousewheel:");
     E("    mov  rcx, r14              ; wParam");
     E("    shr  rcx, 16");
@@ -701,13 +701,13 @@ static void emit_wndproc(Codegen *cg) {
 }
 
 // ---------------------------------------------------------------------
-// _slag_window_flush() — posts WM_USER_FLUSH to window thread
-// _slag_window_close() — posts WM_CLOSE to window
-// _slag_pixel(x, y, r, g, b) — writes BGRA pixel to DIB buffer
+// _slag_window_flush() â€” posts WM_USER_FLUSH to window thread
+// _slag_window_close() â€” posts WM_CLOSE to window
+// _slag_pixel(x, y, r, g, b) â€” writes BGRA pixel to DIB buffer
 // All use TLS to get current thread's window state struct.
 // ---------------------------------------------------------------------
 static void emit_window_utils(Codegen *cg) {
-    // Helper: _slag_get_window_state — gets struct ptr from TLS into rax
+    // Helper: _slag_get_window_state â€” gets struct ptr from TLS into rax
     E("; --- _slag_get_window_state -> rax ---");
     E("_slag_get_window_state:");
     E("    push rbp");
@@ -1251,7 +1251,6 @@ static void emit_window_utils(Codegen *cg) {
     E("    pop  rbp");
     E("    ret");
     E("");
-
     //   -136 x_long (16.16 fixed)   -144 x_short (16.16 fixed)
     //   -152 dx_long (16.16 slope)  -160 dx_short (16.16 slope)
     //   -168 packed_color
@@ -2967,7 +2966,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    push rbp");
     E("    mov  rbp, rsp");
     E("    push rbx");
-    E("    sub  rsp, 400");
+    E("    sub  rsp, 464   ; +64 for 8px-subdivision affine state (slots -392..-464)");
     E("    mov  [rbp-344], r12");
     E("    mov  [rbp-352], r13");
     E("    mov  [rbp-360], r14");
@@ -3323,41 +3322,95 @@ static void emit_window_utils(Codegen *cg) {
     E("    sub rax, [rbp-280]");
     E("    cvtsi2sd xmm7, rax");
     E("    mov r15, [rbp-280]");
-    E(".ftp_px:");
+    E("    ; ===== 8px-subdivided perspective (PS2-style) =====");
+    E("    ; Exact perspective u,v are computed only at block boundaries");
+    E("    ; (every 8 px). Within a block u,v step affinely by du,dv, so the");
+    E("    ; 2 perspective divides amortize over 8 px instead of per-pixel.");
+    E("    ; Persistent across inner loop:");
+    E("    ;   [rbp-392]=u_cur [rbp-400]=v_cur [rbp-408]=du [rbp-416]=dv");
+    E("    ;   r15=x  r14=scanline_base  xmm7=spanlen(double)  [rbp-288]=xr");
+    E("    ; Helper .ftp_uvat: rcx = pixel offset from xl -> xmm1=u,xmm2=v (double)");
+    E("    jmp .ftp_blk");
+    E("");
+    E("    ; --- inline: exact u,v at offset rcx (falls through to caller via ret-less design) ---");
+    E("    ; implemented as straight-line code at each call site below");
+    E("");
+    E(".ftp_blk:");
     E("    cmp r15, [rbp-288]");
     E("    jg .ftp_pxd");
+    E("    ; block start: exact u,v at current pixel (offset = r15 - xl)");
     E("    mov rcx, r15");
     E("    sub rcx, [rbp-280]");
+    E("    call .ftp_uvat            ; -> xmm1=u0, xmm2=v0 (double)");
+    E("    movsd [rbp-392], xmm1     ; u_cur");
+    E("    movsd [rbp-400], xmm2     ; v_cur");
+    E("    ; determine block end pixel: min(r15+8, xr+1) ; blocklen = end - r15");
+    E("    mov r8, r15");
+    E("    add r8, 8");
+    E("    mov r9, [rbp-288]");
+    E("    inc r9                    ; xr+1 (one past last)");
+    E("    cmp r8, r9");
+    E("    jle .ftp_blk_end_ok");
+    E("    mov r8, r9");
+    E(".ftp_blk_end_ok:");
+    E("    ; blocklen = r8 - r15  (1..8)");
+    E("    mov r10, r8");
+    E("    sub r10, r15              ; r10 = blocklen");
+    E("    ; exact u,v at (r8 - xl) i.e. one past block last pixel offset");
+    E("    mov rcx, r8");
+    E("    sub rcx, [rbp-280]");
+    E("    call .ftp_uvat            ; -> xmm1=u_end, xmm2=v_end");
+    E("    ; du = (u_end - u_cur)/blocklen ; dv likewise");
+    E("    cvtsi2sd xmm6, r10        ; blocklen as double");
+    E("    movsd xmm3, xmm1");
+    E("    subsd xmm3, [rbp-392]");
+    E("    divsd xmm3, xmm6");
+    E("    movsd [rbp-408], xmm3     ; du");
+    E("    movsd xmm3, xmm2");
+    E("    subsd xmm3, [rbp-400]");
+    E("    divsd xmm3, xmm6");
+    E("    movsd [rbp-416], xmm3     ; dv");
+    E("    ; r13b = remaining px in block (counter)");
+    E("    mov r13, r10");
+    E(".ftp_inner:");
+    E("    test r13, r13");
+    E("    jz .ftp_blk               ; block done -> next block");
+    E("    ; u,v -> int r8,r9 from affine accumulators, then reuse clamp/fetch/store");
+    E("    cvttsd2si r8, [rbp-392]   ; u");
+    E("    cvttsd2si r9, [rbp-400]   ; v");
+    E("    jmp .ftp_uvx");
+    E("");
+    E("    ; --- helper: exact perspective u,v at offset rcx (double) ---");
+    E("    ; frac = rcx / spanlen ; lerp 1/z,u/z,v/z ; u=(u/z)/(1/z), v=(v/z)/(1/z)");
+    E("    ; clobbers xmm0,xmm1,xmm2,xmm5,xmm6 ; preserves xmm7 and stack");
+    E(".ftp_uvat:");
     E("    cvtsi2sd xmm5, rcx");
     E("    xorpd xmm6, xmm6");
     E("    ucomisd xmm7, xmm6");
-    E("    je .ftp_uvd");
-    E("    divsd xmm5, xmm7");
+    E("    je .ftp_uvat_d");
+    E("    divsd xmm5, xmm7          ; frac");
     E("    movsd xmm0, [rbp-304]");
     E("    subsd xmm0, [rbp-296]");
     E("    mulsd xmm0, xmm5");
-    E("    addsd xmm0, [rbp-296]");
+    E("    addsd xmm0, [rbp-296]     ; 1/z");
     E("    movsd xmm1, [rbp-320]");
     E("    subsd xmm1, [rbp-312]");
     E("    mulsd xmm1, xmm5");
-    E("    addsd xmm1, [rbp-312]");
+    E("    addsd xmm1, [rbp-312]     ; u/z");
     E("    movsd xmm2, [rbp-336]");
     E("    subsd xmm2, [rbp-328]");
     E("    mulsd xmm2, xmm5");
-    E("    addsd xmm2, [rbp-328]");
-    E("    divsd xmm1, xmm0");
-    E("    divsd xmm2, xmm0");
-    E("    cvttsd2si r8, xmm1");
-    E("    cvttsd2si r9, xmm2");
-    E("    jmp .ftp_uvx");
-    E(".ftp_uvd:");
+    E("    addsd xmm2, [rbp-328]     ; v/z");
+    E("    divsd xmm1, xmm0          ; u");
+    E("    divsd xmm2, xmm0          ; v");
+    E("    ret");
+    E(".ftp_uvat_d:");
     E("    movsd xmm0, [rbp-296]");
     E("    movsd xmm1, [rbp-312]");
     E("    movsd xmm2, [rbp-328]");
     E("    divsd xmm1, xmm0");
     E("    divsd xmm2, xmm0");
-    E("    cvttsd2si r8, xmm1");
-    E("    cvttsd2si r9, xmm2");
+    E("    ret");
     E(".ftp_uvx:");
     E("    cmp r8, 0");
     E("    jge .ftp_u0");
@@ -3403,12 +3456,28 @@ static void emit_window_utils(Codegen *cg) {
     E("    add rax, r15");
     E("    shl rax, 2");
     E("    add rax, [rbx + WSTATE_PIXELS]");
-    E("    mov byte [rax], dl");
-    E("    mov byte [rax+1], cl");
-    E("    mov byte [rax+2], r11b");
-    E("    mov byte [rax+3], 0xFF");
+    E("    ; pack BGRA into one dword and store once (was 4 byte stores)");
+    E("    ; dl=B, cl=G, r11b=R (each already 0..255 from RGB565 unpack)");
+    E("    mov  r10d, 0xFF000000     ; A=0xFF");
+    E("    movzx r8d, r11b           ; R");
+    E("    shl  r8d, 16");
+    E("    or   r10d, r8d");
+    E("    movzx r8d, cl             ; G");
+    E("    shl  r8d, 8");
+    E("    or   r10d, r8d");
+    E("    movzx r8d, dl             ; B");
+    E("    or   r10d, r8d");
+    E("    mov  dword [rax], r10d     ; single 32-bit BGRA store");
+    E("    ; advance affine u,v and step within block");
+    E("    movsd xmm3, [rbp-392]");
+    E("    addsd xmm3, [rbp-408]      ; u_cur += du");
+    E("    movsd [rbp-392], xmm3");
+    E("    movsd xmm3, [rbp-400]");
+    E("    addsd xmm3, [rbp-416]      ; v_cur += dv");
+    E("    movsd [rbp-400], xmm3");
     E("    inc r15");
-    E("    jmp .ftp_px");
+    E("    dec r13");
+    E("    jmp .ftp_inner");
     E(".ftp_pxd:");
     E("    mov rax, [rbp-272]");
     E("    inc rax");
@@ -3419,7 +3488,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov r13, [rbp-352]");
     E("    mov r14, [rbp-360]");
     E("    mov r15, [rbp-368]");
-    E("    add rsp, 400");
+    E("    add rsp, 464");
     E("    pop rbx");
     E("    pop rbp");
     E("    ret");
@@ -4129,7 +4198,7 @@ static void emit_fill_triangle_pcolor(Codegen *cg) {
 }
 
 // ---------------------------------------------------------------------
-// Default (stub) event handlers — user on { } blocks override these
+// Default (stub) event handlers â€” user on { } blocks override these
 // ---------------------------------------------------------------------
 static void emit_default_event_handlers(Codegen *cg, const EventHandlerFlags *flags) {
     E("; --- default event handler stubs ---");
