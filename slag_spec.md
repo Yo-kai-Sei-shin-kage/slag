@@ -502,7 +502,7 @@ fill_triangle(x0, y0, x1, y1, x2, y2, r, g, b);
 
 Flat-shaded scanline triangle rasterizer. Writes directly to the framebuffer with no per-pixel call overhead. Bounds-clamped.
 
-`fill_triangle` calls are deferred into a per-frame queue (capacity 65536) rather than drawn immediately; `window.flush()` drains it. Queues below 64 triangles drain sequentially on the calling thread (thread wake/wait overhead isn't worth it at that scale); queues at or above 64 dispatch across a persistent worker pool — lazily spawned on first use, sized from `cpu.safe_thread_limit()` and capped at 32 threads — which splits the framebuffer into horizontal row bands, one band per worker. This is transparent to Slag source: no syntax changed, output is identical, only the rendering of triangle-heavy scenes gets faster on multi-core machines. SIMD-tier dispatch (using `cpu.has_avx2()`/`has_avx512f()` to select wider vectorized inner loops) is not yet implemented; the scanline fill always uses the baseline SSE2 path.
+All six `fill_triangle*` variants share one dispatch path: calls are deferred into a per-frame queue rather than drawn immediately, and `window.flush()` drains it. The queue starts at 1024 entries and doubles via `HeapReAlloc` whenever it fills, so there is no hard cap on triangles queued per frame. Queues below 64 triangles drain sequentially on the calling thread (thread wake/wait overhead isn't worth it at that scale); queues at or above 64 dispatch across a persistent worker pool — lazily spawned on first use, sized from `cpu.safe_thread_limit()` and capped at 32 threads — which splits the framebuffer into horizontal row bands, one band per worker. This is transparent to Slag source: no syntax changed, output is identical, only the rendering of triangle-heavy scenes gets faster on multi-core machines. SIMD-tier dispatch (using `cpu.has_avx2()`/`has_avx512f()` to select wider vectorized inner loops) is not yet implemented; the scanline fill always uses the baseline SSE2 path.
 
 ```
 fill_triangle_gradient(x0, y0, r0, g0, b0,
@@ -544,7 +544,7 @@ Push the DIB buffer to the window surface:
 window.flush();
 ```
 
-Internally calls `BitBlt` to blit the DIB to the window DC. Sleeps ~16ms to cap frame rate to ~60fps. Call once per frame.
+Internally calls `BitBlt` to blit the DIB to the window DC. Rendering is uncapped — no frame-rate limiting is applied, so throughput is bounded only by rasterization and blit cost. Call once per frame.
 
 ### 12.5 Z-Buffer
 
@@ -881,7 +881,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `window.is_open()`              | Returns 1 if window is open                        |
 | `window.clear(r,g,b)`           | Fill framebuffer with a solid color                |
 | `window.text(x,y,val,r,g,b)`    | Draw str/int text at (x,y) via GDI TextOutA        |
-| `window.flush()`                | Drain deferred fill_triangle* queue, blit to window (adaptive ~60fps cap) |
+| `window.flush()`                | Drain deferred fill_triangle* queue, blit to window (uncapped) |
 | `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
 | `window.release_mouse()`        | Release capture, show cursor                       |
 | `window.native()`               | Returns native resolution as "WxH" string          |

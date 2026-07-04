@@ -6,7 +6,7 @@ for bare-metal control on Windows — file processing, multithreaded workloads, 
 graphics.
 
 No CRT is linked into Slag-compiled programs; only the Win32 API (`kernel32`, `user32`, `gdi32`,
-`ws2_32`, `winmm`) is used as needed.
+`ws2_32`) is used as needed.
 
 ## What it can do
 
