@@ -185,7 +185,11 @@ into a
 Create a window of the given dimensions and title, with a BGRA pixel
 framebuffer, running on its own thread. Window state is stored in
 thread-local storage (TLS), so multiple threads can each open their
-own independent window.
+own independent window. Rendering calls (
+.BR fill_triangle* )
+and per-window input state both resolve their target window fresh
+via TLS on every call, so multiple simultaneously open windows do
+not interfere with each other's drawing or input.
 .TP
 .B window.close()
 Request that the open window close.
@@ -561,10 +565,13 @@ on mouse_wheel(int delta) { ... }   // delta is +-120 per notch
 .RE
 .PP
 Handlers not declared by the program default to no-op stubs.
-.SS Shared input state
+.SS Per-window input state
 Because event handlers execute in their own stack frames, separate
 from the main loop, a small set of accessor builtins is provided so
-handlers and the main loop can communicate:
+handlers and the main loop can communicate. This state is stored
+per-window (resolved via TLS, like the framebuffer and z-buffer),
+not in a single shared global, so drag/wheel/last-position/bbox
+state from one window's events never leaks into another window's:
 .PP
 .RS
 .nf

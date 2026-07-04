@@ -130,6 +130,22 @@ static int new_label(Codegen *cg) {
     return cg->label_counter++;
 }
 
+// Resolves the calling thread's window struct into rbx (push rbx first,
+// caller must pop rbx when done). Per-window input.* state lives in that
+// struct's WSTATE_INPUT_* fields, so this must run before touching any of them.
+static void emit_input_resolve_window(Codegen *cg) {
+    int ok = new_label(cg);
+    emit(cg, "    push rbx");
+    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    mov  rcx, [_window_tls_index]");
+    emit(cg, "    call TlsGetValue");
+    emit(cg, "    mov  rbx, rax");
+    emit(cg, "    test rbx, rbx");
+    emit(cg, "    jnz  .L%d", ok);
+    emit(cg, "    mov  rbx, [_window_primary_state]");
+    emit(cg, ".L%d:", ok);
+    emit(cg, "    add  rsp, 32");
+}
 
 // Register a float constant in the .data pool; return its index.
 static int add_float_const(Codegen *cg, double val) {
@@ -1289,70 +1305,90 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    add  rsp, 32");
             emit(cg, "    pop  rbx");
         }
-        // input.drag_x() -> int accumulated drag offset x
+        // input.drag_x() -> int accumulated drag offset x (per-window, resolved via TLS)
         else if (strcmp(member, "drag_x") == 0) {
             emit(cg, "    ; input.drag_x");
-            emit(cg, "    mov  rax, [_input_drag_x]");
+            emit_input_resolve_window(cg);
+            emit(cg, "    mov  rax, [rbx + WSTATE_INPUT_DRAG_X]");
+            emit(cg, "    pop  rbx");
         }
         // input.drag_y() -> int accumulated drag offset y
         else if (strcmp(member, "drag_y") == 0) {
             emit(cg, "    ; input.drag_y");
-            emit(cg, "    mov  rax, [_input_drag_y]");
+            emit_input_resolve_window(cg);
+            emit(cg, "    mov  rax, [rbx + WSTATE_INPUT_DRAG_Y]");
+            emit(cg, "    pop  rbx");
         }
         // input.is_dragging() -> int 0/1
         else if (strcmp(member, "is_dragging") == 0) {
             emit(cg, "    ; input.is_dragging");
-            emit(cg, "    mov  rax, [_input_dragging]");
+            emit_input_resolve_window(cg);
+            emit(cg, "    mov  rax, [rbx + WSTATE_INPUT_DRAGGING]");
+            emit(cg, "    pop  rbx");
         }
         // input.wheel() -> int accumulated wheel delta, resets to 0
         else if (strcmp(member, "wheel") == 0) {
             emit(cg, "    ; input.wheel");
-            emit(cg, "    mov  rax, [_input_wheel]");
-            emit(cg, "    mov  qword [_input_wheel], 0");
+            emit_input_resolve_window(cg);
+            emit(cg, "    mov  rax, [rbx + WSTATE_INPUT_WHEEL]");
+            emit(cg, "    mov  qword [rbx + WSTATE_INPUT_WHEEL], 0");
+            emit(cg, "    pop  rbx");
         }
         // input.set_dragging(v)
         else if (strcmp(member, "set_dragging") == 0) {
             emit(cg, "    ; input.set_dragging");
             if (args->count >= 1) {
+                emit_input_resolve_window(cg);
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    mov  [_input_dragging], rax");
+                emit(cg, "    mov  [rbx + WSTATE_INPUT_DRAGGING], rax");
+                emit(cg, "    pop  rbx");
             }
         }
         // input.add_drag(dx, dy) -- accumulate drag offset
         else if (strcmp(member, "add_drag") == 0) {
             emit(cg, "    ; input.add_drag");
             if (args->count >= 2) {
+                emit_input_resolve_window(cg);
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    add  [_input_drag_x], rax");
+                emit(cg, "    add  [rbx + WSTATE_INPUT_DRAG_X], rax");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    add  [_input_drag_y], rax");
+                emit(cg, "    add  [rbx + WSTATE_INPUT_DRAG_Y], rax");
+                emit(cg, "    pop  rbx");
             }
         }
         // input.add_wheel(delta)
         else if (strcmp(member, "add_wheel") == 0) {
             emit(cg, "    ; input.add_wheel");
             if (args->count >= 1) {
+                emit_input_resolve_window(cg);
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    add  [_input_wheel], rax");
+                emit(cg, "    add  [rbx + WSTATE_INPUT_WHEEL], rax");
+                emit(cg, "    pop  rbx");
             }
         }
         // input.last_x() / input.last_y() -- last recorded mouse position
         else if (strcmp(member, "last_x") == 0) {
             emit(cg, "    ; input.last_x");
-            emit(cg, "    mov  rax, [_input_last_x]");
+            emit_input_resolve_window(cg);
+            emit(cg, "    mov  rax, [rbx + WSTATE_INPUT_LAST_X]");
+            emit(cg, "    pop  rbx");
         }
         else if (strcmp(member, "last_y") == 0) {
             emit(cg, "    ; input.last_y");
-            emit(cg, "    mov  rax, [_input_last_y]");
+            emit_input_resolve_window(cg);
+            emit(cg, "    mov  rax, [rbx + WSTATE_INPUT_LAST_Y]");
+            emit(cg, "    pop  rbx");
         }
         // input.set_last(x, y)
         else if (strcmp(member, "set_last") == 0) {
             emit(cg, "    ; input.set_last");
             if (args->count >= 2) {
+                emit_input_resolve_window(cg);
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    mov  [_input_last_x], rax");
+                emit(cg, "    mov  [rbx + WSTATE_INPUT_LAST_X], rax");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    mov  [_input_last_y], rax");
+                emit(cg, "    mov  [rbx + WSTATE_INPUT_LAST_Y], rax");
+                emit(cg, "    pop  rbx");
             }
         }
         // time.now_ms() -> int milliseconds since system start (GetTickCount)
@@ -1384,14 +1420,16 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "set_bbox") == 0) {
             emit(cg, "    ; input.set_bbox");
             if (args->count >= 4) {
+                emit_input_resolve_window(cg);
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    mov  [_input_bbox_minx], rax");
+                emit(cg, "    mov  [rbx + WSTATE_INPUT_BBOX_MINX], rax");
                 emit_int_expr(cg, args->items[1]);
-                emit(cg, "    mov  [_input_bbox_miny], rax");
+                emit(cg, "    mov  [rbx + WSTATE_INPUT_BBOX_MINY], rax");
                 emit_int_expr(cg, args->items[2]);
-                emit(cg, "    mov  [_input_bbox_maxx], rax");
+                emit(cg, "    mov  [rbx + WSTATE_INPUT_BBOX_MAXX], rax");
                 emit_int_expr(cg, args->items[3]);
-                emit(cg, "    mov  [_input_bbox_maxy], rax");
+                emit(cg, "    mov  [rbx + WSTATE_INPUT_BBOX_MAXY], rax");
+                emit(cg, "    pop  rbx");
             }
         }
         // input.in_bbox(mx, my) -> int 1/0
@@ -1400,22 +1438,25 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             if (args->count >= 2) {
                 int fail_label = new_label(cg);
                 int done_label = new_label(cg);
+                emit_input_resolve_window(cg);
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  r10, rax            ; r10 = mx");
                 emit_int_expr(cg, args->items[1]);
                 emit(cg, "    mov  r11, rax            ; r11 = my");
-                emit(cg, "    cmp  r10, [_input_bbox_minx]");
+                emit(cg, "    cmp  r10, [rbx + WSTATE_INPUT_BBOX_MINX]");
                 emit(cg, "    jl   .L%d", fail_label);
-                emit(cg, "    cmp  r10, [_input_bbox_maxx]");
+                emit(cg, "    cmp  r10, [rbx + WSTATE_INPUT_BBOX_MAXX]");
                 emit(cg, "    jg   .L%d", fail_label);
-                emit(cg, "    cmp  r11, [_input_bbox_miny]");
+                emit(cg, "    cmp  r11, [rbx + WSTATE_INPUT_BBOX_MINY]");
                 emit(cg, "    jl   .L%d", fail_label);
-                emit(cg, "    cmp  r11, [_input_bbox_maxy]");
+                emit(cg, "    cmp  r11, [rbx + WSTATE_INPUT_BBOX_MAXY]");
                 emit(cg, "    jg   .L%d", fail_label);
                 emit(cg, "    mov  rax, 1");
+                emit(cg, "    pop  rbx");
                 emit(cg, "    jmp  .L%d", done_label);
                 emit(cg, ".L%d:", fail_label);
                 emit(cg, "    mov  rax, 0");
+                emit(cg, "    pop  rbx");
                 emit(cg, ".L%d:", done_label);
             } else {
                 emit(cg, "    mov  rax, 0");

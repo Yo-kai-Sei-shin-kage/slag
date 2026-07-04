@@ -504,6 +504,8 @@ Flat-shaded scanline triangle rasterizer. Writes directly to the framebuffer wit
 
 All six `fill_triangle*` variants share one dispatch path: calls are deferred into a per-frame queue rather than drawn immediately, and `window.flush()` drains it. The queue starts at 1024 entries and doubles via `HeapReAlloc` whenever it fills, so there is no hard cap on triangles queued per frame. Queues below 64 triangles drain sequentially on the calling thread (thread wake/wait overhead isn't worth it at that scale); queues at or above 64 dispatch across a persistent worker pool — lazily spawned on first use, sized from `cpu.safe_thread_limit()` and capped at 32 threads — which splits the framebuffer into horizontal row bands, one band per worker. This is transparent to Slag source: no syntax changed, output is identical, only the rendering of triangle-heavy scenes gets faster on multi-core machines. SIMD-tier dispatch (using `cpu.has_avx2()`/`has_avx512f()` to select wider vectorized inner loops) is not yet implemented; the scanline fill always uses the baseline SSE2 path.
 
+`fill_triangle` (the flat-shaded variant) resolves its target window fresh via TLS on every call rather than caching the pointer across calls, so drawing to multiple windows from the same thread always lands on the correct one.
+
 ```
 fill_triangle_gradient(x0, y0, r0, g0, b0,
                        x1, y1, r1, g1, b1,
@@ -601,9 +603,9 @@ on mouse_wheel(int delta) {
 }
 ```
 
-### 12.9 Shared Input State
+### 12.9 Per-Window Input State
 
-Because event handlers execute in their own stack frames, separate from the main loop, a set of accessor builtins is provided:
+Because event handlers execute in their own stack frames, separate from the main loop, a set of accessor builtins is provided so handlers and the main loop can communicate:
 
 ```
 input.drag_x() / input.drag_y()
@@ -615,6 +617,8 @@ input.add_wheel(delta)
 input.set_bbox(minx, miny, maxx, maxy)
 input.in_bbox(mx, my)   // axis-aligned hit test; returns 1 if inside
 ```
+
+This state is stored per-window (in the same TLS-resolved window struct as the framebuffer/z-buffer), not in a single shared global. Each `input.*` call resolves the calling thread's window via TLS before reading or writing, so drag/wheel/last-position/bbox state for one window never leaks into another — each `on mouse_move`/`on mouse_wheel`/etc. handler runs on its owning window's own thread (see 12.1), so `input.*` calls made from within a handler always resolve to that same window.
 
 ---
 

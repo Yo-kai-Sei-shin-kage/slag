@@ -46,7 +46,17 @@ static void emit_window_constants(Codegen *cg) {
     E("WSTATE_READY_EVT   equ 96");
     E("WSTATE_THREAD      equ 104");
     E("WSTATE_MSG         equ 112");
-    E("WSTATE_SIZE        equ 160");
+    E("WSTATE_INPUT_DRAG_X    equ 160  ; per-window input state (was flat globals)");
+    E("WSTATE_INPUT_DRAG_Y    equ 168");
+    E("WSTATE_INPUT_DRAGGING  equ 176");
+    E("WSTATE_INPUT_LAST_X    equ 184");
+    E("WSTATE_INPUT_LAST_Y    equ 192");
+    E("WSTATE_INPUT_WHEEL     equ 200");
+    E("WSTATE_INPUT_BBOX_MINX equ 208");
+    E("WSTATE_INPUT_BBOX_MINY equ 216");
+    E("WSTATE_INPUT_BBOX_MAXX equ 224");
+    E("WSTATE_INPUT_BBOX_MAXY equ 232");
+    E("WSTATE_SIZE        equ 240");
     E("WS_VISIBLE           equ 0x10000000");
     E("WS_EX_APPWINDOW      equ 0x00040000");
     E("CS_HREDRAW           equ 0x0002");
@@ -3978,20 +3988,6 @@ static void emit_window_utils(Codegen *cg) {
     //   -80  ya      -88  yb      -96  yc
     //   -104 xa      -112 xb      -120 xc
     //   -128 y (current scanline)
-    // _slag_render_begin() - cache TLS pointer for fast rendering
-    // Call once per frame before drawing triangles
-    E("; --- _slag_render_begin ---");
-    E("_slag_render_begin:");
-    E("    push rbp");
-    E("    mov  rbp, rsp");
-    E("    sub  rsp, 32");
-    E("    mov  rcx, [_window_tls_index]");
-    E("    call TlsGetValue");
-    E("    mov  [_window_cached_state], rax");
-    E("    add  rsp, 32");
-    E("    pop  rbp");
-    E("    ret");
-    E("");
     //   -136 x_long (16.16 fixed)   -144 x_short (16.16 fixed)
     //   -152 dx_long (16.16 slope)  -160 dx_short (16.16 slope)
     //   -168 packed_color
@@ -4021,10 +4017,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    sub  rax, r10");
     E("    jge  .ft_done");
     E("");
-    E("    ; use cached TLS pointer (lazy init if null)");
-    E("    mov  rbx, [_window_cached_state]");
-    E("    test rbx, rbx");
-    E("    jnz  .ft_have_cache");
+    E("    ; resolve window struct via TLS fresh every call (no stale global cache)");
     E("    mov  [rbp-8],  rcx");
     E("    mov  [rbp-16], rdx");
     E("    mov  [rbp-24], r8");
@@ -4036,12 +4029,10 @@ static void emit_window_utils(Codegen *cg) {
     E("    jnz  .ft_own_tls");
     E("    mov  rbx, [_window_primary_state]  ; empty TLS (worker thread): use primary window");
     E(".ft_own_tls:");
-    E("    mov  [_window_cached_state], rbx");
     E("    mov  rcx, [rbp-8]");
     E("    mov  rdx, [rbp-16]");
     E("    mov  r8,  [rbp-24]");
     E("    mov  r9,  [rbp-32]");
-    E(".ft_have_cache:");
     E("    mov  [rbp-8],  rcx");
     E("    mov  [rbp-16], rdx");
     E("    mov  [rbp-24], r8");
@@ -5650,8 +5641,6 @@ void emit_window_bss(Codegen *cg) {
     E("; Per-window state is now in TLS-allocated structs");
     E("; Only shared input state remains global");
     E("");
-    E("; --- TLS cache for fast rendering (set by render_begin) ---");
-    E("_window_cached_state: resq 1   ; cached TLS struct ptr for rendering");
     E("_window_primary_state: resq 1  ; first-opened window struct ptr (cross-thread fallback)");
     E("");
     E("; --- deferred fill_triangle queue (drained at window.flush); dynamically");
@@ -5670,17 +5659,7 @@ void emit_window_bss(Codegen *cg) {
     E("_pool_band_lo:       resq MAX_POOL_WORKERS");
     E("_pool_band_hi:       resq MAX_POOL_WORKERS");
     E("");
-    E("; --- shared input state (written by event handlers, read by user code) ---");
-    E("_input_drag_x:       resq 1   ; accumulated drag offset x");
-    E("_input_drag_y:       resq 1   ; accumulated drag offset y");
-    E("_input_dragging:     resq 1   ; 1 while left button held");
-    E("_input_last_x:       resq 1   ; last mouse x (for delta calc)");
-    E("_input_last_y:       resq 1   ; last mouse y");
-    E("_input_wheel:        resq 1   ; accumulated wheel delta");
-    E("_input_bbox_minx:    resq 1");
-    E("_input_bbox_miny:    resq 1");
-    E("_input_bbox_maxx:    resq 1");
-    E("_input_bbox_maxy:    resq 1");
+    E("; input state is now per-window in WSTATE_INPUT_* fields, not global (see codegen.c input.* builtins)");
     E("");
     E("; --- native resolution string buffer ---");
     E("_native_res_buf:     resb 24");
