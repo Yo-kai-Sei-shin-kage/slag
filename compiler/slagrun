@@ -9,32 +9,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 debug=0
 gui=0
-gui_set=0
 while [[ "$1" == -* ]]; do
     case "$1" in
         -d) debug=1; shift ;;
-        -g) gui=1; gui_set=1; shift ;;
-        -c) gui=0; gui_set=1; shift ;;
+        -g) gui=1; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
 base="${1%.slag}"
-
-no_console() {
-    if grep -q 'window\.open' "$base.slag"; then
-        let gui=1
-    fi
-}
-
-if [[ $gui_set -eq 0 ]]; then
-    no_console
-fi
 "$SCRIPT_DIR/slag" "$base.slag"
 nasm -f win64 "$base.asm" -o "$base.obj"
 
 # Build link flags
-LDFLAGS="-nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm"
+LDFLAGS="-nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32"
 if [[ $gui -eq 1 ]]; then
     LDFLAGS="$LDFLAGS -mwindows"
 fi

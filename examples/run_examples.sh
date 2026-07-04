@@ -144,7 +144,7 @@ run_example() {
     fi
 
     echo -e "${CYAN}[3/3]${NC} Linking..."
-    if ! x86_64-w64-mingw32-gcc "$basename.obj" -o "$basename.exe" -nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -mwindows 2>&1; then
+    if ! x86_64-w64-mingw32-gcc "$basename.obj" -o "$basename.exe" -nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32 -mwindows 2>&1; then
         echo -e "${RED}Linking failed!${NC}"
         echo "Press Enter to continue..."
         read

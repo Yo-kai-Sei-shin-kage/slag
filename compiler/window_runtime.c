@@ -80,8 +80,8 @@ static void emit_window_constants(Codegen *cg) {
     E("MK_LBUTTON           equ 0x0001");
     E("MK_RBUTTON           equ 0x0002");
     E("MK_MBUTTON           equ 0x0010");
-    E("FT_QUEUE_MAX         equ 65536  ; max deferred fill_triangle* calls per flush");
-    E("FT_ENTRY_SIZE        equ 264    ; tagged entry: tag(8)+ya_dup(8)+yc_dup(8)+payload(<=240, type-specific, at +24)");
+    E("FT_QUEUE_INITIAL_CAP equ 1024   ; starting capacity (entries); doubles dynamically via HeapReAlloc, no hard cap");
+    E("FT_ENTRY_SIZE        equ 528    ; tagged entry: tag(8)+ya_dup(8)+yc_dup(8)+payload(<=240, type-specific, at +24), doubled from 264 for slack");
     E("FT_TAG_FLAT          equ 0      ; payload is flat-color fill_triangle: xa,ya,xb,yb,xc,yc,color (7 qwords)");
     E("FT_TAG_Z             equ 1      ; payload is fill_triangle_z: xa,ya,za,xb,yb,zb,xc,yc,zc,r,g,b (12 qwords)");
     E("FT_TAG_GRADIENT      equ 2      ; payload is fill_triangle_gradient: A.x,A.y,A.r,A.g,A.b,B.x,B.y,B.r,B.g,B.b,C.x,C.y,C.r,C.g,C.b (15 qwords)");
@@ -117,13 +117,6 @@ static void emit_window_open(Codegen *cg) {
     E("    mov  r12, rcx");
     E("    mov  r13, rdx");
     E("    mov  r14, r8");
-    E("");
-    E("    ; raise system timer resolution to ~1ms so Sleep() in window.flush()");
-    E("    ; can actually honor small values (adaptive frame-cap sleep)");
-    E("    mov  rcx, 1");
-    E("    sub  rsp, 32");
-    E("    call timeBeginPeriod");
-    E("    add  rsp, 32");
     E("");
     E("    ; --- Allocate window state struct (WSTATE_SIZE bytes) ---");
     E("    sub  rsp, 32");
@@ -1340,45 +1333,45 @@ static void emit_fill_triangle_gradient_core(Codegen *cg) {
     E("");
     E("    ; load sorted A,B,C vertices from tri_ptr into locals");
     E("    mov  rax, [r10+0]");
-    E("    mov  [rbp-8],  rax   ; A.x");
+    E("    mov  [rbp-32],  rax   ; A.x");
     E("    mov  rax, [r10+8]");
-    E("    mov  [rbp-16], rax   ; A.y");
+    E("    mov  [rbp-40], rax   ; A.y");
     E("    mov  rax, [r10+16]");
-    E("    mov  [rbp-24], rax   ; A.r");
+    E("    mov  [rbp-48], rax   ; A.r");
     E("    mov  rax, [r10+24]");
-    E("    mov  [rbp-32], rax   ; A.g");
+    E("    mov  [rbp-56], rax   ; A.g");
     E("    mov  rax, [r10+32]");
-    E("    mov  [rbp-40], rax   ; A.b");
+    E("    mov  [rbp-64], rax   ; A.b");
     E("    mov  rax, [r10+40]");
-    E("    mov  [rbp-48], rax   ; B.x");
+    E("    mov  [rbp-72], rax   ; B.x");
     E("    mov  rax, [r10+48]");
-    E("    mov  [rbp-56], rax   ; B.y");
+    E("    mov  [rbp-80], rax   ; B.y");
     E("    mov  rax, [r10+56]");
-    E("    mov  [rbp-64], rax   ; B.r");
+    E("    mov  [rbp-88], rax   ; B.r");
     E("    mov  rax, [r10+64]");
-    E("    mov  [rbp-72], rax   ; B.g");
+    E("    mov  [rbp-96], rax   ; B.g");
     E("    mov  rax, [r10+72]");
-    E("    mov  [rbp-80], rax   ; B.b");
+    E("    mov  [rbp-104], rax   ; B.b");
     E("    mov  rax, [r10+80]");
-    E("    mov  [rbp-88], rax   ; C.x");
+    E("    mov  [rbp-112], rax   ; C.x");
     E("    mov  rax, [r10+88]");
-    E("    mov  [rbp-96], rax   ; C.y");
+    E("    mov  [rbp-120], rax   ; C.y");
     E("    mov  rax, [r10+96]");
-    E("    mov  [rbp-104], rax  ; C.r");
+    E("    mov  [rbp-128], rax  ; C.r");
     E("    mov  rax, [r10+104]");
-    E("    mov  [rbp-112], rax  ; C.g");
+    E("    mov  [rbp-136], rax  ; C.g");
     E("    mov  rax, [r10+112]");
-    E("    mov  [rbp-120], rax  ; C.b");
+    E("    mov  [rbp-144], rax  ; C.b");
     E("");
     E("    ; clamp scanline range to [max(A.y,band_lo), min(C.y,band_hi,height-1)]");
-    E("    mov  rax, [rbp-16]   ; A.y");
+    E("    mov  rax, [rbp-40]   ; A.y");
     E("    cmp  rax, r8         ; band_lo");
     E("    jge  .ftg_ystart_ok");
     E("    mov  rax, r8");
     E(".ftg_ystart_ok:");
-    E("    mov  [rbp-128], rax");
+    E("    mov  [rbp-152], rax");
     E("");
-    E("    mov  r12, [rbp-96]   ; C.y");
+    E("    mov  r12, [rbp-120]   ; C.y");
     E("    cmp  r12, r9         ; band_hi");
     E("    jle  .ftg_yend_band_ok");
     E("    mov  r12, r9");
@@ -1391,39 +1384,39 @@ static void emit_fill_triangle_gradient_core(Codegen *cg) {
     E(".ftg_yend_ok:");
     E("");
     E(".ftg_scanline_loop:");
-    E("    mov  rax, [rbp-128]");
+    E("    mov  rax, [rbp-152]");
     E("    cmp  rax, r12");
     E("    jg   .ftg_done");
     E("");
     E("    ; --- long edge A-C: interpolate x,r,g,b at current y ---");
-    E("    mov  rax, [rbp-96]");
-    E("    sub  rax, [rbp-16]   ; denom = C.y - A.y");
+    E("    mov  rax, [rbp-120]");
+    E("    sub  rax, [rbp-40]   ; denom = C.y - A.y");
     E("    mov  r14, rax        ; r14 = denomAC (0 if degenerate)");
-    E("    mov  r10, [rbp-128]");
-    E("    sub  r10, [rbp-16]   ; r10 = y - A.y");
+    E("    mov  r10, [rbp-152]");
+    E("    sub  r10, [rbp-40]   ; r10 = y - A.y");
     E("");
     E("    ; xLong");
     E("    cmp  r14, 0");
     E("    je   .ftg_long_x_eq");
-    E("    mov  rcx, [rbp-88]");
-    E("    sub  rcx, [rbp-8]    ; C.x - A.x");
+    E("    mov  rcx, [rbp-112]");
+    E("    sub  rcx, [rbp-32]    ; C.x - A.x");
     E("    imul rcx, r10");
     E("    mov  r11, r14");
     E("    mov  rax, rcx");
     E("    cqo");
     E("    idiv r11");
-    E("    add  rax, [rbp-8]");
+    E("    add  rax, [rbp-32]");
     E("    jmp  .ftg_long_x_done");
     E(".ftg_long_x_eq:");
-    E("    mov  rax, [rbp-8]");
+    E("    mov  rax, [rbp-32]");
     E(".ftg_long_x_done:");
-    E("    mov  [rbp-136], rax  ; xLong");
+    E("    mov  [rbp-160], rax  ; xLong");
     E("");
-    E("    ; rLong, gLong, bLong (fields at offset 16,24,32 from x, i.e. A.r/g/b at -24/-32/-40, C.r/g/b at -104/-112/-120)");
+    E("    ; rLong, gLong, bLong (fields at offset 16,24,32 from x, i.e. A.r/g/b at -48/-56/-64, C.r/g/b at -128/-136/-144)");
     for (int f = 0; f < 3; f++) {
-        int a_off = 24 + f*8;   // A.r=-24, A.g=-32, A.b=-40
-        int c_off = 104 + f*8;  // C.r=-104, C.g=-112, C.b=-120
-        int dst_off = 152 + f*8; // rleft/gleft/bleft at -152/-160/-168
+        int a_off = 48 + f*8;   // A.r=-48, A.g=-56, A.b=-64
+        int c_off = 128 + f*8;  // C.r=-128, C.g=-136, C.b=-144
+        int dst_off = 176 + f*8; // rleft/gleft/bleft at -176/-184/-192
         E("    cmp  r14, 0");
         E("    je   .ftg_long_c%d_eq", f);
         E("    mov  rcx, [rbp-%d]", c_off);
@@ -1442,35 +1435,35 @@ static void emit_fill_triangle_gradient_core(Codegen *cg) {
     }
     E("");
     E("    ; --- short edge: A-B for y<B.y, else B-C ---");
-    E("    mov  rax, [rbp-128]");
-    E("    cmp  rax, [rbp-56]   ; y < B.y ?");
+    E("    mov  rax, [rbp-152]");
+    E("    cmp  rax, [rbp-80]   ; y < B.y ?");
     E("    jl   .ftg_short_ab");
     E("");
     E("    ; B-C segment");
-    E("    mov  rax, [rbp-96]");
-    E("    sub  rax, [rbp-56]   ; denom = C.y - B.y");
+    E("    mov  rax, [rbp-120]");
+    E("    sub  rax, [rbp-80]   ; denom = C.y - B.y");
     E("    mov  r14, rax");
-    E("    mov  r10, [rbp-128]");
-    E("    sub  r10, [rbp-56]   ; y - B.y");
+    E("    mov  r10, [rbp-152]");
+    E("    sub  r10, [rbp-80]   ; y - B.y");
     E("    cmp  r14, 0");
     E("    je   .ftg_short_x_bc_eq");
-    E("    mov  rcx, [rbp-88]");
-    E("    sub  rcx, [rbp-48]   ; C.x - B.x");
+    E("    mov  rcx, [rbp-112]");
+    E("    sub  rcx, [rbp-72]   ; C.x - B.x");
     E("    imul rcx, r10");
     E("    mov  r11, r14");
     E("    mov  rax, rcx");
     E("    cqo");
     E("    idiv r11");
-    E("    add  rax, [rbp-48]");
+    E("    add  rax, [rbp-72]");
     E("    jmp  .ftg_short_x_bc_done");
     E(".ftg_short_x_bc_eq:");
-    E("    mov  rax, [rbp-48]");
+    E("    mov  rax, [rbp-72]");
     E(".ftg_short_x_bc_done:");
-    E("    mov  [rbp-144], rax  ; xShort");
+    E("    mov  [rbp-168], rax  ; xShort");
     for (int f = 0; f < 3; f++) {
-        int b_off = 64 + f*8;   // B.r=-64, B.g=-72, B.b=-80
-        int c_off = 104 + f*8;  // C.r=-104, C.g=-112, C.b=-120
-        int dst_off = 176 + f*8; // rright/gright/bright at -176/-184/-192
+        int b_off = 88 + f*8;   // B.r=-88, B.g=-96, B.b=-104
+        int c_off = 128 + f*8;  // C.r=-128, C.g=-136, C.b=-144
+        int dst_off = 200 + f*8; // rright/gright/bright at -200/-208/-216
         E("    cmp  r14, 0");
         E("    je   .ftg_short_bc_c%d_eq", f);
         E("    mov  rcx, [rbp-%d]", c_off);
@@ -1491,30 +1484,30 @@ static void emit_fill_triangle_gradient_core(Codegen *cg) {
     E("");
     E(".ftg_short_ab:");
     E("    ; A-B segment");
-    E("    mov  rax, [rbp-56]");
-    E("    sub  rax, [rbp-16]   ; denom = B.y - A.y");
+    E("    mov  rax, [rbp-80]");
+    E("    sub  rax, [rbp-40]   ; denom = B.y - A.y");
     E("    mov  r14, rax");
-    E("    mov  r10, [rbp-128]");
-    E("    sub  r10, [rbp-16]   ; y - A.y");
+    E("    mov  r10, [rbp-152]");
+    E("    sub  r10, [rbp-40]   ; y - A.y");
     E("    cmp  r14, 0");
     E("    je   .ftg_short_x_ab_eq");
-    E("    mov  rcx, [rbp-48]");
-    E("    sub  rcx, [rbp-8]    ; B.x - A.x");
+    E("    mov  rcx, [rbp-72]");
+    E("    sub  rcx, [rbp-32]    ; B.x - A.x");
     E("    imul rcx, r10");
     E("    mov  r11, r14");
     E("    mov  rax, rcx");
     E("    cqo");
     E("    idiv r11");
-    E("    add  rax, [rbp-8]");
+    E("    add  rax, [rbp-32]");
     E("    jmp  .ftg_short_x_ab_done");
     E(".ftg_short_x_ab_eq:");
-    E("    mov  rax, [rbp-8]");
+    E("    mov  rax, [rbp-32]");
     E(".ftg_short_x_ab_done:");
-    E("    mov  [rbp-144], rax  ; xShort");
+    E("    mov  [rbp-168], rax  ; xShort");
     for (int f = 0; f < 3; f++) {
-        int a_off = 24 + f*8;   // A.r/g/b
-        int b_off = 64 + f*8;   // B.r/g/b
-        int dst_off = 176 + f*8; // rright/gright/bright
+        int a_off = 48 + f*8;   // A.r/g/b
+        int b_off = 88 + f*8;   // B.r/g/b
+        int dst_off = 200 + f*8; // rright/gright/bright
         E("    cmp  r14, 0");
         E("    je   .ftg_short_ab_c%d_eq", f);
         E("    mov  rcx, [rbp-%d]", b_off);
@@ -1534,18 +1527,18 @@ static void emit_fill_triangle_gradient_core(Codegen *cg) {
     E(".ftg_short_done:");
     E("");
     E("    ; --- order xleft/xright (and matching colors) so xleft <= xright ---");
-    E("    mov  rax, [rbp-136]  ; xLong");
-    E("    mov  rcx, [rbp-144]  ; xShort");
+    E("    mov  rax, [rbp-160]  ; xLong");
+    E("    mov  rcx, [rbp-168]  ; xShort");
     E("    cmp  rax, rcx");
     E("    jle  .ftg_minmax_ok");
     E("    mov  r10, rax");
     E("    mov  rax, rcx");
     E("    mov  rcx, r10");
-    E("    mov  [rbp-136], rax");
-    E("    mov  [rbp-144], rcx");
+    E("    mov  [rbp-160], rax");
+    E("    mov  [rbp-168], rcx");
     for (int f = 0; f < 3; f++) {
-        int left_off = 152 + f*8;
-        int right_off = 176 + f*8;
+        int left_off = 176 + f*8;
+        int right_off = 200 + f*8;
         E("    mov  rax, [rbp-%d]", left_off);
         E("    mov  rcx, [rbp-%d]", right_off);
         E("    mov  [rbp-%d], rcx", left_off);
@@ -1553,54 +1546,54 @@ static void emit_fill_triangle_gradient_core(Codegen *cg) {
     }
     E("    jmp  .ftg_xorder_done");
     E(".ftg_minmax_ok:");
-    E("    mov  [rbp-136], rax");
-    E("    mov  [rbp-144], rcx");
+    E("    mov  [rbp-160], rax");
+    E("    mov  [rbp-168], rcx");
     E(".ftg_xorder_done:");
     E("");
     E("    ; clamp xleft/xright to [0, width-1]");
-    E("    mov  rax, [rbp-136]");
+    E("    mov  rax, [rbp-160]");
     E("    cmp  rax, 0");
     E("    jge  .ftg_xleft_ok");
     E("    mov  rax, 0");
-    E("    mov  [rbp-136], rax");
+    E("    mov  [rbp-160], rax");
     E(".ftg_xleft_ok:");
-    E("    mov  rax, [rbp-144]");
+    E("    mov  rax, [rbp-168]");
     E("    mov  rcx, [rbx + WSTATE_WIDTH]");
     E("    dec  rcx");
     E("    cmp  rax, rcx");
     E("    jle  .ftg_xright_ok");
-    E("    mov  [rbp-144], rcx");
+    E("    mov  [rbp-168], rcx");
     E(".ftg_xright_ok:");
     E("");
     E("    ; --- fill span, interpolating color per pixel ---");
-    E("    mov  rax, [rbp-144]");
-    E("    sub  rax, [rbp-136]");
-    E("    mov  [rbp-200], rax  ; span_w");
+    E("    mov  rax, [rbp-168]");
+    E("    sub  rax, [rbp-160]");
+    E("    mov  [rbp-224], rax  ; span_w");
     E("");
-    E("    mov  rax, [rbp-128]  ; y");
+    E("    mov  rax, [rbp-152]  ; y");
     E("    imul rax, [rbx + WSTATE_WIDTH]");
-    E("    mov  [rbp-208], rax  ; y*width");
+    E("    mov  [rbp-232], rax  ; y*width");
     E("");
-    E("    mov  rax, [rbp-136]  ; x = xleft");
-    E("    mov  [rbp-216], rax");
+    E("    mov  rax, [rbp-160]  ; x = xleft");
+    E("    mov  [rbp-240], rax");
     E("");
     E(".ftg_span_loop:");
-    E("    mov  rax, [rbp-216]");
-    E("    cmp  rax, [rbp-144]");
+    E("    mov  rax, [rbp-240]");
+    E("    cmp  rax, [rbp-168]");
     E("    jg   .ftg_span_done");
     E("");
-    E("    mov  rax, [rbp-216]");
-    E("    sub  rax, [rbp-136]  ; t_num = x - xleft");
-    E("    mov  r10, [rbp-200]  ; t_den = span_w");
+    E("    mov  rax, [rbp-240]");
+    E("    sub  rax, [rbp-160]  ; t_num = x - xleft");
+    E("    mov  r10, [rbp-224]  ; t_den = span_w");
     E("    cmp  r10, 0");
     E("    jne  .ftg_pix_den_ok");
     E("    mov  r10, 1");
     E(".ftg_pix_den_ok:");
     E("");
     for (int f = 0; f < 3; f++) {
-        int left_off = 152 + f*8;
-        int right_off = 176 + f*8;
-        int dst_off = 224 + f*8;
+        int left_off = 176 + f*8;
+        int right_off = 200 + f*8;
+        int dst_off = 248 + f*8;
         E("    mov  rcx, [rbp-%d]", right_off);
         E("    sub  rcx, [rbp-%d]", left_off);
         E("    imul rcx, rax");
@@ -1616,31 +1609,31 @@ static void emit_fill_triangle_gradient_core(Codegen *cg) {
         E("    pop  rax");
     }
     E("");
-    E("    mov  r10, [rbp-208]  ; y*width");
-    E("    add  r10, [rbp-216]  ; + x");
+    E("    mov  r10, [rbp-232]  ; y*width");
+    E("    add  r10, [rbp-240]  ; + x");
     E("    shl  r10, 2");
     E("    add  r10, [rbx + WSTATE_PIXELS]");
     E("    ; pack color into single dword: 0xFF | R<<16 | G<<8 | B");
     E("    mov  eax, 0xFF000000");
-    E("    mov  ecx, [rbp-224]  ; R");
+    E("    mov  ecx, [rbp-248]  ; R");
     E("    shl  ecx, 16");
     E("    or   eax, ecx");
-    E("    mov  ecx, [rbp-232]  ; G");
+    E("    mov  ecx, [rbp-256]  ; G");
     E("    shl  ecx, 8");
     E("    or   eax, ecx");
-    E("    mov  ecx, [rbp-240]  ; B");
+    E("    mov  ecx, [rbp-264]  ; B");
     E("    or   eax, ecx");
     E("    mov  dword [r10], eax");
     E("");
-    E("    mov  rax, [rbp-216]");
+    E("    mov  rax, [rbp-240]");
     E("    inc  rax");
-    E("    mov  [rbp-216], rax");
+    E("    mov  [rbp-240], rax");
     E("    jmp  .ftg_span_loop");
     E(".ftg_span_done:");
     E("");
-    E("    mov  rax, [rbp-128]");
+    E("    mov  rax, [rbp-152]");
     E("    inc  rax");
-    E("    mov  [rbp-128], rax");
+    E("    mov  [rbp-152], rax");
     E("    jmp  .ftg_scanline_loop");
     E("");
     E(".ftg_done:");
@@ -2582,11 +2575,11 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
     E("    mov  rax, [r10+208]");
     E("    mov  [rbp-240], rax");
     E("    mov  rax, [r10+216]");
-    E("    mov  [rbp-16], rax   ; tex_ptr");
+    E("    mov  [rbp-576], rax   ; tex_ptr");
     E("    mov  rax, [r10+224]");
-    E("    mov  [rbp-24], rax   ; tex_w");
+    E("    mov  [rbp-584], rax   ; tex_w");
     E("    mov  rax, [r10+232]");
-    E("    mov  [rbp-32], rax   ; tex_h");
+    E("    mov  [rbp-592], rax   ; tex_h");
     E("");
     E("    ; clamp scanline range to [max(ya,band_lo), min(yc,band_hi,height-1)]");
     E("    mov  rax, [rbp-384]       ; ya");
@@ -2946,7 +2939,7 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
     E("    jge  .ftpc_u0");
     E("    xor  r8, r8");
     E(".ftpc_u0:");
-    E("    mov  rax, [rbp-24]");
+    E("    mov  rax, [rbp-584]");
     E("    dec  rax");
     E("    cmp  r8, rax");
     E("    jle  .ftpc_u1");
@@ -2956,7 +2949,7 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
     E("    jge  .ftpc_v0");
     E("    xor  r9, r9");
     E(".ftpc_v0:");
-    E("    mov  rax, [rbp-32]");
+    E("    mov  rax, [rbp-592]");
     E("    dec  rax");
     E("    cmp  r9, rax");
     E("    jle  .ftpc_v1");
@@ -2991,10 +2984,10 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
 
     // Sample texture (RGB565)
     E("    mov  rax, r9");
-    E("    imul rax, [rbp-24]");
+    E("    imul rax, [rbp-584]");
     E("    add  rax, r8");
     E("    shl  rax, 1");
-    E("    add  rax, [rbp-16]");
+    E("    add  rax, [rbp-576]");
     E("    movzx rsi, word [rax]");  // RGB565 pixel
 
     // Extract and expand RGB565 to 8-bit
@@ -3049,6 +3042,75 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
 }
 
 // ---------------------------------------------------------------------
+// _slag_ftqueue_ensure_capacity() -- lazily allocates the deferred
+// triangle queue on first use (FT_QUEUE_INITIAL_CAP entries), and
+// doubles its capacity via HeapReAlloc whenever _ft_queue_count would
+// meet or exceed the current capacity. Called unconditionally at the
+// top of every fill_triangle* variant's enqueue path, replacing the
+// old fixed FT_QUEUE_MAX check + synchronous-fallback branch -- the
+// queue never actually fills, so no variant ever needs to fall back to
+// drawing a triangle immediately instead of enqueueing it.
+//
+// No args; reads/writes _ft_queue_data/_ft_queue_capacity only. Only
+// ever called from single-threaded enqueue code (never from a pool
+// worker), so growth never races with a worker reading the queue.
+// ---------------------------------------------------------------------
+static void emit_ftqueue_ensure_capacity(Codegen *cg) {
+    E("; --- _slag_ftqueue_ensure_capacity() ---");
+    E("_slag_ftqueue_ensure_capacity:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    push r12");
+    E("    sub  rsp, 32");
+    E("");
+    E("    mov  rax, [_ft_queue_data]");
+    E("    test rax, rax");
+    E("    jnz  .fq_check_grow");
+    E("");
+    E("    ; first use: allocate initial capacity");
+    E("    mov  qword [_ft_queue_capacity], FT_QUEUE_INITIAL_CAP");
+    E("    call GetProcessHeap");
+    E("    mov  rcx, rax");
+    E("    mov  rdx, 8                    ; HEAP_ZERO_MEMORY");
+    E("    mov  r8, FT_QUEUE_INITIAL_CAP * FT_ENTRY_SIZE");
+    E("    call HeapAlloc");
+    E("    mov  [_ft_queue_data], rax");
+    E("    jmp  .fq_done");
+    E("");
+    E(".fq_check_grow:");
+    E("    mov  rax, [_ft_queue_count]");
+    E("    cmp  rax, [_ft_queue_capacity]");
+    E("    jl   .fq_done                  ; still room, nothing to do");
+    E("");
+    E("    ; double capacity via HeapReAlloc (preserves existing entries)");
+    E("    mov  r12, [_ft_queue_capacity]");
+    E("    shl  r12, 1                    ; new_capacity = capacity * 2");
+    E("");
+    E("    call GetProcessHeap");
+    E("    mov  rbx, rax                  ; hHeap");
+    E("");
+    E("    mov  rax, FT_ENTRY_SIZE");
+    E("    mul  r12                       ; rax = new_capacity * FT_ENTRY_SIZE");
+    E("");
+    E("    mov  rcx, rbx                  ; hHeap");
+    E("    mov  rdx, 8                    ; HEAP_ZERO_MEMORY");
+    E("    mov  r8, [_ft_queue_data]      ; lpMem (old ptr)");
+    E("    mov  r9, rax                   ; dwBytes (new size)");
+    E("    call HeapReAlloc");
+    E("    mov  [_ft_queue_data], rax");
+    E("    mov  [_ft_queue_capacity], r12");
+    E("");
+    E(".fq_done:");
+    E("    add  rsp, 32");
+    E("    pop  r12");
+    E("    pop  rbx");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+}
+
+// ---------------------------------------------------------------------
 // _slag_pool_worker(rcx=my_index) â€” persistent rasterization worker.
 //
 // Parks on its own auto-reset start event; on wake, reads the shared
@@ -3095,7 +3157,7 @@ static void emit_pool_worker(Codegen *cg) {
     E("    cmp  r14, r13");
     E("    jge  .pw_tri_done");
     E("    imul rax, r14, FT_ENTRY_SIZE");
-    E("    lea  r10, [_ft_queue_data]");
+    E("    mov  r10, [_ft_queue_data]");
     E("    add  r10, rax               ; r10 = entry ptr");
     E("    mov  rax, [r10+16]          ; yc_dup");
     E("    cmp  rax, [rbp-8]           ; band_lo");
@@ -3279,12 +3341,6 @@ static void emit_window_utils(Codegen *cg) {
     E("    call TlsGetValue");
     E("    mov  rbx, rax");
     E("");
-    E("    ; capture start time for adaptive frame-cap sleep below");
-    E("    lea  rcx, [rbp-40]");
-    E("    sub  rsp, 32");
-    E("    call QueryPerformanceCounter");
-    E("    add  rsp, 32");
-    E("");
     E("    ; drain deferred fill_triangle queue. Small queues draw sequentially");
     E("    ; (thread wake/wait overhead isn't worth it); queues at or above");
     E("    ; FT_POOL_THRESHOLD dispatch across the persistent worker pool,");
@@ -3363,7 +3419,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    cmp  r12, r13");
     E("    jge  .wf_drain_done");
     E("    imul rax, r12, FT_ENTRY_SIZE");
-    E("    lea  r10, [_ft_queue_data]");
+    E("    mov  r10, [_ft_queue_data]");
     E("    add  r10, rax               ; r10 = entry ptr");
     E("    mov  rcx, rbx");
     E("    lea  rdx, [r10+24]          ; payload ptr");
@@ -3415,44 +3471,15 @@ static void emit_window_utils(Codegen *cg) {
     E(".wf_drain_done:");
     E("    mov  qword [_ft_queue_count], 0");
     E("");
-    E("    ; PostMessage(hwnd, WM_USER_FLUSH, 0, 0)");
+    E("    ; SendMessage(hwnd, WM_USER_FLUSH, 0, 0) -- BLOCKS until the window");
+    E("    ; thread's WndProc finishes the BitBlt, so flush() provides real");
+    E("    ; backpressure against the presentation thread instead of a race.");
     E("    mov  rcx, [rbx + WSTATE_HWND]");
     E("    mov  rdx, WM_USER_FLUSH");
     E("    xor  r8,  r8");
     E("    xor  r9,  r9");
     E("    sub  rsp, 32");
-    E("    call PostMessageA");
-    E("    add  rsp, 32");
-    E("");
-    E("    ; adaptive frame-cap sleep: only sleep for whatever's left of ~16ms");
-    E("    ; after the work this flush() call actually did (drain + post).");
-    E("    lea  rcx, [rbp-48]");
-    E("    sub  rsp, 32");
-    E("    call QueryPerformanceCounter");
-    E("    add  rsp, 32");
-    E("    lea  rcx, [rbp-56]");
-    E("    sub  rsp, 32");
-    E("    call QueryPerformanceFrequency");
-    E("    add  rsp, 32");
-    E("");
-    E("    mov  rax, [rbp-48]");
-    E("    sub  rax, [rbp-40]           ; delta ticks = end - start");
-    E("    mov  rcx, 1000000");
-    E("    xor  rdx, rdx");
-    E("    mul  rcx                     ; rdx:rax = delta * 1e6");
-    E("    mov  rcx, [rbp-56]           ; freq");
-    E("    div  rcx                     ; rax = elapsed microseconds");
-    E("    mov  rcx, 1000");
-    E("    xor  rdx, rdx");
-    E("    div  rcx                     ; rax = elapsed milliseconds");
-    E("    mov  rcx, 16");
-    E("    sub  rcx, rax                ; rcx = 16 - elapsed_ms");
-    E("    cmp  rcx, 0");
-    E("    jge  .wf_sleep_ok");
-    E("    xor  rcx, rcx                ; clamp to 0 if already at/over 16ms");
-    E(".wf_sleep_ok:");
-    E("    sub  rsp, 32");
-    E("    call Sleep");
+    E("    call SendMessageA");
     E("    add  rsp, 32");
     E("    add  rsp, 64");
     E("    pop  r14");
@@ -3481,10 +3508,6 @@ static void emit_window_utils(Codegen *cg) {
     E("    xor  r9,  r9");
     E("    sub  rsp, 32");
     E("    call PostMessageA");
-    E("    add  rsp, 32");
-    E("    mov  rcx, 1");
-    E("    sub  rsp, 32");
-    E("    call timeEndPeriod");
     E("    add  rsp, 32");
     E("    add  rsp, 40");
     E("    pop  rbx");
@@ -4116,21 +4139,15 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  eax, [rbp-168]");
     E("    mov  [rbp-176], rax    ; color (base+48)");
     E("");
-    E("    ; enqueue for deferred draw at window.flush(); if queue is full,");
-    E("    ; fall back to drawing immediately so no triangle is ever dropped.");
+    E("    ; enqueue for deferred draw at window.flush(), sharing the same");
+    E("    ; tagged queue/worker-pool dispatch as the other variants. The");
+    E("    ; queue grows dynamically (no fixed cap), so every triangle is");
+    E("    ; always enqueued -- never drawn synchronously as a fallback.");
+    E("    call _slag_ftqueue_ensure_capacity");
     E("    mov  r11, [_ft_queue_count]");
-    E("    cmp  r11, FT_QUEUE_MAX");
-    E("    jl   .ft_enqueue");
-    E("    mov  rcx, rbx");
-    E("    lea  rdx, [rbp-224]");
-    E("    xor  r8, r8");
-    E("    mov  r9, [rbx + WSTATE_HEIGHT]");
-    E("    dec  r9");
-    E("    call _slag_ft_core");
-    E("    jmp  .ft_queued");
     E(".ft_enqueue:");
     E("    imul rax, r11, FT_ENTRY_SIZE");
-    E("    lea  r10, [_ft_queue_data]");
+    E("    mov  r10, [_ft_queue_data]");
     E("    add  r10, rax");
     E("    mov  qword [r10+0], FT_TAG_FLAT");
     E("    mov  rax, [rbp-216]");
@@ -4390,23 +4407,15 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  rax, [rbp-96]");
     E("    mov  [rbp-176], rax    ; b");
     E("");
-    E("    ; Stage 3: enqueue for deferred draw at window.flush(), sharing the");
-    E("    ; same tagged queue/worker-pool dispatch as fill_triangle (flat).");
-    E("    ; If the queue is full, fall back to drawing immediately over the");
-    E("    ; full row range so no triangle is ever dropped.");
+    E("    ; enqueue for deferred draw at window.flush(), sharing the same");
+    E("    ; tagged queue/worker-pool dispatch as the other variants. The");
+    E("    ; queue grows dynamically (no fixed cap), so every triangle is");
+    E("    ; always enqueued -- never drawn synchronously as a fallback.");
+    E("    call _slag_ftqueue_ensure_capacity");
     E("    mov  r11, [_ft_queue_count]");
-    E("    cmp  r11, FT_QUEUE_MAX");
-    E("    jl   .ftz_enqueue");
-    E("    mov  rcx, rbx");
-    E("    lea  rdx, [rbp-264]");
-    E("    xor  r8, r8");
-    E("    mov  r9, [rbx + WSTATE_HEIGHT]");
-    E("    dec  r9");
-    E("    call _slag_ftz_core");
-    E("    jmp  .ftz_queued");
     E(".ftz_enqueue:");
     E("    imul rax, r11, FT_ENTRY_SIZE");
-    E("    lea  r10, [_ft_queue_data]");
+    E("    mov  r10, [_ft_queue_data]");
     E("    add  r10, rax");
     E("    mov  qword [r10+0], FT_TAG_Z");
     E("    mov  rax, [rbp-256]");
@@ -4598,23 +4607,15 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  rax, [rbp-120]");
     E("    mov  [rbp-152], rax   ; C.b");
     E("");
-    E("    ; Stage 3: enqueue for deferred draw at window.flush(), sharing the");
-    E("    ; same tagged queue/worker-pool dispatch as fill_triangle/_z.");
-    E("    ; If the queue is full, fall back to drawing immediately over the");
-    E("    ; full row range so no triangle is ever dropped.");
+    E("    ; enqueue for deferred draw at window.flush(), sharing the same");
+    E("    ; tagged queue/worker-pool dispatch as the other variants. The");
+    E("    ; queue grows dynamically (no fixed cap), so every triangle is");
+    E("    ; always enqueued -- never drawn synchronously as a fallback.");
+    E("    call _slag_ftqueue_ensure_capacity");
     E("    mov  r11, [_ft_queue_count]");
-    E("    cmp  r11, FT_QUEUE_MAX");
-    E("    jl   .ftg_enqueue");
-    E("    mov  rcx, rbx");
-    E("    lea  rdx, [rbp-264]");
-    E("    xor  r8, r8");
-    E("    mov  r9, [rbx + WSTATE_HEIGHT]");
-    E("    dec  r9");
-    E("    call _slag_ftg_core");
-    E("    jmp  .ftg_queued");
     E(".ftg_enqueue:");
     E("    imul rax, r11, FT_ENTRY_SIZE");
-    E("    lea  r10, [_ft_queue_data]");
+    E("    mov  r10, [_ft_queue_data]");
     E("    add  r10, rax");
     E("    mov  qword [r10+0], FT_TAG_GRADIENT");
     E("    mov  rax, [rbp-256]");
@@ -4876,23 +4877,15 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  rax, [rbp-120]");
     E("    mov  [rbp-424], rax   ; tex_h");
     E("");
-    E("    ; Stage 3: enqueue for deferred draw at window.flush(), sharing the");
-    E("    ; same tagged queue/worker-pool dispatch as the other variants.");
-    E("    ; If the queue is full, fall back to drawing immediately over the");
-    E("    ; full row range so no triangle is ever dropped.");
+    E("    ; enqueue for deferred draw at window.flush(), sharing the same");
+    E("    ; tagged queue/worker-pool dispatch as the other variants. The");
+    E("    ; queue grows dynamically (no fixed cap), so every triangle is");
+    E("    ; always enqueued -- never drawn synchronously as a fallback.");
+    E("    call _slag_ftqueue_ensure_capacity");
     E("    mov  r11, [_ft_queue_count]");
-    E("    cmp  r11, FT_QUEUE_MAX");
-    E("    jl   .fta_enqueue");
-    E("    mov  rcx, rbx");
-    E("    lea  rdx, [rbp-312]");
-    E("    xor  r8, r8");
-    E("    mov  r9, [rbx + WSTATE_HEIGHT]");
-    E("    dec  r9");
-    E("    call _slag_fta_core");
-    E("    jmp  .fta_queued");
     E(".fta_enqueue:");
     E("    imul rax, r11, FT_ENTRY_SIZE");
-    E("    lea  r10, [_ft_queue_data]");
+    E("    mov  r10, [_ft_queue_data]");
     E("    add  r10, rax");
     E("    mov  qword [r10+0], FT_TAG_AFFINE");
     E("    mov  rax, [rbp-312]");
@@ -5151,23 +5144,15 @@ static void emit_window_utils(Codegen *cg) {
     E("    mov  rax, [rbp-144]");
     E("    mov  [rbp-408], rax   ; tex_h");
     E("");
-    E("    ; Stage 3: enqueue for deferred draw at window.flush(), sharing the");
-    E("    ; same tagged queue/worker-pool dispatch as the other variants.");
-    E("    ; If the queue is full, fall back to drawing immediately over the");
-    E("    ; full row range so no triangle is ever dropped.");
+    E("    ; enqueue for deferred draw at window.flush(), sharing the same");
+    E("    ; tagged queue/worker-pool dispatch as the other variants. The");
+    E("    ; queue grows dynamically (no fixed cap), so every triangle is");
+    E("    ; always enqueued -- never drawn synchronously as a fallback.");
+    E("    call _slag_ftqueue_ensure_capacity");
     E("    mov  r11, [_ft_queue_count]");
-    E("    cmp  r11, FT_QUEUE_MAX");
-    E("    jl   .ftp_enqueue");
-    E("    mov  rcx, rbx");
-    E("    lea  rdx, [rbp-272]");
-    E("    xor  r8, r8");
-    E("    mov  r9, [rbx + WSTATE_HEIGHT]");
-    E("    dec  r9");
-    E("    call _slag_ftp_core");
-    E("    jmp  .ftp_queued");
     E(".ftp_enqueue:");
     E("    imul rax, r11, FT_ENTRY_SIZE");
-    E("    lea  r10, [_ft_queue_data]");
+    E("    mov  r10, [_ft_queue_data]");
     E("    add  r10, rax");
     E("    mov  qword [r10+0], FT_TAG_PERSP");
     E("    mov  rax, [rbp-272]");
@@ -5527,23 +5512,15 @@ static void emit_fill_triangle_pcolor(Codegen *cg) {
     E("    mov  rax, [rbp-32]");
     E("    mov  [rbp-816], rax    ; tex_h");
     E("");
-    E("    ; Stage 3: enqueue for deferred draw at window.flush(), sharing the");
-    E("    ; same tagged queue/worker-pool dispatch as the other variants.");
-    E("    ; If the queue is full, fall back to drawing immediately over the");
-    E("    ; full row range so no triangle is ever dropped.");
+    E("    ; enqueue for deferred draw at window.flush(), sharing the same");
+    E("    ; tagged queue/worker-pool dispatch as the other variants. The");
+    E("    ; queue grows dynamically (no fixed cap), so every triangle is");
+    E("    ; always enqueued -- never drawn synchronously as a fallback.");
+    E("    call _slag_ftqueue_ensure_capacity");
     E("    mov  r11, [_ft_queue_count]");
-    E("    cmp  r11, FT_QUEUE_MAX");
-    E("    jl   .ftpc_enqueue");
-    E("    mov  rcx, rbx");
-    E("    lea  rdx, [rbp-584]");
-    E("    xor  r8, r8");
-    E("    mov  r9, [rbx + WSTATE_HEIGHT]");
-    E("    dec  r9");
-    E("    call _slag_ftpc_core");
-    E("    jmp  .ftpc_queued");
     E(".ftpc_enqueue:");
     E("    imul rax, r11, FT_ENTRY_SIZE");
-    E("    lea  r10, [_ft_queue_data]");
+    E("    mov  r10, [_ft_queue_data]");
     E("    add  r10, rax");
     E("    mov  qword [r10+0], FT_TAG_PCOLOR");
     E("    mov  rax, [rbp-384]");
@@ -5677,9 +5654,11 @@ void emit_window_bss(Codegen *cg) {
     E("_window_cached_state: resq 1   ; cached TLS struct ptr for rendering");
     E("_window_primary_state: resq 1  ; first-opened window struct ptr (cross-thread fallback)");
     E("");
-    E("; --- deferred fill_triangle queue (drained at window.flush) ---");
-    E("_ft_queue_count: resq 1");
-    E("_ft_queue_data:  resb FT_QUEUE_MAX * FT_ENTRY_SIZE");
+    E("; --- deferred fill_triangle queue (drained at window.flush); dynamically");
+    E("; grown via HeapReAlloc from _slag_ftqueue_ensure_capacity, no fixed cap ---");
+    E("_ft_queue_count:    resq 1");
+    E("_ft_queue_capacity: resq 1   ; entries currently allocated (0 until first use)");
+    E("_ft_queue_data:     resq 1   ; heap pointer, NOT inline storage");
     E("");
     E("; --- persistent rasterization worker pool (lazy-init, created once) ---");
     E("_pool_initialized:   resq 1");
@@ -5724,6 +5703,7 @@ void emit_window_imports(Codegen *cg) {
     E("extern DefWindowProcA");
     E("extern PostQuitMessage");
     E("extern PostMessageA");
+    E("extern SendMessageA");
     E("extern LoadCursorA");
     E("extern DestroyWindow");
     E("extern Sleep");
@@ -5744,6 +5724,7 @@ void emit_window_imports(Codegen *cg) {
     E("; --- Heap functions ---");
     E("extern GetProcessHeap");
     E("extern HeapAlloc");
+    E("extern HeapReAlloc");
     E("; --- Window user data ---");
     E("extern SetWindowLongPtrA");
     E("extern GetWindowLongPtrA");
@@ -5762,9 +5743,6 @@ void emit_window_imports(Codegen *cg) {
     E("extern TextOutA");
     E("extern SetTextColor");
     E("extern SetBkMode");
-    E("; --- winmm: higher-resolution Sleep() for the adaptive frame-cap ---");
-    E("extern timeBeginPeriod");
-    E("extern timeEndPeriod");
     E("");
 }
 
@@ -5782,6 +5760,7 @@ void emit_window_runtime(Codegen *cg, const EventHandlerFlags *flags) {
     emit_fill_triangle_affine_core(cg);
     emit_fill_triangle_persp_core(cg);
     emit_fill_triangle_pcolor_core(cg);
+    emit_ftqueue_ensure_capacity(cg);
     emit_pool_worker(cg);
     emit_pool_ensure_init(cg);
     emit_window_utils(cg);

@@ -40,7 +40,7 @@ threading, networking, and more.
 ```bash
 slag program.slag                          # compile to .asm
 nasm -f win64 program.asm -o program.obj   # assemble
-x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -e _start
+x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -e _start
 ```
 
 Or use the helper script: `slagrun program.slag`
