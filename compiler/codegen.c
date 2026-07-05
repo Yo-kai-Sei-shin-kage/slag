@@ -1600,9 +1600,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  r8, r14");
                 emit(cg, "    mov  rdx, r13");
                 emit(cg, "    mov  rcx, r12");
-                emit_call_prologue(cg);
+                emit(cg, "    sub  rsp, 40           ; 3 pushes -> need subamount = 8 (mod 16)");
                 emit(cg, "    call _slag_server_start");
-                emit_call_epilogue(cg, 0);
+                emit(cg, "    add  rsp, 40");
                 emit(cg, "    pop  r14");
                 emit(cg, "    pop  r13");
                 emit(cg, "    pop  r12");
@@ -1625,9 +1625,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit_int_expr(cg, args->items[1]);
                 emit(cg, "    mov  rdx, rax");
                 emit(cg, "    mov  rcx, r12");
-                emit_call_prologue(cg);
+                emit(cg, "    sub  rsp, 40           ; 1 push -> need subamount = 8 (mod 16)");
                 emit(cg, "    call _slag_server_send");
-                emit_call_epilogue(cg, 0);
+                emit(cg, "    add  rsp, 40");
                 emit(cg, "    pop  r12");
             }
         }
