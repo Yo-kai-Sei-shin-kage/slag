@@ -1,0 +1,75 @@
+// Standalone game client test (single window, no threading needed).
+// Browses for LAN servers (net.discover_send/poll) and lists each one
+// found, then connects to the first one discovered using the existing
+// single-peer TCP client API (net.start/connect/ack) -- net.server_*
+// is host-only; a client just needs an ordinary TCP connection, which
+// the host's net.server_accept() will pick up and count.
+
+function main() {
+    window.open(420, 300, "Server Browser / Client");
+
+    local int running = 1;
+    local int connect_attempted = 0;
+    local int connected_to_host = 0;
+
+    while (running == 1) {
+        if (window.is_open() == 0) {
+            running = 0;
+        }
+        if (running == 0) {
+            if (connected_to_host == 1) {
+                net.end();
+            }
+        }
+
+        window.clear(20, 20, 40);
+        window.text(10, 10, "Discovered Servers:", 255, 255, 100);
+
+        net.discover_send();
+        net.discover_poll();
+
+        local int count = net.discover_count();
+        local int i = 0;
+        local int y = 40;
+        while (i < count) {
+            local str name = net.discover_name(i);
+            local str ip = net.discover_ip(i);
+            local int port = net.discover_port(i);
+            local int maxc = net.discover_max(i);
+            local int curc = net.discover_clients(i);
+
+            window.text(10, y, name, 200, 255, 200);
+            window.text(220, y, ip, 200, 200, 255);
+            window.text(10, y + 20, port, 255, 255, 255);
+            window.text(80, y + 20, curc, 255, 200, 100);
+            window.text(110, y + 20, "/", 255, 255, 255);
+            window.text(120, y + 20, maxc, 255, 200, 100);
+
+            i = i + 1;
+            y = y + 50;
+        }
+
+        if (count > 0) {
+            if (connect_attempted == 0) {
+                connect_attempted = 1;
+                local str host_ip = net.discover_ip(0);
+                local int host_port = net.discover_port(0);
+                net.start();
+                net.connect(host_ip, host_port);
+                if (net.ack() == 1) {
+                    connected_to_host = 1;
+                }
+            }
+        }
+
+        if (connected_to_host == 1) {
+            window.text(10, 260, "Connected to host!", 100, 255, 100);
+        } else {
+            window.text(10, 260, "Not connected yet...", 255, 200, 100);
+        }
+
+        window.flush();
+    }
+
+    return int 0;
+}

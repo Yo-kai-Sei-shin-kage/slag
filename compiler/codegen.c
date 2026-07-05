@@ -137,7 +137,7 @@ static int new_label(Codegen *cg) {
 static void emit_input_resolve_window(Codegen *cg) {
     int ok = new_label(cg);
     emit(cg, "    push rbx");
-    emit(cg, "    sub  rsp, 32");
+    emit(cg, "    sub  rsp, 40");
     emit(cg, "    mov  rcx, [_window_tls_index]");
     emit(cg, "    call TlsGetValue");
     emit(cg, "    mov  rbx, rax");
@@ -145,7 +145,7 @@ static void emit_input_resolve_window(Codegen *cg) {
     emit(cg, "    jnz  .L%d", ok);
     emit(cg, "    mov  rbx, [_window_primary_state]");
     emit(cg, ".L%d:", ok);
-    emit(cg, "    add  rsp, 32");
+    emit(cg, "    add  rsp, 40");
 }
 
 // Register a float constant in the .data pool; return its index.
@@ -179,7 +179,7 @@ static int add_str_const(Codegen *cg, const char *s) {
 static Local *find_local(Codegen *cg, const char *name) {
     // Strip leading $ if present (dollar idents inside $(( )))
     if (name[0] == '$') name++;
-    for (int i = 0; i < cg->local_count; i++) {
+    for (int i = cg->local_count - 1; i >= 0; i--) {
         if (strcmp(cg->locals[i].name, name) == 0) {
             return &cg->locals[i];
         }
@@ -1158,6 +1158,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
 
     if (e->kind == EXPR_MEMBER_CALL) {
         const char *member = e->as.member_call.member;
+        const Expr *base_expr = e->as.member_call.base;
+        const char *base = (base_expr && base_expr->kind == EXPR_IDENT)
+                                ? base_expr->as.str.value : "";
         const ExprList *args = &e->as.member_call.args;
 
         // window.open(w, h, title)
@@ -1225,8 +1228,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit_call_epilogue(cg, 0);
         }
         // window.clear(r, g, b) - clear DIB buffer to solid color
-        else if (strcmp(member, "clear") == 0 && args->count >= 3) {
+        else if (strcmp(member, "clear") == 0 && strcmp(base, "window") == 0) {
             emit(cg, "    ; window.clear");
+            if (args->count >= 3) {
             emit_int_expr(cg, args->items[0]);  // r
             emit(cg, "    mov  r12, rax");
             emit_int_expr(cg, args->items[1]);  // g
@@ -1238,6 +1242,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit_call_prologue(cg);
             emit(cg, "    call _slag_window_clear");
             emit_call_epilogue(cg, 0);
+            }
         }
         // window.text(x, y, str|int, r, g, b) - draw text at x,y with color
         else if (strcmp(member, "text") == 0 && args->count >= 6) {
@@ -1298,12 +1303,12 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "is_open") == 0) {
             emit(cg, "    ; window.is_open (TLS)");
             emit(cg, "    push rbx");
-            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    sub  rsp, 40");
             emit(cg, "    mov  rcx, [_window_tls_index]");
             emit(cg, "    call TlsGetValue");
             emit(cg, "    mov  rbx, rax");
             emit(cg, "    mov  rax, [rbx + WSTATE_OPEN]");
-            emit(cg, "    add  rsp, 32");
+            emit(cg, "    add  rsp, 40");
             emit(cg, "    pop  rbx");
         }
         // input.drag_x() -> int accumulated drag offset x (per-window, resolved via TLS)
@@ -1464,7 +1469,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             }
         }
         // zbuffer.clear()
-        else if (strcmp(member, "clear") == 0) {
+        else if (strcmp(member, "clear") == 0 && strcmp(base, "zbuffer") == 0) {
             emit(cg, "    ; zbuffer.clear");
             emit_call_prologue(cg);
             emit(cg, "    call _slag_zbuffer_clear");
@@ -1577,16 +1582,30 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    ; net.connected");
             emit(cg, "    mov  rax, [_net_connected]");
         }
-        // net.server_start(port) -- WSAStartup + socket+bind+listen, then
-        // flips the listen socket non-blocking for polling accept.
+        // net.server_start(port, name) -- WSAStartup + socket+bind+listen
+        // for the TCP game port (flipped non-blocking for polling accept),
+        // plus opens the UDP discovery listener so this server shows up
+        // for net.discover_poll() on other machines.
         else if (strcmp(member, "server_start") == 0) {
             emit(cg, "    ; net.server_start");
-            if (args->count >= 1) {
+            if (args->count >= 2) {
+                emit(cg, "    push r12");
+                emit(cg, "    push r13");
+                emit(cg, "    push r14");
                 emit_int_expr(cg, args->items[0]);
-                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    mov  r12, rax");
+                emit_str_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit(cg, "    mov  r14, rdx");
+                emit(cg, "    mov  r8, r14");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  rcx, r12");
                 emit_call_prologue(cg);
                 emit(cg, "    call _slag_server_start");
                 emit_call_epilogue(cg, 0);
+                emit(cg, "    pop  r14");
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
             }
         }
         // net.server_accept() -> int client slot idx, or -1 if none pending
@@ -1600,6 +1619,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "server_send") == 0) {
             emit(cg, "    ; net.server_send");
             if (args->count >= 2) {
+                emit(cg, "    push r12");
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  r12, rax");
                 emit_int_expr(cg, args->items[1]);
@@ -1608,6 +1628,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit_call_prologue(cg);
                 emit(cg, "    call _slag_server_send");
                 emit_call_epilogue(cg, 0);
+                emit(cg, "    pop  r12");
             }
         }
         // net.server_recv(idx) -> int byte, or -1 on fail/disconnect
@@ -1625,6 +1646,8 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "server_send_buf") == 0) {
             emit(cg, "    ; net.server_send_buf");
             if (args->count >= 3) {
+                emit(cg, "    push r12");
+                emit(cg, "    push r13");
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  r12, rax");
                 emit_int_expr(cg, args->items[1]);
@@ -1636,12 +1659,16 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit_call_prologue(cg);
                 emit(cg, "    call _slag_server_send_buf");
                 emit_call_epilogue(cg, 0);
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
             }
         }
         // net.server_recv_buf(idx, ptr, maxlen) -> int bytes received
         else if (strcmp(member, "server_recv_buf") == 0) {
             emit(cg, "    ; net.server_recv_buf");
             if (args->count >= 3) {
+                emit(cg, "    push r12");
+                emit(cg, "    push r13");
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  r12, rax");
                 emit_int_expr(cg, args->items[1]);
@@ -1653,6 +1680,8 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit_call_prologue(cg);
                 emit(cg, "    call _slag_server_recv_buf");
                 emit_call_epilogue(cg, 0);
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
             }
         }
         // net.server_stop() -- close all client sockets + listen socket + WSACleanup
@@ -1661,6 +1690,85 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit_call_prologue(cg);
             emit(cg, "    call _slag_server_stop");
             emit_call_epilogue(cg, 0);
+        }
+        // net.discover_send() -- fires one UDP broadcast "who's out
+        // there?" query. Re-call occasionally to catch servers that
+        // start up later (no sleep() builtin exists, so pacing is the
+        // caller's job).
+        else if (strcmp(member, "discover_send") == 0) {
+            emit(cg, "    ; net.discover_send");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_discover_send");
+            emit_call_epilogue(cg, 0);
+        }
+        // net.discover_poll() -> int slot idx updated/inserted, or -1
+        else if (strcmp(member, "discover_poll") == 0) {
+            emit(cg, "    ; net.discover_poll");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_discover_poll");
+            emit_call_epilogue(cg, 0);
+        }
+        // net.discover_count() -> int number of discovered servers
+        else if (strcmp(member, "discover_count") == 0) {
+            emit(cg, "    ; net.discover_count");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_discover_count");
+            emit_call_epilogue(cg, 0);
+        }
+        // net.discover_port(idx) -> int
+        else if (strcmp(member, "discover_port") == 0) {
+            emit(cg, "    ; net.discover_port");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_discover_port");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.discover_max(idx) -> int max clients
+        else if (strcmp(member, "discover_max") == 0) {
+            emit(cg, "    ; net.discover_max");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_discover_max");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.discover_clients(idx) -> int current connected count
+        else if (strcmp(member, "discover_clients") == 0) {
+            emit(cg, "    ; net.discover_clients");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_discover_clients");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.discover_name(idx) -> str (direct view, no copy)
+        else if (strcmp(member, "discover_name") == 0) {
+            emit(cg, "    ; net.discover_name");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_discover_name");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.discover_ip(idx) -> str ("a.b.c.d" formatted on demand)
+        else if (strcmp(member, "discover_ip") == 0) {
+            emit(cg, "    ; net.discover_ip");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_discover_ip");
+                emit_call_epilogue(cg, 0);
+            }
         }
         // mem.alloc(nbytes) -> int pointer (0 on fail)
         else if (strcmp(member, "alloc") == 0) {

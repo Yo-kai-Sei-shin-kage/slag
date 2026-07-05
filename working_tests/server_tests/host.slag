@@ -1,0 +1,38 @@
+// Standalone game server host test (single window, no threading needed).
+// Hosts a game server on TCP port 9000 with LAN discovery automatically
+// enabled (net.server_start also opens the UDP discovery listener, and
+// net.server_accept services discovery queries as a side effect each
+// tick -- see client.slag, which browses for and connects to this host).
+
+function main() {
+    window.open(420, 300, "Game Server Host");
+    net.server_start(9000, "Slag Test Server");
+
+    local int running = 1;
+    local int connected_count = 0;
+
+    while (running == 1) {
+        if (window.is_open() == 0) {
+            running = 0;
+        }
+        if (running == 0) {
+            net.server_stop();
+        }
+
+        window.clear(30, 60, 30);
+        window.text(10, 10, "Hosting on port 9000", 255, 255, 100);
+
+        local int idx = net.server_accept();
+        if (idx >= 0) {
+            connected_count = connected_count + 1;
+        }
+
+        window.text(10, 40, "Clients connected:", 200, 255, 200);
+        window.text(200, 40, connected_count, 255, 255, 255);
+
+        window.flush();
+    }
+
+    net.server_stop();
+    return int 0;
+}
