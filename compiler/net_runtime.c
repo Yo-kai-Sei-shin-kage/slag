@@ -24,7 +24,7 @@ void emit_net_imports(Codegen *cg) {
     E("extern recv");
     E("extern closesocket");
     E("extern htons");
-    E("extern select");
+    E("extern ioctlsocket");
     E("extern WSAGetLastError");
     E("extern WSAIoctl");
     E("extern inet_addr");
@@ -39,10 +39,9 @@ void emit_net_bss(Codegen *cg) {
     E("_net_sockaddr:  resb 16    ; sockaddr_in scratch (16 bytes)");
     E("_net_bytebuf:   resb 8     ; one-byte send/recv scratch");
     E("_net_connected:   resq 1   ; 1 while active connection is alive");
-    E("_net_fdset:       resb 16    ; fd_set scratch: 4-byte count + 4 pad + 8-byte socket");
-    E("_net_timeval:     resb 8     ; timeval scratch (zeroed = immediate/non-blocking select)");
     E("_net_keepalive:   resb 12    ; tcp_keepalive{onoff,time,interval} for the client connection");
     E("_net_keepalive_ret: resd 1  ; WSAIoctl's required (unused) bytes-returned out-param");
+    E("_net_ioctl_arg:   resd 1     ; FIONBIO mode scratch (1 = non-blocking)");
 }
 
 // ----- runtime procs ----------------------------------------------------
@@ -243,6 +242,13 @@ void emit_net_runtime(Codegen *cg) {
     E("    mov  qword [rsp+56], 0                 ; lpOverlapped = NULL");
     E("    mov  qword [rsp+64], 0                 ; lpCompletionRoutine = NULL");
     E("    call WSAIoctl");
+    E("    ; flip non-blocking too, so net.connected()'s MSG_PEEK check");
+    E("    ; (and net.recv/recv_buf) never hang on an idle connection");
+    E("    mov  dword [_net_ioctl_arg], 1");
+    E("    mov  rcx, [_net_conn_sock]");
+    E("    mov  rdx, 0x8004667E                   ; FIONBIO");
+    E("    lea  r8, [_net_ioctl_arg]");
+    E("    call ioctlsocket");
     E("    jmp  .nc_done");
     E(".nc_fail:");
     E("    mov  qword [_net_last_ok], 0");
@@ -251,8 +257,9 @@ void emit_net_runtime(Codegen *cg) {
     E("    pop  rbp");
     E("    ret");
     E("");
-
-    // _slag_net_send_byte(value in rcx) : send one byte over conn socket
+    // _slag_net_send_byte(value in rcx) : send one byte over conn socket.
+    // A WOULDBLOCK failure does NOT mark disconnected (still connected,
+    // just backed up); a real error/close does.
     E("; --- _slag_net_send_byte (rcx = byte value) ---");
     E("_slag_net_send_byte:");
     E("    push rbp");
@@ -264,16 +271,31 @@ void emit_net_runtime(Codegen *cg) {
     E("    mov  r8, 1");
     E("    xor  r9, r9");
     E("    call send");
+    E("    movsxd rax, eax            ; sign-extend 32-bit send() result");
     E("    cmp  rax, 1");
-    E("    sete al");
-    E("    movzx rax, al");
-    E("    mov  [_net_last_ok], rax");
+    E("    je   .nsdb_ok");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- still connected, just backed up");
+    E("    je   .nsdb_wouldblock");
+    E("    jmp  .nsdb_closed          ; any other error -> treat as disconnect");
+    E(".nsdb_ok:");
+    E("    mov  qword [_net_last_ok], 1");
+    E("    jmp  .nsdb_done");
+    E(".nsdb_wouldblock:");
+    E("    mov  qword [_net_last_ok], 0");
+    E("    jmp  .nsdb_done");
+    E(".nsdb_closed:");
+    E("    mov  qword [_net_last_ok], 0");
+    E("    mov  qword [_net_connected], 0");
+    E(".nsdb_done:");
     E("    mov  rsp, rbp");
     E("    pop  rbp");
     E("    ret");
     E("");
 
-    // _slag_net_recv_byte() -> received byte in rax (or -1 on fail)
+    // _slag_net_recv_byte() -> received byte in rax, -2 if no data is
+    // available right now (still connected -- non-blocking socket), or
+    // -1 on real disconnect/error.
     E("; --- _slag_net_recv_byte -> rax ---");
     E("_slag_net_recv_byte:");
     E("    push rbp");
@@ -284,12 +306,24 @@ void emit_net_runtime(Codegen *cg) {
     E("    mov  r8, 1");
     E("    xor  r9, r9");
     E("    call recv");
+    E("    movsxd rax, eax            ; sign-extend 32-bit recv() result");
     E("    cmp  rax, 1");
-    E("    jne  .nrb_fail");
+    E("    je   .nrb_ok");
+    E("    cmp  rax, 0");
+    E("    je   .nrb_closed           ; recv()==0 -> peer gracefully closed");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- no data, still connected");
+    E("    je   .nrb_wouldblock");
+    E("    jmp  .nrb_closed           ; any other error -> treat as disconnect");
+    E(".nrb_ok:");
     E("    mov  qword [_net_last_ok], 1");
     E("    movzx rax, byte [_net_bytebuf]");
     E("    jmp  .nrb_done");
-    E(".nrb_fail:");
+    E(".nrb_wouldblock:");
+    E("    mov  qword [_net_last_ok], 1");
+    E("    mov  rax, -2");
+    E("    jmp  .nrb_done");
+    E(".nrb_closed:");
     E("    mov  qword [_net_last_ok], 0");
     E("    mov  qword [_net_connected], 0");
     E("    mov  rax, -1");
@@ -300,7 +334,8 @@ void emit_net_runtime(Codegen *cg) {
     E("");
 
     // _slag_net_send_buf(ptr=rcx, len=rdx) : send len bytes from ptr.
-    // Loops until all sent. Sets _net_last_ok=1 on full send, 0 on error.
+    // Loops until all sent, or stops (without disconnecting) on
+    // WOULDBLOCK. Sets _net_last_ok=1 only on a full send.
     E("; --- _slag_net_send_buf (rcx=ptr, rdx=len) ---");
     E("_slag_net_send_buf:");
     E("    push rbp");
@@ -308,7 +343,7 @@ void emit_net_runtime(Codegen *cg) {
     E("    push rbx");
     E("    push rsi");
     E("    push rdi");
-    E("    sub  rsp, 40");
+    E("    sub  rsp, 40               ; 4 pushes -> need subamount = 8 (mod 16)");
     E("    mov  rsi, rcx              ; buf ptr");
     E("    mov  rdi, rdx              ; remaining len");
     E("    xor  rbx, rbx             ; bytes-sent offset");
@@ -320,13 +355,22 @@ void emit_net_runtime(Codegen *cg) {
     E("    mov  r8,  rdi              ; remaining length");
     E("    xor  r9,  r9              ; flags = 0");
     E("    call send");
+    E("    movsxd rax, eax            ; sign-extend 32-bit send() result");
     E("    cmp  rax, 0");
-    E("    jle  .nsb_fail            ; <=0 -> error / closed");
+    E("    jg   .nsb_advance");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- still connected, just backed up");
+    E("    je   .nsb_wouldblock");
+    E("    jmp  .nsb_fail            ; any other error -> treat as disconnect");
+    E(".nsb_advance:");
     E("    add  rbx, rax             ; advance offset");
     E("    sub  rdi, rax             ; reduce remaining");
     E("    jmp  .nsb_loop");
     E(".nsb_ok:");
     E("    mov  qword [_net_last_ok], 1");
+    E("    jmp  .nsb_done");
+    E(".nsb_wouldblock:");
+    E("    mov  qword [_net_last_ok], 0    ; incomplete send, but still connected");
     E("    jmp  .nsb_done");
     E(".nsb_fail:");
     E("    mov  qword [_net_last_ok], 0");
@@ -341,9 +385,9 @@ void emit_net_runtime(Codegen *cg) {
     E("    ret");
     E("");
 
-    // _slag_net_recv_buf(ptr=rcx, maxlen=rdx) -> rax = bytes received.
-    // One recv call (may return fewer than maxlen). 0 => peer closed
-    // (clears _net_connected). -1/negative => error. Sets _net_last_ok.
+    // _slag_net_recv_buf(ptr=rcx, maxlen=rdx) -> rax = bytes received
+    // (>=0), -2 if no data is available right now (still connected --
+    // non-blocking socket), or -1 on real disconnect/error.
     E("; --- _slag_net_recv_buf (rcx=ptr, rdx=maxlen) -> rax bytes ---");
     E("_slag_net_recv_buf:");
     E("    push rbp");
@@ -354,19 +398,31 @@ void emit_net_runtime(Codegen *cg) {
     E("    mov  rcx, [_net_conn_sock]");
     E("    xor  r9,  r9              ; flags = 0");
     E("    call recv");
+    E("    movsxd rax, eax            ; sign-extend 32-bit recv() result");
     E("    cmp  rax, 0");
     E("    jg   .nrcb_ok             ; >0 bytes -> success");
-    E("    ; 0 (closed) or <0 (error): mark disconnected");
-    E("    mov  qword [_net_last_ok], 0");
-    E("    mov  qword [_net_connected], 0");
-    E("    jmp  .nrcb_done");
+    E("    je   .nrcb_closed         ; recv()==0 -> peer gracefully closed");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- no data, still connected");
+    E("    je   .nrcb_wouldblock");
+    E("    jmp  .nrcb_closed          ; any other error -> treat as disconnect");
     E(".nrcb_ok:");
     E("    mov  qword [_net_last_ok], 1");
+    E("    jmp  .nrcb_done");
+    E(".nrcb_wouldblock:");
+    E("    mov  qword [_net_last_ok], 1");
+    E("    mov  rax, -2");
+    E("    jmp  .nrcb_done");
+    E(".nrcb_closed:");
+    E("    mov  qword [_net_last_ok], 0");
+    E("    mov  qword [_net_connected], 0");
+    E("    mov  rax, -1");
     E(".nrcb_done:");
     E("    mov  rsp, rbp");
     E("    pop  rbp");
     E("    ret");
     E("");
+
 
     // _slag_net_end() : close sockets + WSACleanup
     E("; --- _slag_net_end ---");
@@ -392,40 +448,24 @@ void emit_net_runtime(Codegen *cg) {
     E("    pop  rbp");
     E("    ret");
     E("");
-    // _slag_net_connected() -> rax : 1 if the connection is actively
-    // alive, 0 otherwise. Active check via select() (zero timeout, so
-    // it never blocks regardless of the socket's own blocking mode --
-    // net.recv/send keep their existing blocking behavior unaffected)
-    // followed by a non-blocking MSG_PEEK if select says data/close is
-    // pending, so this detects a dead connection even with zero real
+    // _slag_net_connected() -> rax : 1 if actively connected, 0 otherwise.
+    // Direct non-blocking MSG_PEEK (the connection socket is flipped
+    // non-blocking in _slag_net_connect) -- mirrors the proven
+    // _slag_server_connected pattern exactly, no select()/fd_set
+    // involved, so this detects a dead connection even with zero real
     // data flowing, not just a stale flag from the last actual I/O.
     E("; --- _slag_net_connected -> rax (1/0) ---");
     E("_slag_net_connected:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 48               ; 1 push -> need subamount = 0 (mod 16), >=48 for select's 5th arg");
+    E("    sub  rsp, 32");
     E("    mov  rax, [_net_connected]");
     E("    test rax, rax");
     E("    jz   .ncn_false            ; already known disconnected");
     E("    mov  rax, [_net_conn_sock]");
     E("    test rax, rax");
     E("    jz   .ncn_false");
-    E("    mov  dword [_net_fdset], 1");
-    E("    mov  [_net_fdset+8], rax");
-    E("    mov  qword [_net_timeval], 0");
-    E("    xor  rcx, rcx              ; nfds (ignored on Windows)");
-    E("    lea  rdx, [_net_fdset]");
-    E("    xor  r8, r8                ; writefds = NULL");
-    E("    xor  r9, r9                ; exceptfds = NULL");
-    E("    lea  rax, [_net_timeval]");
-    E("    mov  [rsp+32], rax");
-    E("    call select");
-    E("    cmp  eax, 0");
-    E("    jg   .ncn_check_peek       ; ready (data or close pending) -- verify which");
-    E("    je   .ncn_true             ; not ready -- no pending event, still connected");
-    E("    jmp  .ncn_false            ; select() error -> treat as disconnected");
-    E(".ncn_check_peek:");
-    E("    mov  rcx, [_net_conn_sock]");
+    E("    mov  rcx, rax");
     E("    lea  rdx, [_net_bytebuf]");
     E("    mov  r8, 1");
     E("    mov  r9, 2                 ; MSG_PEEK");
@@ -435,7 +475,7 @@ void emit_net_runtime(Codegen *cg) {
     E("    jg   .ncn_true             ; real data pending -> connected");
     E("    je   .ncn_closed           ; recv()==0 -> peer gracefully closed");
     E("    call WSAGetLastError");
-    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK (shouldn't happen post-select, but be safe)");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- no data, still connected");
     E("    je   .ncn_true");
     E(".ncn_closed:");
     E("    mov  qword [_net_connected], 0");
@@ -446,7 +486,7 @@ void emit_net_runtime(Codegen *cg) {
     E(".ncn_false:");
     E("    xor  rax, rax");
     E(".ncn_done:");
-    E("    add  rsp, 48");
+    E("    add  rsp, 32");
     E("    mov  rsp, rbp");
     E("    pop  rbp");
     E("    ret");
