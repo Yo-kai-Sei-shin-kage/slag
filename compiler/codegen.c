@@ -36,6 +36,7 @@
 #include "codegen.h"
 #include "window_runtime.h"
 #include "net_runtime.h"
+#include "server_runtime.h"
 #include "mem_runtime.h"
 #include "matrix_runtime.h"
 #include "simd_runtime.h"
@@ -1575,6 +1576,91 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "connected") == 0) {
             emit(cg, "    ; net.connected");
             emit(cg, "    mov  rax, [_net_connected]");
+        }
+        // net.server_start(port) -- WSAStartup + socket+bind+listen, then
+        // flips the listen socket non-blocking for polling accept.
+        else if (strcmp(member, "server_start") == 0) {
+            emit(cg, "    ; net.server_start");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_server_start");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.server_accept() -> int client slot idx, or -1 if none pending
+        else if (strcmp(member, "server_accept") == 0) {
+            emit(cg, "    ; net.server_accept");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_server_accept");
+            emit_call_epilogue(cg, 0);
+        }
+        // net.server_send(idx, byte)
+        else if (strcmp(member, "server_send") == 0) {
+            emit(cg, "    ; net.server_send");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_server_send");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.server_recv(idx) -> int byte, or -1 on fail/disconnect
+        else if (strcmp(member, "server_recv") == 0) {
+            emit(cg, "    ; net.server_recv");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_server_recv");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.server_send_buf(idx, ptr, len)
+        else if (strcmp(member, "server_send_buf") == 0) {
+            emit(cg, "    ; net.server_send_buf");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_server_send_buf");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.server_recv_buf(idx, ptr, maxlen) -> int bytes received
+        else if (strcmp(member, "server_recv_buf") == 0) {
+            emit(cg, "    ; net.server_recv_buf");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_server_recv_buf");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // net.server_stop() -- close all client sockets + listen socket + WSACleanup
+        else if (strcmp(member, "server_stop") == 0) {
+            emit(cg, "    ; net.server_stop");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_server_stop");
+            emit_call_epilogue(cg, 0);
         }
         // mem.alloc(nbytes) -> int pointer (0 on fail)
         else if (strcmp(member, "alloc") == 0) {
@@ -3936,6 +4022,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_imports(&cg);
     emit_window_imports(&cg);
     emit_net_imports(&cg);
+    emit_server_imports(&cg);
     emit_mem_imports(&cg);
     emit_simd_imports(&cg);
 
@@ -4013,6 +4100,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_simd_detect_helper(&cg);
     emit_window_runtime(&cg, &ev_flags);
     emit_net_runtime(&cg);
+    emit_server_runtime(&cg);
     emit_mem_runtime(&cg);
     emit_mat_runtime(&cg);
     emit_simd_runtime(&cg);
@@ -4035,6 +4123,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_bss_section(&cg);
     emit_window_bss(&cg);
     emit_net_bss(&cg);
+    emit_server_bss(&cg);
     emit_mem_bss(&cg);
     emit_mat_bss(&cg);
     emit_simd_bss(&cg);
