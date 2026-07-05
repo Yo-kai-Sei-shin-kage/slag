@@ -50,6 +50,7 @@ void emit_server_imports(Codegen *cg) {
     E("extern ioctlsocket");
     E("extern GetTickCount");
     E("extern WSAGetLastError");
+    E("extern WSAIoctl");
 }
 
 // ----- .bss globals -------------------------------------------------------
@@ -70,6 +71,8 @@ void emit_server_bss(Codegen *cg) {
     E("_srv_disc_addrlen: resd 1    ; in/out addrlen for recvfrom");
     E("_srv_disc_qbuf:   resb 8     ; scratch for the tiny incoming query packet");
     E("_srv_disc_rbuf:   resb 52    ; scratch for the outgoing reply packet");
+    E("_srv_keepalive:   resb 12    ; tcp_keepalive{onoff,time,interval} for new client sockets");
+    E("_srv_keepalive_ret: resd 1   ; WSAIoctl's required (unused) bytes-returned out-param");
 
     E("_cln_disc_sock:      resq 1     ; non-blocking UDP socket used to browse for servers");
     E("_cln_disc_wsadata:   resb 512");
@@ -217,7 +220,7 @@ void emit_server_runtime(Codegen *cg) {
     E("    push rbp");
     E("    mov  rbp, rsp");
     E("    push rbx                  ; holds the accept result across discovery servicing");
-    E("    sub  rsp, 56               ; 2 pushes -> need subamount = 8 (mod 16), >=48 for recvfrom/sendto stack args");
+    E("    sub  rsp, 72               ; 2 pushes -> need subamount = 8 (mod 16), >=72 for WSAIoctl's 5 stack args");
     E("    mov  rcx, [_srv_listen_sock]");
     E("    test rcx, rcx");
     E("    jz   .sva_fail");
@@ -244,6 +247,24 @@ void emit_server_runtime(Codegen *cg) {
     E("    mov  rdx, 0x8004667E        ; FIONBIO");
     E("    lea  r8, [_srv_ioctl_arg]");
     E("    call ioctlsocket");
+    E("    ; enable TCP keepalive on the new client socket too, so a");
+    E("    ; silent disconnect (power loss, cable pull -- no FIN/RST ever");
+    E("    ; sent) is still detected within a few seconds instead of never");
+    E("    mov  dword [_srv_keepalive], 1        ; onoff");
+    E("    mov  dword [_srv_keepalive+4], 2000    ; keepalivetime (ms)");
+    E("    mov  dword [_srv_keepalive+8], 1000    ; keepaliveinterval (ms)");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  rcx, [r9 + rbx*8]                 ; reload client socket");
+    E("    mov  rdx, 0x98000004                   ; SIO_KEEPALIVE_VALS");
+    E("    lea  r8, [_srv_keepalive]");
+    E("    mov  r9, 12                            ; cbInBuffer");
+    E("    mov  qword [rsp+32], 0                 ; lpvOutBuffer = NULL");
+    E("    mov  qword [rsp+40], 0                 ; cbOutBuffer = 0");
+    E("    lea  rax, [_srv_keepalive_ret]");
+    E("    mov  [rsp+48], rax                     ; lpcbBytesReturned (required, non-null)");
+    E("    mov  qword [rsp+56], 0                 ; lpOverlapped = NULL");
+    E("    mov  qword [rsp+64], 0                 ; lpCompletionRoutine = NULL");
+    E("    call WSAIoctl");
     E("    jmp  .sva_service_disc");
     E(".sva_next:");
     E("    inc  r11");

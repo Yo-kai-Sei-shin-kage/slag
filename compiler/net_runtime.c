@@ -26,6 +26,7 @@ void emit_net_imports(Codegen *cg) {
     E("extern htons");
     E("extern select");
     E("extern WSAGetLastError");
+    E("extern WSAIoctl");
     E("extern inet_addr");
 }
 
@@ -40,6 +41,8 @@ void emit_net_bss(Codegen *cg) {
     E("_net_connected:   resq 1   ; 1 while active connection is alive");
     E("_net_fdset:       resb 16    ; fd_set scratch: 4-byte count + 4 pad + 8-byte socket");
     E("_net_timeval:     resb 8     ; timeval scratch (zeroed = immediate/non-blocking select)");
+    E("_net_keepalive:   resb 12    ; tcp_keepalive{onoff,time,interval} for the client connection");
+    E("_net_keepalive_ret: resd 1  ; WSAIoctl's required (unused) bytes-returned out-param");
 }
 
 // ----- runtime procs ----------------------------------------------------
@@ -194,7 +197,7 @@ void emit_net_runtime(Codegen *cg) {
     E("_slag_net_connect:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 48");
+    E("    sub  rsp, 72               ; 1 push -> need subamount = 0 (mod 16), >=72 for WSAIoctl's 5 stack args");
     E("    mov  [rbp-8], rcx          ; host ptr");
     E("    mov  [rbp-16], rdx         ; port");
     E("    mov  rcx, 2");
@@ -223,6 +226,23 @@ void emit_net_runtime(Codegen *cg) {
     E("    jnz  .nc_fail");
     E("    mov  qword [_net_last_ok], 1");
     E("    mov  qword [_net_connected], 1");
+    E("    ; enable TCP keepalive so a silent disconnect (power loss,");
+    E("    ; cable pull -- no FIN/RST ever sent) is detected within a few");
+    E("    ; seconds instead of never");
+    E("    mov  dword [_net_keepalive], 1        ; onoff");
+    E("    mov  dword [_net_keepalive+4], 2000    ; keepalivetime (ms)");
+    E("    mov  dword [_net_keepalive+8], 1000    ; keepaliveinterval (ms)");
+    E("    mov  rcx, [_net_conn_sock]");
+    E("    mov  rdx, 0x98000004                   ; SIO_KEEPALIVE_VALS");
+    E("    lea  r8, [_net_keepalive]");
+    E("    mov  r9, 12                            ; cbInBuffer");
+    E("    mov  qword [rsp+32], 0                 ; lpvOutBuffer = NULL");
+    E("    mov  qword [rsp+40], 0                 ; cbOutBuffer = 0");
+    E("    lea  rax, [_net_keepalive_ret]");
+    E("    mov  [rsp+48], rax                     ; lpcbBytesReturned (required, non-null)");
+    E("    mov  qword [rsp+56], 0                 ; lpOverlapped = NULL");
+    E("    mov  qword [rsp+64], 0                 ; lpCompletionRoutine = NULL");
+    E("    call WSAIoctl");
     E("    jmp  .nc_done");
     E(".nc_fail:");
     E("    mov  qword [_net_last_ok], 0");
