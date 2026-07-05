@@ -446,7 +446,7 @@ net.accept()             // block until a peer connects to the bound socket
 net.listen(port)         // convenience: bind + listen + accept in one call
 net.connect(host, port)  // connect to a peer; host is a string literal
 net.send(byte)           // send one byte
-net.recv()               // receive one byte -> int (-1 on failure)
+net.recv()               // receive one byte -> int; see return contract below
 net.send_buf(ptr, len)   // send len bytes from a buffer, looping until done
 net.recv_buf(ptr, max)   // receive up to max bytes into a buffer -> count
 net.ack()                // -> 1/0: did the last network op succeed
@@ -464,6 +464,82 @@ Multi-byte transfer pairs with the `mem.*` primitives: build a message with
 > **Note:** `net.recv_buf` performs a single `recv`, which over TCP may return
 > fewer bytes than requested. For length-delimited protocols, loop until the
 > expected byte count has been collected.
+
+**Return contract for `net.recv()` / `net.recv_buf()`:** a connection
+established via `net.connect()` is non-blocking, so these can return three
+distinct outcomes: a byte count `>= 0` (data received), `-2` (no data
+available this instant, connection still alive — not an error, just poll
+again next tick), or `-1` (the peer actually disconnected; connection state
+is cleared). A connection established via `net.bind()`/`net.accept()`/
+`net.listen()` instead, keeps its original blocking behavior, so `-2` does
+not occur on that path — `net.recv_buf` simply waits for data as before.
+
+**`net.connected()`** performs an active check (a non-blocking peek at the
+socket) rather than reading a passive flag, so it correctly reflects the
+peer disconnecting even if no `net.send`/`net.recv` call has happened
+recently. Both `net.connect()`'s and the persistent server's per-client
+sockets (see 11B) also enable TCP keepalive, so even a peer that vanishes
+silently (power loss, unplugged cable — no FIN/RST ever sent) is detected
+within roughly 7-12 seconds rather than never, at which point `net.connected()`
+reflects it.
+
+---
+
+## 11B. Persistent Multi-Client Server and LAN Discovery
+
+Built on top of the primitives in 11A, `net.server_*` is a non-blocking,
+multi-client TCP server geared toward a game-server model (host authoritative,
+several clients connecting concurrently), and `net.discover_*` is a UDP-based
+LAN "server browser" so a client can find a running server without already
+knowing its address. Both are additive; the single-peer API in 11A is
+unaffected and still the right choice for a plain two-machine session.
+
+```
+net.server_start(port, name)  // WSAStartup + socket+bind+listen (TCP),
+                              // plus opens a UDP discovery listener on a
+                              // fixed port (9001) advertising name/port
+net.server_accept()           // -> int client slot idx, or -1 if none
+                              // pending; non-blocking, call every tick.
+                              // Also services one pending discovery query
+                              // per call as a side effect (free with the
+                              // polling you're already doing).
+net.server_send(idx, byte)
+net.server_recv(idx)          // -> byte, -2 (no data yet, still connected),
+                              // or -1 (peer disconnected -- slot freed)
+net.server_send_buf(idx, ptr, len)
+net.server_recv_buf(idx, ptr, maxlen)  // same -2 / -1 contract as above
+net.server_connected(idx)     // -> 1/0: active non-blocking check for one
+                              // client slot (same semantics as net.connected())
+net.server_stop()             // close every client socket, the listener,
+                              // and the discovery socket; WSACleanup
+
+net.discover_send()           // fire one UDP broadcast query ("who's out
+                              // there?"); internally rate-limited to once
+                              // per second, so it's safe to call every tick
+net.discover_poll()           // -> discovered-server slot idx just updated,
+                              // or -1; non-blocking, call every tick
+net.discover_count()          // -> number of servers currently listed
+net.discover_ip(idx)          // -> str, dotted-decimal address
+net.discover_port(idx)        // -> int, the server's TCP game port
+net.discover_name(idx)        // -> str, the name given to net.server_start
+net.discover_max(idx)         // -> int, max simultaneous clients
+net.discover_clients(idx)     // -> int, live connected count as of the
+                              // server's last reply
+```
+
+Client slot capacity is a single compile-time constant in the compiler
+(`SERVER_MAX_CLIENTS` in `server_runtime.c`, currently 4, designed to scale
+to 64 by changing that one value). A client connects to a `net.server_*`
+host using the ordinary single-peer client API (`net.start()` +
+`net.connect(ip, port)`, typically with `ip`/`port` read from
+`net.discover_ip(0)`/`net.discover_port(0)` after browsing) — `net.server_*`
+itself is host-only; there is no client-side "server" call.
+
+Discovery entries persist once found and are **not** removed just because a
+server becomes full or a client connects to it — only a server that stops
+answering queries entirely (fully offline) is pruned, after roughly 6 seconds
+with no fresh reply. A server merely at capacity keeps responding to queries
+normally and stays listed.
 
 ---
 
@@ -963,7 +1039,16 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `net.send_buf(ptr,len)`         | Send len bytes from a buffer (loops until done)    |
 | `net.recv_buf(ptr,max)`         | Receive up to max bytes -> count                   |
 | `net.ack()`                     | 1/0: did the last network op succeed               |
-| `net.connected()`               | 1/0: is the active connection alive                |
+| `net.connected()`               | 1/0: is the active connection alive (active check) |
+| `net.server_start(port,name)`   | Host: TCP listen + UDP discovery listener          |
+| `net.server_accept()`           | Host: -> client slot idx or -1 (non-blocking)      |
+| `net.server_send/recv(idx,...)` | Host: per-client byte send/recv                    |
+| `net.server_send/recv_buf(idx,...)` | Host: per-client buffered send/recv            |
+| `net.server_connected(idx)`     | Host: 1/0 active check for one client slot         |
+| `net.server_stop()`             | Host: close all client sockets + listener + UDP    |
+| `net.discover_send()`          | Client: fire a UDP LAN discovery broadcast          |
+| `net.discover_poll()`           | Client: -> discovered slot idx or -1               |
+| `net.discover_count/ip/port/name/max/clients(idx)` | Client: read the discovered-server list |
 
 ---
 

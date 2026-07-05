@@ -540,13 +540,90 @@ Send len bytes from a buffer, looping until all are sent.
 .TP
 .B net.recv_buf(ptr, maxlen)
 Receive up to maxlen bytes into a buffer; returns the count (0 when the
-peer closes). A single recv may return fewer bytes than requested.
+peer closes). A single recv may return fewer bytes than requested. A
+connection made via
+.B net.connect()
+is non-blocking, so
+.BR net.recv() " and " net.recv_buf()
+may also return \-2 (no data available this instant, connection still
+alive \(em not an error). A connection made via
+.BR net.bind()/net.accept()/net.listen()
+keeps its original blocking behavior and never returns \-2.
 .TP
 .B net.ack()
 Returns 1/0: did the last network operation succeed.
 .TP
 .B net.connected()
-Returns 1/0: is the active connection still alive (clears on disconnect).
+Returns 1/0: is the active connection still alive. Performs an active
+non-blocking check rather than reading a passive flag, so it reflects the
+peer disconnecting even without a recent send/recv. TCP keepalive is also
+enabled on connect, so a peer that vanishes silently (no FIN/RST ever
+sent) is still detected within roughly 7\-12 seconds.
+.SS Persistent multi-client server and LAN discovery
+Built on the networking primitives above,
+.B net.server_*
+is a non-blocking multi-client TCP server for a game-server model, and
+.B net.discover_*
+is UDP-based LAN discovery so a client can find a running server without
+knowing its address ahead of time. Both are additive to the single-peer
+API above, which is unaffected.
+.TP
+.B net.server_start(port, name)
+Host: WSAStartup + socket+bind+listen (TCP), and opens a UDP discovery
+listener (fixed port 9001) advertising name and port to browsing clients.
+.TP
+.B net.server_accept()
+Host: returns a client slot index, or \-1 if none pending; non-blocking,
+call every tick. Also services one pending discovery query per call.
+.TP
+.BR net.server_send(idx,\ byte) ", " net.server_recv(idx)
+Host: per-client single-byte send/receive.
+.B net.server_recv
+returns the byte, \-2 (no data yet, still connected), or \-1 (peer
+disconnected, slot freed).
+.TP
+.BR net.server_send_buf(idx,\ ptr,\ len) ", " net.server_recv_buf(idx,\ ptr,\ maxlen)
+Host: per-client buffered send/receive, same \-2/\-1 contract as above.
+.TP
+.B net.server_connected(idx)
+Host: returns 1/0, an active non-blocking check for one client slot.
+.TP
+.B net.server_stop()
+Host: closes every client socket, the TCP listener, and the UDP discovery
+socket, then WSACleanup.
+.TP
+.B net.discover_send()
+Client: fires one UDP broadcast discovery query. Internally rate-limited
+to once per second, so it is safe to call every tick.
+.TP
+.B net.discover_poll()
+Client: returns the discovered-server slot index just updated, or \-1;
+non-blocking, call every tick.
+.TP
+.B net.discover_count()
+Client: returns the number of servers currently listed.
+.TP
+.BR net.discover_ip(idx) ", " net.discover_port(idx) ", " net.discover_name(idx)
+Client: returns the discovered server's address (string), TCP port
+(int), and advertised name (string).
+.TP
+.BR net.discover_max(idx) ", " net.discover_clients(idx)
+Client: returns the server's max client capacity and its live connected
+count as of its last reply.
+.PP
+Client slot capacity is a single compile-time constant
+.RB ( SERVER_MAX_CLIENTS " in " server_runtime.c ,
+currently 4, designed to scale to 64 by changing that one value). A
+client connects to a
+.B net.server_*
+host with the ordinary single-peer API
+.RB ( net.start() " + " net.connect(ip,\ port) ),
+typically using the ip/port from
+.BR net.discover_ip(0)/net.discover_port(0) " after browsing \(em "
+.B net.server_*
+itself is host-only. Discovered servers are not removed just because
+they become full or gain a client; only a server that stops answering
+entirely is pruned, after about 6 seconds with no fresh reply.
 .SS Input event handlers
 Event handlers are declared with the
 .B on
