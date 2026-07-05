@@ -1684,6 +1684,19 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    pop  r12");
             }
         }
+        // net.server_connected(idx) -> int 1/0 -- active check (non-blocking
+        // MSG_PEEK), not just a passive flag; detects a dead connection
+        // even if no real data has been sent/received yet.
+        else if (strcmp(member, "server_connected") == 0) {
+            emit(cg, "    ; net.server_connected");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_server_connected");
+                emit_call_epilogue(cg, 0);
+            }
+        }
         // net.server_stop() -- close all client sockets + listen socket + WSACleanup
         else if (strcmp(member, "server_stop") == 0) {
             emit(cg, "    ; net.server_stop");

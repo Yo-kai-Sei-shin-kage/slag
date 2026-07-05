@@ -24,6 +24,8 @@ void emit_net_imports(Codegen *cg) {
     E("extern recv");
     E("extern closesocket");
     E("extern htons");
+    E("extern select");
+    E("extern WSAGetLastError");
     E("extern inet_addr");
 }
 
@@ -36,6 +38,8 @@ void emit_net_bss(Codegen *cg) {
     E("_net_sockaddr:  resb 16    ; sockaddr_in scratch (16 bytes)");
     E("_net_bytebuf:   resb 8     ; one-byte send/recv scratch");
     E("_net_connected:   resq 1   ; 1 while active connection is alive");
+    E("_net_fdset:       resb 16    ; fd_set scratch: 4-byte count + 4 pad + 8-byte socket");
+    E("_net_timeval:     resb 8     ; timeval scratch (zeroed = immediate/non-blocking select)");
 }
 
 // ----- runtime procs ----------------------------------------------------
@@ -368,10 +372,63 @@ void emit_net_runtime(Codegen *cg) {
     E("    pop  rbp");
     E("    ret");
     E("");
-    // _slag_net_connected() -> rax : 1 if active connection alive
-    E("; --- _slag_net_connected -> rax ---");
+    // _slag_net_connected() -> rax : 1 if the connection is actively
+    // alive, 0 otherwise. Active check via select() (zero timeout, so
+    // it never blocks regardless of the socket's own blocking mode --
+    // net.recv/send keep their existing blocking behavior unaffected)
+    // followed by a non-blocking MSG_PEEK if select says data/close is
+    // pending, so this detects a dead connection even with zero real
+    // data flowing, not just a stale flag from the last actual I/O.
+    E("; --- _slag_net_connected -> rax (1/0) ---");
     E("_slag_net_connected:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    sub  rsp, 48               ; 1 push -> need subamount = 0 (mod 16), >=48 for select's 5th arg");
     E("    mov  rax, [_net_connected]");
+    E("    test rax, rax");
+    E("    jz   .ncn_false            ; already known disconnected");
+    E("    mov  rax, [_net_conn_sock]");
+    E("    test rax, rax");
+    E("    jz   .ncn_false");
+    E("    mov  dword [_net_fdset], 1");
+    E("    mov  [_net_fdset+8], rax");
+    E("    mov  qword [_net_timeval], 0");
+    E("    xor  rcx, rcx              ; nfds (ignored on Windows)");
+    E("    lea  rdx, [_net_fdset]");
+    E("    xor  r8, r8                ; writefds = NULL");
+    E("    xor  r9, r9                ; exceptfds = NULL");
+    E("    lea  rax, [_net_timeval]");
+    E("    mov  [rsp+32], rax");
+    E("    call select");
+    E("    cmp  eax, 0");
+    E("    jg   .ncn_check_peek       ; ready (data or close pending) -- verify which");
+    E("    je   .ncn_true             ; not ready -- no pending event, still connected");
+    E("    jmp  .ncn_false            ; select() error -> treat as disconnected");
+    E(".ncn_check_peek:");
+    E("    mov  rcx, [_net_conn_sock]");
+    E("    lea  rdx, [_net_bytebuf]");
+    E("    mov  r8, 1");
+    E("    mov  r9, 2                 ; MSG_PEEK");
+    E("    call recv");
+    E("    movsxd rax, eax            ; sign-extend 32-bit recv() result");
+    E("    cmp  rax, 0");
+    E("    jg   .ncn_true             ; real data pending -> connected");
+    E("    je   .ncn_closed           ; recv()==0 -> peer gracefully closed");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK (shouldn't happen post-select, but be safe)");
+    E("    je   .ncn_true");
+    E(".ncn_closed:");
+    E("    mov  qword [_net_connected], 0");
+    E("    jmp  .ncn_false");
+    E(".ncn_true:");
+    E("    mov  rax, 1");
+    E("    jmp  .ncn_done");
+    E(".ncn_false:");
+    E("    xor  rax, rax");
+    E(".ncn_done:");
+    E("    add  rsp, 48");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
     E("    ret");
     E("");
 }

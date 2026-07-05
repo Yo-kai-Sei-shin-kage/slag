@@ -1,23 +1,26 @@
 // Standalone game client test (single window, no threading needed).
 // Browses for LAN servers (net.discover_send/poll) and lists each one
 // found, then connects to the first one discovered using the existing
-// single-peer TCP client API (net.start/connect/ack) -- net.server_*
-// is host-only; a client just needs an ordinary TCP connection, which
-// the host's net.server_accept() will pick up and count.
+// single-peer TCP client API (net.start/connect) -- net.server_* is
+// host-only; a client just needs an ordinary TCP connection, which the
+// host's net.server_accept() will pick up.
+//
+// Connection status is shown via a LIVE net.connected() check each
+// frame (active non-blocking check, not a one-time flag set at connect
+// time), so it correctly reflects the host closing the connection too.
 
 function main() {
     window.open(420, 300, "Server Browser / Client");
 
     local int running = 1;
     local int connect_attempted = 0;
-    local int connected_to_host = 0;
 
     while (running == 1) {
         if (window.is_open() == 0) {
             running = 0;
         }
         if (running == 0) {
-            if (connected_to_host == 1) {
+            if (net.connected() == 1) {
                 net.end();
             }
         }
@@ -56,16 +59,13 @@ function main() {
                 local int host_port = net.discover_port(0);
                 net.start();
                 net.connect(host_ip, host_port);
-                if (net.ack() == 1) {
-                    connected_to_host = 1;
-                }
             }
         }
 
-        if (connected_to_host == 1) {
+        if (net.connected() == 1) {
             window.text(10, 260, "Connected to host!", 100, 255, 100);
         } else {
-            window.text(10, 260, "Not connected yet...", 255, 200, 100);
+            window.text(10, 260, "Not connected.", 255, 200, 100);
         }
 
         window.flush();

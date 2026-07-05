@@ -49,6 +49,7 @@ void emit_server_imports(Codegen *cg) {
     E("extern htons");
     E("extern ioctlsocket");
     E("extern GetTickCount");
+    E("extern WSAGetLastError");
 }
 
 // ----- .bss globals -------------------------------------------------------
@@ -233,9 +234,16 @@ void emit_server_runtime(Codegen *cg) {
     E("    jge  .sva_full");
     E("    cmp  qword [r9 + r11*8], 0");
     E("    jne  .sva_next");
-    E("    mov  [r9 + r11*8], r10");
-    E("    mov  rbx, r11");
+    E("    mov  [r9 + r11*8], r10      ; store new client socket");
+    E("    mov  rbx, r11               ; save slot idx (non-volatile, survives the call below)");
     E("    mov  qword [_srv_last_ok], 1");
+    E("    ; flip the new client socket non-blocking too, so server_recv/recv_buf");
+    E("    ; never hang the game loop waiting on one idle client");
+    E("    mov  dword [_srv_ioctl_arg], 1");
+    E("    mov  rcx, r10");
+    E("    mov  rdx, 0x8004667E        ; FIONBIO");
+    E("    lea  r8, [_srv_ioctl_arg]");
+    E("    call ioctlsocket");
     E("    jmp  .sva_service_disc");
     E(".sva_next:");
     E("    inc  r11");
@@ -321,18 +329,23 @@ void emit_server_runtime(Codegen *cg) {
     E("    ret");
     E("");
 
-    // _slag_server_send(idx in rcx, byte value in rdx)
+    // _slag_server_send(idx in rcx, byte value in rdx) -> _srv_last_ok
+    // reflects success; a WOULDBLOCK failure does NOT disconnect the
+    // slot (still connected, just couldn't send this instant); a real
+    // error/disconnect closes and clears the slot.
     E("; --- _slag_server_send (rcx = slot idx, rdx = byte) ---");
     E("_slag_server_send:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 32");
-    E("    cmp  rcx, 0");
+    E("    push rbx");
+    E("    sub  rsp, 40               ; 2 pushes -> need subamount = 8 (mod 16)");
+    E("    mov  rbx, rcx              ; save idx across the calls below");
+    E("    cmp  rbx, 0");
     E("    jl   .svsd_fail");
-    E("    cmp  rcx, %d", SERVER_MAX_CLIENTS);
+    E("    cmp  rbx, %d", SERVER_MAX_CLIENTS);
     E("    jge  .svsd_fail");
     E("    lea  r9, [_srv_clients]");
-    E("    mov  r10, [r9 + rcx*8]");
+    E("    mov  r10, [r9 + rbx*8]");
     E("    test r10, r10");
     E("    jz   .svsd_fail");
     E("    mov  byte [_srv_bytebuf], dl");
@@ -343,26 +356,44 @@ void emit_server_runtime(Codegen *cg) {
     E("    call send");
     E("    movsxd rax, eax            ; sign-extend 32-bit send() result");
     E("    cmp  rax, 1");
-    E("    sete al");
-    E("    movzx rax, al");
-    E("    mov  [_srv_last_ok], rax");
+    E("    je   .svsd_ok");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- still connected, just backed up");
+    E("    je   .svsd_wouldblock");
+    E("    jmp  .svsd_closed          ; any other error -> treat as disconnect");
+    E(".svsd_ok:");
+    E("    mov  qword [_srv_last_ok], 1");
+    E("    jmp  .svsd_done");
+    E(".svsd_wouldblock:");
+    E("    mov  qword [_srv_last_ok], 0");
+    E("    jmp  .svsd_done");
+    E(".svsd_closed:");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  rcx, [r9 + rbx*8]");
+    E("    call closesocket");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  qword [r9 + rbx*8], 0");
+    E("    mov  qword [_srv_last_ok], 0");
     E("    jmp  .svsd_done");
     E(".svsd_fail:");
     E("    mov  qword [_srv_last_ok], 0");
     E(".svsd_done:");
+    E("    add  rsp, 40");
+    E("    pop  rbx");
     E("    mov  rsp, rbp");
     E("    pop  rbp");
     E("    ret");
     E("");
-
-    // _slag_server_recv(idx in rcx) -> rax = byte, or -1 on fail/disconnect
+    // _slag_server_recv(idx in rcx) -> rax = byte (0-255) received, -2 if
+    // no data is available right now (still connected -- non-blocking
+    // socket), or -1 on real disconnect/error (slot closed and cleared).
     E("; --- _slag_server_recv (rcx = slot idx) -> rax ---");
     E("_slag_server_recv:");
     E("    push rbp");
     E("    mov  rbp, rsp");
     E("    push rbx");
     E("    sub  rsp, 40               ; 2 pushes -> need subamount = 8 (mod 16)");
-    E("    mov  rbx, rcx              ; save idx across the `call recv`");
+    E("    mov  rbx, rcx              ; save idx across the calls below");
     E("    cmp  rbx, 0");
     E("    jl   .svrv_fail");
     E("    cmp  rbx, %d", SERVER_MAX_CLIENTS);
@@ -378,9 +409,20 @@ void emit_server_runtime(Codegen *cg) {
     E("    call recv");
     E("    movsxd rax, eax            ; sign-extend 32-bit recv() result");
     E("    cmp  rax, 1");
-    E("    jne  .svrv_closed");
+    E("    je   .svrv_ok");
+    E("    cmp  rax, 0");
+    E("    je   .svrv_closed          ; recv()==0 -> peer gracefully closed");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- no data, still connected");
+    E("    je   .svrv_wouldblock");
+    E("    jmp  .svrv_closed          ; any other error -> treat as disconnect");
+    E(".svrv_ok:");
     E("    mov  qword [_srv_last_ok], 1");
     E("    movzx rax, byte [_srv_bytebuf]");
+    E("    jmp  .svrv_done");
+    E(".svrv_wouldblock:");
+    E("    mov  qword [_srv_last_ok], 1");
+    E("    mov  rax, -2");
     E("    jmp  .svrv_done");
     E(".svrv_closed:");
     E("    lea  r9, [_srv_clients]");
@@ -435,12 +477,20 @@ void emit_server_runtime(Codegen *cg) {
     E("    call send");
     E("    movsxd rax, eax            ; sign-extend 32-bit send() result");
     E("    cmp  rax, 0");
-    E("    jle  .svsb_disc");
+    E("    jg   .svsb_advance");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- still connected, just backed up");
+    E("    je   .svsb_wouldblock");
+    E("    jmp  .svsb_disc            ; any other error -> treat as disconnect");
+    E(".svsb_advance:");
     E("    add  r12, rax");
     E("    sub  rdi, rax");
     E("    jmp  .svsb_loop");
     E(".svsb_ok:");
     E("    mov  qword [_srv_last_ok], 1");
+    E("    jmp  .svsb_done");
+    E(".svsb_wouldblock:");
+    E("    mov  qword [_srv_last_ok], 0    ; incomplete send, but still connected");
     E("    jmp  .svsb_done");
     E(".svsb_disc:");
     E("    lea  r9, [_srv_clients]");
@@ -464,7 +514,9 @@ void emit_server_runtime(Codegen *cg) {
     E("");
 
     // _slag_server_recv_buf(idx=rcx, ptr=rdx, maxlen=r8) -> rax = bytes
-    // received. 0/negative => peer closed/error; closes + frees the slot.
+    // received (>=0), -2 if no data is available right now (still
+    // connected -- non-blocking socket), or -1 on real disconnect/error
+    // (slot closed and cleared).
     E("; --- _slag_server_recv_buf (rcx=idx, rdx=ptr, r8=maxlen) -> rax ---");
     E("_slag_server_recv_buf:");
     E("    push rbp");
@@ -486,20 +538,81 @@ void emit_server_runtime(Codegen *cg) {
     E("    movsxd rax, eax            ; sign-extend 32-bit recv() result");
     E("    cmp  rax, 0");
     E("    jg   .svrb_ok");
+    E("    je   .svrb_closed          ; recv()==0 -> peer gracefully closed");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- no data, still connected");
+    E("    je   .svrb_wouldblock");
+    E("    jmp  .svrb_closed          ; any other error -> treat as disconnect");
+    E(".svrb_ok:");
+    E("    mov  qword [_srv_last_ok], 1");
+    E("    jmp  .svrb_done");
+    E(".svrb_wouldblock:");
+    E("    mov  qword [_srv_last_ok], 1");
+    E("    mov  rax, -2");
+    E("    jmp  .svrb_done");
+    E(".svrb_closed:");
     E("    lea  r9, [_srv_clients]");
     E("    mov  rcx, [r9 + rbx*8]");
     E("    call closesocket");
     E("    lea  r9, [_srv_clients]");
     E("    mov  qword [r9 + rbx*8], 0");
     E("    mov  qword [_srv_last_ok], 0");
-    E("    jmp  .svrb_done");
-    E(".svrb_ok:");
-    E("    mov  qword [_srv_last_ok], 1");
+    E("    mov  rax, -1");
     E("    jmp  .svrb_done");
     E(".svrb_fail:");
     E("    mov  qword [_srv_last_ok], 0");
     E("    mov  rax, -1");
     E(".svrb_done:");
+    E("    add  rsp, 40");
+    E("    pop  rbx");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+    // _slag_server_connected(idx in rcx) -> rax = 1 if this client slot
+    // is actively connected, 0 otherwise. Uses a non-blocking MSG_PEEK
+    // recv to actively detect a closed/reset connection even when no
+    // real data is flowing (doesn't consume any pending data).
+    E("; --- _slag_server_connected (rcx = slot idx) -> rax (1/0) ---");
+    E("_slag_server_connected:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    sub  rsp, 40               ; 2 pushes -> need subamount = 8 (mod 16)");
+    E("    mov  rbx, rcx              ; idx");
+    E("    cmp  rbx, 0");
+    E("    jl   .svc_false");
+    E("    cmp  rbx, %d", SERVER_MAX_CLIENTS);
+    E("    jge  .svc_false");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  r10, [r9 + rbx*8]");
+    E("    test r10, r10");
+    E("    jz   .svc_false            ; empty slot -> not connected");
+    E("    mov  rcx, r10");
+    E("    lea  rdx, [_srv_bytebuf]");
+    E("    mov  r8, 1");
+    E("    mov  r9, 2                 ; MSG_PEEK");
+    E("    call recv");
+    E("    movsxd rax, eax            ; sign-extend 32-bit recv() result");
+    E("    cmp  rax, 0");
+    E("    jg   .svc_true             ; data pending -> still connected");
+    E("    je   .svc_closed           ; recv()==0 -> peer gracefully closed");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- no data, still connected");
+    E("    je   .svc_true");
+    E(".svc_closed:");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  rcx, [r9 + rbx*8]");
+    E("    call closesocket");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  qword [r9 + rbx*8], 0");
+    E("    jmp  .svc_false");
+    E(".svc_true:");
+    E("    mov  rax, 1");
+    E("    jmp  .svc_done");
+    E(".svc_false:");
+    E("    xor  rax, rax");
+    E(".svc_done:");
     E("    add  rsp, 40");
     E("    pop  rbx");
     E("    mov  rsp, rbp");
