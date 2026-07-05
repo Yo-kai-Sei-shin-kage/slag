@@ -23,6 +23,11 @@
 // Max servers tracked in a client's discovered-server list.
 #define DISCOVER_MAX 8
 
+// A discovered server that stops answering (not just "full", which we
+// deliberately keep listing per the game-server design) is pruned from
+// the list after this many idle milliseconds without a fresh reply.
+#define DISCOVER_TIMEOUT_MS 6000
+
 // Fixed UDP port used for the discovery query/reply protocol. Separate
 // from the TCP game port (set per-server via net.server_start) and from
 // any future lockstep-input UDP channel -- discovery never shares a port
@@ -91,6 +96,7 @@ void emit_server_bss(Codegen *cg) {
     E("_disc_namelen:   resq %d", DISCOVER_MAX);
     E("_disc_name:      resb %d", DISCOVER_MAX * SERVER_NAME_MAX);
     E("_disc_ipstrbuf:  resb 16    ; scratch \"a.b.c.d\" formatting buffer");
+    E("_disc_last_seen: resq %d    ; GetTickCount() at each slot's last fresh reply", DISCOVER_MAX);
 }
 
 // ----- runtime procs -------------------------------------------------------
@@ -759,14 +765,41 @@ void emit_server_runtime(Codegen *cg) {
 
     // _slag_discover_poll() -> rax = discovered-server slot index that was
     // just inserted/updated, or -1 if no reply is pending this call.
-    // Non-blocking; entries are never auto-removed (a server stays listed
-    // even after clients connect to it).
+    // Non-blocking. A server that goes fully offline (stops answering
+    // queries) is pruned from the list after DISCOVER_TIMEOUT_MS with no
+    // fresh reply -- this sweep runs every call regardless of whether a
+    // new reply arrives this tick. A server that's merely full/occupied
+    // keeps answering queries normally and is never pruned just for that.
     E("; --- _slag_discover_poll -> rax (slot idx or -1) ---");
     E("_slag_discover_poll:");
     E("    push rbp");
     E("    mov  rbp, rsp");
     E("    push rbx                  ; matched/insert slot index");
-    E("    sub  rsp, 56               ; 2 pushes -> need subamount = 8 (mod 16), >=48 for recvfrom stack args");
+    E("    push r12                  ; now (GetTickCount), across the sweep loop");
+    E("    push r13                  ; sweep index");
+    E("    sub  rsp, 56               ; 4 pushes -> need subamount = 8 (mod 16), >=48 for recvfrom stack args");
+    E("    call GetTickCount");
+    E("    mov  eax, eax              ; zero-extend 32-bit tick count");
+    E("    mov  r12, rax              ; now");
+    E("    xor  r13, r13              ; sweep index");
+    E("    lea  r9, [_disc_ip]");
+    E(".cdp_sweep:");
+    E("    cmp  r13, %d", DISCOVER_MAX);
+    E("    jge  .cdp_sweep_done");
+    E("    mov  eax, [r9 + r13*4]");
+    E("    test eax, eax");
+    E("    jz   .cdp_sweep_next       ; empty slot, nothing to age out");
+    E("    lea  r10, [_disc_last_seen]");
+    E("    mov  r11, [r10 + r13*8]");
+    E("    mov  rax, r12");
+    E("    sub  rax, r11");
+    E("    cmp  rax, %d", DISCOVER_TIMEOUT_MS);
+    E("    jle  .cdp_sweep_next       ; still fresh");
+    E("    mov  dword [r9 + r13*4], 0 ; stale -- free the slot");
+    E(".cdp_sweep_next:");
+    E("    inc  r13");
+    E("    jmp  .cdp_sweep");
+    E(".cdp_sweep_done:");
     E("    mov  rax, [_cln_disc_sock]");
     E("    test rax, rax");
     E("    jz   .cdp_none             ; discover_send() never called yet");
@@ -816,6 +849,8 @@ void emit_server_runtime(Codegen *cg) {
     E(".cdp_found:");
     E("    lea  r9, [_disc_ip]");
     E("    mov  [r9 + rbx*4], r11d");
+    E("    lea  r9, [_disc_last_seen]");
+    E("    mov  [r9 + rbx*8], r12       ; refresh last-seen for this slot");
     E("    mov  eax, [_cln_disc_rbuf+4]");
     E("    lea  r9, [_disc_port]");
     E("    mov  [r9 + rbx*8], rax");
@@ -853,10 +888,13 @@ void emit_server_runtime(Codegen *cg) {
     E("    mov  rax, -1");
     E(".cdp_done:");
     E("    add  rsp, 56");
+    E("    pop  r13");
+    E("    pop  r12");
     E("    pop  rbx");
     E("    mov  rsp, rbp");
     E("    pop  rbp");
     E("    ret");
+    E("");
     E("");
 
     // _slag_discover_count() -> rax = number of discovered-server slots in use

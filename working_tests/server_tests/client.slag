@@ -61,7 +61,6 @@ function main() {
                 net.connect(host_ip, host_port);
             }
         }
-
         if (net.connected() == 1) {
             window.text(10, 260, "Connected to host!", 100, 255, 100);
         } else {

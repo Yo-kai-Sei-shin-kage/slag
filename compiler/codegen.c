@@ -1579,8 +1579,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         }
         // net.connected() -> int 1/0
         else if (strcmp(member, "connected") == 0) {
-            emit(cg, "    ; net.connected");
-            emit(cg, "    mov  rax, [_net_connected]");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_net_connected");
+            emit_call_epilogue(cg, 0);
         }
         // net.server_start(port, name) -- WSAStartup + socket+bind+listen
         // for the TCP game port (flipped non-blocking for polling accept),
