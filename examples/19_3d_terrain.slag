@@ -169,7 +169,7 @@ function main() {
         // Ground grid with shared vertex buffer (301x301 for subdivision)
         local int half_grid = 250;
         local int base_h = 50;
-        local int min_z = 10;
+        local int min_z = 1;
         local int fog_denom = fog_dist * fog_dist / 255;
         local int cam_snap_x = (cam_x / half_grid) * half_grid;
         local int cam_snap_z = (cam_z / half_grid) * half_grid;

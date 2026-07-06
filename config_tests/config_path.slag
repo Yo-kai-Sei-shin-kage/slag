@@ -8,10 +8,10 @@ function parse_int(int ptr, int start, int end) {
         local int byte = mem.peek8(ptr, i);
         if (byte >= 48) {
             if (byte <= 57) {
-                val = (val * 10 + byte - 48);
+                val = $(($val * 10 + $byte - 48));
             }
         }
-        i = (i + 1);
+        i = $(($i + 1));
     }
     return int val;
 }
@@ -34,9 +34,9 @@ function main() {
         if (byte == 10) {
             if (pos > line_start) {
                 v[idx] = parse_int(ptr, line_start, pos);
-                idx = (idx + 1);
+                idx = $(($idx + 1));
             }
-            line_start = (pos + 1);
+            line_start = $(($pos + 1));
         }
         if (byte == 0) {
             if (pos > line_start) {
@@ -44,20 +44,20 @@ function main() {
             }
             done = 1;
         }
-        pos = (pos + 1);
+        pos = $(($pos + 1));
         if (pos > 1000) {
             done = 1;
         }
     }
 
     local int num_waypoints = v[0];
-    local int data_end = (1 + num_waypoints * 2);
+    local int data_end = $((1 + $num_waypoints * 2));
     local int w = v[data_end];
-    local int h = v[(data_end + 1)];
-    local int r = v[(data_end + 2)];
-    local int g = v[(data_end + 3)];
-    local int b = v[(data_end + 4)];
-    local int speed = v[(data_end + 5)];
+    local int h = v[$(($data_end + 1))];
+    local int r = v[$(($data_end + 2))];
+    local int g = v[$(($data_end + 3))];
+    local int b = v[$(($data_end + 4))];
+    local int speed = v[$(($data_end + 5))];
 
     // Current position (use first waypoint)
     local int x = v[1];
@@ -67,46 +67,46 @@ function main() {
 
     while (window.is_open()) {
         // Clear
-        fill_triangle(0, 0, 640, 480, 640, 0, 0, 0, 0);
-        fill_triangle(0, 0, 0, 480, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 0, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 480, 0, 480, 0, 0, 0);
 
         // Draw square
-        local int x2 = (x + w);
-        local int y2 = (y + h);
-        fill_triangle(x, y, x2, y2, x2, y, r, g, b);
-        fill_triangle(x, y, x, y2, x2, y2, r, g, b);
+        local int x2 = $(($x + $w));
+        local int y2 = $(($y + $h));
+        fill_triangle(x, y, x2, y, x2, y2, r, g, b);
+        fill_triangle(x, y, x2, y2, x, y2, r, g, b);
 
         // Get current and next waypoint
-        local int next_wp = (current_wp + 1);
+        local int next_wp = $(($current_wp + 1));
         if (next_wp >= num_waypoints) {
             next_wp = 0;
         }
 
-        local int wp1_idx = (1 + current_wp * 2);
-        local int wp2_idx = (1 + next_wp * 2);
+        local int wp1_idx = $((1 + $current_wp * 2));
+        local int wp2_idx = $((1 + $next_wp * 2));
         local int tx = v[wp2_idx];
-        local int ty = v[(wp2_idx + 1)];
+        local int ty = v[$(($wp2_idx + 1))];
 
         // Move toward target
-        local int dx = (tx - x);
-        local int dy = (ty - y);
+        local int dx = $(($tx - $x));
+        local int dy = $(($ty - $y));
 
         // Simple move: step toward target
         if (dx > speed) {
-            x = (x + speed);
+            x = $(($x + $speed));
         } else {
-            if (dx < (0 - speed)) {
-                x = (x - speed);
+            if (dx < $((0 - $speed))) {
+                x = $(($x - $speed));
             } else {
                 x = tx;
             }
         }
 
         if (dy > speed) {
-            y = (y + speed);
+            y = $(($y + $speed));
         } else {
-            if (dy < (0 - speed)) {
-                y = (y - speed);
+            if (dy < $((0 - $speed))) {
+                y = $(($y - $speed));
             } else {
                 y = ty;
             }

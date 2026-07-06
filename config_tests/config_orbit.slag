@@ -11,29 +11,29 @@ function get_sin(int angle) {
     // Quadrant 2: 18-26 (180-270)
     // Quadrant 3: 27-35 (270-360)
 
-    local int quad = (angle / 9);
-    local int idx = (angle - quad * 9);
+    local int quad = $(($angle / 9));
+    local int idx = $(($angle - $quad * 9));
 
     local int val = 0;
     if (quad == 0) {
         val = sin90[idx];
     }
     if (quad == 1) {
-        val = sin90[(9 - idx)];
+        val = sin90[$((9 - $idx))];
     }
     if (quad == 2) {
-        val = (0 - sin90[idx]);
+        val = $((0 - sin90[$idx]));
     }
     if (quad == 3) {
-        val = 0 - sin90[9 - idx];
+        val = $((0 - sin90[$((9 - $idx))]));
     }
     return int val;
 }
 
 function get_cos(int angle) {
-    local int shifted = (angle + 9);
+    local int shifted = $(($angle + 9));
     if (shifted >= 36) {
-        shifted = (shifted - 36);
+        shifted = $(($shifted - 36));
     }
     return int get_sin(shifted);
 }
@@ -45,10 +45,10 @@ function parse_int(int ptr, int start, int end) {
         local int byte = mem.peek8(ptr, i);
         if (byte >= 48) {
             if (byte <= 57) {
-                val = (val * 10 + byte - 48);
+                val = $(($val * 10 + $byte - 48));
             }
         }
-        i = (i + 1);
+        i = $(($i + 1));
     }
     return int val;
 }
@@ -71,9 +71,9 @@ function main() {
         if (byte == 10) {
             if (pos > line_start) {
                 v[idx] = parse_int(ptr, line_start, pos);
-                idx = (idx + 1);
+                idx = $(($idx + 1));
             }
-            line_start = (pos + 1);
+            line_start = $(($pos + 1));
         }
         if (byte == 0) {
             if (pos > line_start) {
@@ -81,7 +81,7 @@ function main() {
             }
             done = 1;
         }
-        pos = (pos + 1);
+        pos = $(($pos + 1));
         if (pos > 500) {
             done = 1;
         }
@@ -102,34 +102,34 @@ function main() {
 
     while (window.is_open()) {
         // Clear
-        fill_triangle(0, 0, 640, 480, 640, 0, 0, 0, 0);
-        fill_triangle(0, 0, 0, 480, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 0, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 480, 0, 480, 0, 0, 0);
 
         // Get sin and cos using lookup functions
         local int sinVal = get_sin(angle);
         local int cosVal = get_cos(angle);
 
         // Calculate position (scale down by 1000)
-        local int x = (cx + radius * cosVal / 1000 - w / 2);
-        local int y = (cy + radius * sinVal / 1000 - h / 2);
+        local int x = $(($cx + $radius * $cosVal / 1000 - $w / 2));
+        local int y = $(($cy + $radius * $sinVal / 1000 - $h / 2));
 
         // Draw square
-        local int x2 = (x + w);
-        local int y2 = (y + h);
-        fill_triangle(x, y, x2, y2, x2, y, r, g, b);
-        fill_triangle(x, y, x, y2, x2, y2, r, g, b);
+        local int x2 = $(($x + $w));
+        local int y2 = $(($y + $h));
+        fill_triangle(x, y, x2, y, x2, y2, r, g, b);
+        fill_triangle(x, y, x2, y2, x, y2, r, g, b);
 
         // Draw center point
-        fill_triangle((cx - 5), (cy - 5), (cx + 5), (cy + 5), (cx + 5), (cy - 5), 100, 100, 100);
-        fill_triangle((cx - 5), (cy - 5), (cx - 5), (cy + 5), (cx + 5), (cy + 5), 100, 100, 100);
+        fill_triangle($(($cx - 5)), $(($cy - 5)), $(($cx + 5)), $(($cy - 5)), $(($cx + 5)), $(($cy + 5)), 100, 100, 100);
+        fill_triangle($(($cx - 5)), $(($cy - 5)), $(($cx + 5)), $(($cy + 5)), $(($cx - 5)), $(($cy + 5)), 100, 100, 100);
 
         // Update angle every 2 frames for smoother motion
-        frame = (frame + 1);
+        frame = $(($frame + 1));
         if (frame >= 2) {
             frame = 0;
-            angle = (angle + speed);
+            angle = $(($angle + $speed));
             if (angle >= 36) {
-                angle = (angle - 36);
+                angle = $(($angle - 36));
             }
         }
 

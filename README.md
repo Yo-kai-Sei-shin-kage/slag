@@ -14,6 +14,7 @@ No CRT is linked into Slag-compiled programs; only the Win32 API (`kernel32`, `u
 - Functions, control flow (if/else, while), typed returns
 - Threads, sync, and locks for real Win32 concurrency
 - Raw memory access (`mem.*`) and bit ops (`bit.*`)
+- File I/O and per-handle directory listing (`file.*`)
 - TCP networking (`net.*`)
 - Windowing and software-rendered graphics: pixels, textured/shaded/z-buffered triangle
   rasterization, keyboard/mouse input, meshes, procedural textures

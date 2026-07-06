@@ -287,12 +287,24 @@ u/z, v/z and divides to recover true UV coordinates, eliminating texture
 warping on angled surfaces. The inner loop corrects perspective every 8
 pixels and interpolates UV affinely between (classic PS2 subdivision,
 ~20x fewer divisions), writing each pixel as a single 32-bit BGRA store.
+.PP
+Near-plane safety: any vertex at or behind the camera (z <= 0), or
+projected far outside the active window's bounds (~8x margin), silently
+discards the triangle before rasterization. This guards against the
+degenerate 1/z blowup near-camera geometry produces; it is not a full
+geometric clip. It does not protect a caller's own perspective divide
+computed in Slag script code before the call \(em scripts should still
+guard z > 0 themselves before projecting.
 .TP
 .BI fill_triangle_pcolor( verts , " tex_ptr" , " tex_w" , " tex_h" )
 Perspective-correct textured triangle with per-vertex colors. The
 .I verts
 parameter points to 24 int64 values (3 vertices x 8 values: x,y,z,u,v,r,g,b).
 Texture color is multiplied by interpolated vertex color.
+.PP
+The same near-plane safety net as fill_triangle_persp applies: any
+vertex at or behind the camera, or projected far outside the window's
+bounds, silently discards the triangle before rasterization.
 .TP
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.
@@ -395,6 +407,59 @@ Store / load 8 bytes at a byte offset.
 Store a 32-bit float at a byte offset (narrowed from Slag's 64-bit
 double). Lets SIMD vec4 buffers be filled with readable float literals
 instead of hand-packed IEEE-754 bit patterns.
+.SS File I/O
+Handle-based file primitives plus path-based utility ops. Paths are
+plain null-terminated strings; string literals in Slag are always
+null-terminated. Sizes/offsets use the classic 32-bit Win32 file APIs,
+so files over ~4GB are not supported.
+.TP
+.BI file.open( path , " mode" )
+Open a file. mode: 1=read, 2=write (create/truncate), 3=append. Returns
+an int handle, or -1 on failure.
+.TP
+.B file.close(handle)
+Close a file handle.
+.TP
+.BI file.read( handle , " buf" , " nbytes" )
+Read up to nbytes into buf. Returns bytes read, or -1 on failure.
+.TP
+.BI file.write( handle , " buf" , " nbytes" )
+Write nbytes from buf. Returns bytes written, or -1 on failure.
+.TP
+.BI file.seek( handle , " offset" , " whence" )
+Seek within a file. whence: 0=start, 1=current, 2=end. Returns the new
+position, or -1 on failure.
+.TP
+.B file.size(handle)
+Return the file's size in bytes, or -1 on failure.
+.TP
+.B file.exists(path)
+Return 1 if path exists, 0 otherwise.
+.TP
+.B file.delete(path)
+Delete a file. Returns 1 on success, 0 on failure.
+.TP
+.B file.mkdir(path)
+Create a directory. Returns 1 on success, 0 on failure.
+.PP
+Directory listing is per-handle: each file.list_open() call heap-allocates
+its own search state, so multiple listings can be open and interleaved
+without corrupting each other.
+.TP
+.B file.list_open(pattern)
+Open a directory listing. pattern is a glob such as "dir/*" or
+"dir/*.ext" (Win32 FindFirstFileA semantics, not a bare directory path).
+Returns an int handle, or -1 on failure.
+.TP
+.B file.list_next(handle)
+Advance to the next matching entry. Returns 1 if there is a new current
+entry, 0 if the listing is exhausted.
+.TP
+.B file.list_name(handle)
+Return the current entry's filename as a str.
+.TP
+.B file.list_close(handle)
+Close a directory listing handle.
 .SS Bit manipulation
 .TP
 .B bit.shl(value,count)
@@ -677,7 +742,7 @@ A self-hosting compiler
 .nf
 cd compiler
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
-    window_runtime.c net_runtime.c mem_runtime.c matrix_runtime.c \e
+    window_runtime.c net_runtime.c mem_runtime.c file_runtime.c matrix_runtime.c \e
     simd_runtime.c mesh_runtime.c texture_runtime.c
 .fi
 .RE

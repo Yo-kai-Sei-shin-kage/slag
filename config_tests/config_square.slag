@@ -1,0 +1,88 @@
+// Config-driven square renderer
+// Reads square.txt: x, y, width, height, r, g, b (one per line)
+
+function parse_int(int ptr, int start, int end) {
+    local int val = 0;
+    local int i = start;
+    while (i < end) {
+        local int byte = mem.peek8(ptr, i);
+        // Check if digit (ASCII 48-57)
+        if (byte >= 48) {
+            if (byte <= 57) {
+                val = $(($val * 10 + $byte - 48));
+            }
+        }
+        i = $(($i + 1));
+    }
+    return int val;
+}
+
+function main() {
+    window.open(640, 480, "Config-Driven Square");
+
+    // Read config file
+    local str config = readfile("square.txt");
+    local int ptr = config;
+    local int len = 0;
+
+    // Get string length by finding where data ends
+    // For now, scan for values - we expect 7 numbers
+
+    // Parse the 7 values: x, y, w, h, r, g, b
+    local int[] values = {0, 0, 0, 0, 0, 0, 0};
+    local int val_idx = 0;
+    local int line_start = 0;
+    local int pos = 0;
+
+    // Scan through the buffer
+    while (val_idx < 7) {
+        local int byte = mem.peek8(ptr, pos);
+
+        // Newline (10) or null (0) marks end of number
+        if (byte == 10) {
+            values[val_idx] = parse_int(ptr, line_start, pos);
+            val_idx = $(($val_idx + 1));
+            line_start = $(($pos + 1));
+        }
+        if (byte == 0) {
+            // End of file - parse last value if any
+            if (pos > line_start) {
+                values[val_idx] = parse_int(ptr, line_start, pos);
+                val_idx = $(($val_idx + 1));
+            }
+            // Exit loop
+            val_idx = 7;
+        }
+        pos = $(($pos + 1));
+
+        // Safety limit
+        if (pos > 1000) {
+            val_idx = 7;
+        }
+    }
+
+    // Extract values
+    local int x = values[0];
+    local int y = values[1];
+    local int w = values[2];
+    local int h = values[3];
+    local int r = values[4];
+    local int g = values[5];
+    local int b = values[6];
+
+    while (window.is_open()) {
+        // Clear screen
+        fill_triangle(0, 0, 640, 0, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 480, 0, 480, 0, 0, 0);
+
+        // Draw square from config (two triangles)
+        local int x2 = $(($x + $w));
+        local int y2 = $(($y + $h));
+        fill_triangle(x, y, x2, y, x2, y2, r, g, b);
+        fill_triangle(x, y, x2, y2, x, y2, r, g, b);
+
+        window.flush();
+    }
+
+    return int 0;
+}

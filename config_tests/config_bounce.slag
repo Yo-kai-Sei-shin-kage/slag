@@ -12,13 +12,13 @@ function parse_int(int ptr, int start, int end) {
         }
         if (byte >= 48) {
             if (byte <= 57) {
-                val = (val * 10 + byte - 48);
+                val = $(($val * 10 + $byte - 48));
             }
         }
-        i = (i + 1);
+        i = $(($i + 1));
     }
     if (neg == 1) {
-        val = (0 - val);
+        val = $((0 - $val));
     }
     return int val;
 }
@@ -41,9 +41,9 @@ function main() {
         if (byte == 10) {
             if (pos > line_start) {
                 v[idx] = parse_int(ptr, line_start, pos);
-                idx = (idx + 1);
+                idx = $(($idx + 1));
             }
-            line_start = (pos + 1);
+            line_start = $(($pos + 1));
         }
         if (byte == 0) {
             if (pos > line_start) {
@@ -51,7 +51,7 @@ function main() {
             }
             done = 1;
         }
-        pos = (pos + 1);
+        pos = $(($pos + 1));
         if (pos > 500) {
             done = 1;
         }
@@ -74,35 +74,35 @@ function main() {
 
     while (window.is_open()) {
         // Clear
-        fill_triangle(0, 0, 640, 480, 640, 0, 0, 0, 0);
-        fill_triangle(0, 0, 0, 480, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 0, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 480, 0, 480, 0, 0, 0);
 
         // Draw square
-        local int x2 = (x + w);
-        local int y2 = (y + h);
-        fill_triangle(x, y, x2, y2, x2, y, r, g, b);
-        fill_triangle(x, y, x, y2, x2, y2, r, g, b);
+        local int x2 = $(($x + $w));
+        local int y2 = $(($y + $h));
+        fill_triangle(x, y, x2, y, x2, y2, r, g, b);
+        fill_triangle(x, y, x2, y2, x, y2, r, g, b);
 
         // Update position
-        x = (x + vx);
-        y = (y + vy);
+        x = $(($x + $vx));
+        y = $(($y + $vy));
 
         // Bounce off edges
         if (x < minx) {
             x = minx;
-            vx = (0 - vx);
+            vx = $((0 - $vx));
         }
-        if ((x + w) > maxx) {
-            x = (maxx - w);
-            vx = (0 - vx);
+        if ($(($x + $w)) > maxx) {
+            x = $(($maxx - $w));
+            vx = $((0 - $vx));
         }
         if (y < miny) {
             y = miny;
-            vy = (0 - vy);
+            vy = $((0 - $vy));
         }
-        if ((y + h) > maxy) {
-            y = (maxy - h);
-            vy = (0 - vy);
+        if ($(($y + $h)) > maxy) {
+            y = $(($maxy - $h));
+            vy = $((0 - $vy));
         }
 
         window.flush();

@@ -38,6 +38,7 @@
 #include "net_runtime.h"
 #include "server_runtime.h"
 #include "mem_runtime.h"
+#include "file_runtime.h"
 #include "matrix_runtime.h"
 #include "simd_runtime.h"
 #include "mesh_runtime.h"
@@ -459,9 +460,21 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
             return hint;
         }
         case EXPR_MEMBER_CALL: {
-            // All member-call builtins that return a value return int:
+            // All member-call builtins that return a value return int,
+            // except window.native() and file.list_name(), which return
+            // a str (ptr+len):
             // mem.alloc/peek8/peek64, net.recv/ack/connected, input.*,
             // window.is_open, time.now_ms, etc. (void ones are unused here).
+            const char *mcmember = e->as.member_call.member;
+            const char *mcbase = (e->as.member_call.base &&
+                                  e->as.member_call.base->kind == EXPR_IDENT)
+                                     ? e->as.member_call.base->as.str.value : "";
+            if (strcmp(mcmember, "native") == 0 && strcmp(mcbase, "window") == 0) {
+                return TYPE_STR;
+            }
+            if (strcmp(mcmember, "list_name") == 0 && strcmp(mcbase, "file") == 0) {
+                return TYPE_STR;
+            }
             return TYPE_INT;
         }
         case EXPR_INDEX: {
@@ -478,6 +491,9 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
             if (strcmp(e->as.call.name, "sqrt") == 0) return TYPE_FLOAT;
             if (strcmp(e->as.call.name, "sin") == 0)  return TYPE_FLOAT;
             if (strcmp(e->as.call.name, "cos") == 0)  return TYPE_FLOAT;
+            // Built-in str-returning calls.
+            if (strcmp(e->as.call.name, "readfile") == 0) return TYPE_STR;
+            if (strcmp(e->as.call.name, "readline") == 0) return TYPE_STR;
             // Other calls: fall through to the hint-based default below.
             return hint != TYPE_UNKNOWN ? hint : TYPE_INT;
         }
@@ -539,6 +555,30 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
         case EXPR_BINARY: {
             SlagType lt = expr_type(cg, e->as.binary.left, TYPE_INT);
             SlagType rt = expr_type(cg, e->as.binary.right, TYPE_INT);
+            if (lt == TYPE_STR || rt == TYPE_STR) {
+                if (e->as.binary.op != TOK_EQ && e->as.binary.op != TOK_NEQ) {
+                    fprintf(stderr, "codegen error: operator not supported on str operands (only == and != are)\n");
+                    emit(cg, "    xor  rax, rax");
+                    break;
+                }
+                emit(cg, "    ; str comparison");
+                emit_str_expr(cg, e->as.binary.left);   // rax=ptr, rdx=len
+                emit(cg, "    mov  r12, rax        ; left ptr");
+                emit(cg, "    mov  r13, rdx        ; left len");
+                emit_str_expr(cg, e->as.binary.right);  // rax=ptr, rdx=len
+                emit(cg, "    mov  r8,  rax        ; right ptr");
+                emit(cg, "    mov  r9,  rdx        ; right len");
+                emit(cg, "    mov  rcx, r12        ; left ptr");
+                emit(cg, "    mov  rdx, r13        ; left len");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_str_eq");
+                emit(cg, "    add  rsp, 32");
+                if (e->as.binary.op == TOK_NEQ) {
+                    emit(cg, "    xor  rax, 1");
+                }
+                break;
+            }
+
 
             if (lt == TYPE_FLOAT || rt == TYPE_FLOAT) {
                 int op = e->as.binary.op;
@@ -1164,7 +1204,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         const ExprList *args = &e->as.member_call.args;
 
         // window.open(w, h, title)
-        if (strcmp(member, "open") == 0) {
+        if (strcmp(member, "open") == 0 && strcmp(base, "window") == 0) {
            emit(cg, "    ; window.open");
         if (args->count >= 3) {
            // w → rcx
@@ -1186,7 +1226,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
        }
    }
         // window.close()
-        else if (strcmp(member, "close") == 0) {
+        else if (strcmp(member, "close") == 0 && strcmp(base, "window") == 0) {
             emit(cg, "    ; window.close");
             emit_call_prologue(cg);
             emit(cg, "    call _slag_window_close");
@@ -1814,7 +1854,11 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
                 emit(cg, "    mov  r13, rax        ; byteoff");
+                emit(cg, "    push r12");
+                emit(cg, "    push r13");
                 emit_int_expr(cg, args->items[2]);
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
                 emit(cg, "    mov  byte [r12 + r13], al");
             }
         }
@@ -1864,6 +1908,171 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit_float_expr(cg, args->items[2]);   // value -> xmm0 (double)
                 emit(cg, "    cvtsd2ss xmm0, xmm0  ; narrow to 32-bit float");
                 emit(cg, "    movss [r12 + r13], xmm0");
+            }
+        }
+        // file.open(path, mode) -> int handle (-1 on fail)
+        // mode: 1=read, 2=write(truncate), 3=append
+        else if (strcmp(member, "open") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.open");
+            if (args->count >= 2) {
+                emit_str_expr(cg, args->items[0]);   // rax=ptr, rdx=len (path)
+                emit(cg, "    mov  r12, rax        ; path ptr");
+                emit_int_expr(cg, args->items[1]);   // mode
+                emit(cg, "    mov  rdx, rax        ; mode");
+                emit(cg, "    mov  rcx, r12        ; path ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_open");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.close(handle)
+        else if (strcmp(member, "close") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.close");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_close");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.read(handle, buf, nbytes) -> int bytes read (-1 on fail)
+        else if (strcmp(member, "read") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.read");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; handle");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; buf ptr");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8,  rax        ; nbytes");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_read");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.write(handle, buf, nbytes) -> int bytes written (-1 on fail)
+        else if (strcmp(member, "write") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.write");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; handle");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; buf ptr");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8,  rax        ; nbytes");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_write");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.seek(handle, offset, whence) -> int new position (-1 on fail)
+        else if (strcmp(member, "seek") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.seek");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; handle");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; offset");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8,  rax        ; whence");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_seek");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.size(handle) -> int size in bytes (-1 on fail)
+        else if (strcmp(member, "size") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.size");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_size");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.exists(path) -> int bool (1/0)
+        else if (strcmp(member, "exists") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.exists");
+            if (args->count >= 1) {
+                emit_str_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; path ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_exists");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.delete(path) -> int bool (1/0)
+        else if (strcmp(member, "delete") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.delete");
+            if (args->count >= 1) {
+                emit_str_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; path ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_delete");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.mkdir(path) -> int bool (1/0)
+        else if (strcmp(member, "mkdir") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.mkdir");
+            if (args->count >= 1) {
+                emit_str_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; path ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_mkdir");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.list_open(pattern) -> int handle (-1 on fail)
+        else if (strcmp(member, "list_open") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.list_open");
+            if (args->count >= 1) {
+                emit_str_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; pattern ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_list_open");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.list_next(handle) -> int bool (1 = advanced, 0 = no more)
+        else if (strcmp(member, "list_next") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.list_next");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_list_next");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.list_name(handle) -> str (current entry's filename)
+        else if (strcmp(member, "list_name") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.list_name");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_list_name");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.list_close(handle)
+        else if (strcmp(member, "list_close") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.list_close");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_list_close");
+                emit(cg, "    add  rsp, 32");
             }
         }
         // cpu.physical_cores() -> int
@@ -3554,6 +3763,30 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    pop  rbp");
     emit(cg, "    ret");
     emit(cg, "");
+    // _slag_str_eq: rcx=ptr1, rdx=len1, r8=ptr2, r9=len2 -> rax = 1 if equal, else 0.
+    // Used by the == and != operators when either operand is a str.
+    emit(cg, "; --- _slag_str_eq ---");
+    emit(cg, "_slag_str_eq:");
+    emit(cg, "    cmp  rdx, r9");
+    emit(cg, "    jne  .str_eq_false");
+    emit(cg, "    test rdx, rdx");
+    emit(cg, "    jz   .str_eq_true");
+    emit(cg, "    mov  r10, rdx           ; byte counter");
+    emit(cg, ".str_eq_loop:");
+    emit(cg, "    mov  al,  [rcx]");
+    emit(cg, "    cmp  al,  [r8]");
+    emit(cg, "    jne  .str_eq_false");
+    emit(cg, "    inc  rcx");
+    emit(cg, "    inc  r8");
+    emit(cg, "    dec  r10");
+    emit(cg, "    jnz  .str_eq_loop");
+    emit(cg, ".str_eq_true:");
+    emit(cg, "    mov  rax, 1");
+    emit(cg, "    ret");
+    emit(cg, ".str_eq_false:");
+    emit(cg, "    xor  rax, rax");
+    emit(cg, "    ret");
+    emit(cg, "");
 }
 
 // ---------------------------------------------------------------------
@@ -4146,6 +4379,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_net_imports(&cg);
     emit_server_imports(&cg);
     emit_mem_imports(&cg);
+    emit_file_imports(&cg);
     emit_simd_imports(&cg);
 
     // .text section.
@@ -4224,6 +4458,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_net_runtime(&cg);
     emit_server_runtime(&cg);
     emit_mem_runtime(&cg);
+    emit_file_runtime(&cg);
     emit_mat_runtime(&cg);
     emit_simd_runtime(&cg);
     emit_mesh_runtime(&cg);
@@ -4247,6 +4482,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_net_bss(&cg);
     emit_server_bss(&cg);
     emit_mem_bss(&cg);
+    emit_file_bss(&cg);
     emit_mat_bss(&cg);
     emit_simd_bss(&cg);
     emit_mesh_bss(&cg);

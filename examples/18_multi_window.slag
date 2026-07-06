@@ -18,7 +18,7 @@ function main() {
                 running = 0;
             }
             window.clear(30, 30, 80);
-            window.text(50, 50, "BLUE WINDOW", 100, 100, 255);
+            window.text(50, 50, "RED WINDOW", 100, 100, 255);
             window.text(50, 80, frame, 200, 200, 255);
             window.flush();
             frame = frame + 1;
@@ -32,12 +32,12 @@ function main() {
             running = 0;
         }
         window.clear(80, 30, 30);
-        window.text(50, 50, "RED WINDOW", 255, 100, 100);
+        window.text(50, 50, "BLUE WINDOW", 255, 100, 100);
         window.text(50, 80, frame, 255, 200, 200);
         window.flush();
         frame = frame + 1;
     }
-    
+
     sync {}
     return int 0;
 }

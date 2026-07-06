@@ -1,0 +1,366 @@
+## Variable declaration with int (local scope)
+local int x = 5;
+
+## Variable declaration with float
+local float f = 3.14;
+
+## Variable declaration with string
+local str s = "hello";
+
+## String equality/inequality comparison (==, !=) -- works on str locals,
+## globals, string literals, readfile() results, and window.native()
+if (s == "hello") {
+    println("matched");
+}
+if (s != "goodbye") {
+    println("not goodbye");
+}
+
+## Global variable (file scope)
+global int counter = 0;
+
+## Global array with initialization
+global int[] data = {10, 20, 30, 40, 50};
+
+## Local array with initialization
+local int[] digits = {0,0,0,0,0,0,0,0,0,0};
+
+## Arithmetic expression (direct, no wrapper)
+i = i + 1;
+
+## Arithmetic with multiple variables
+total = a + b * c;
+
+## Array element access
+local int val = data[i];
+
+## Array element assignment
+digits[count] = val % 10;
+
+## Array length
+while (i < nums.len) { }
+
+## Function with int return
+function add(int a, int b) {
+    return int a + b;
+}
+
+## Function with no return value
+function greet(str name) {
+    println(name);
+    return;
+}
+
+## If statement
+if (x > 0) {
+    println(x);
+}
+
+## If-else statement
+if (x > 0) {
+    println("positive");
+} else {
+    println("not positive");
+}
+
+## While loop
+local int i = 0;
+while (i < 10) {
+    println(i);
+    i = i + 1;
+}
+
+## Window open
+window.open(1024, 768, "Window Title");
+
+## Window clear (r, g, b)
+window.clear(0, 0, 0);
+
+## Window text (GDI, str or int)
+window.text(50, 50, "Hello", 255, 255, 255);
+window.text(50, 80, 12345, 100, 255, 100);
+
+## Window main loop
+while (window.is_open()) {
+    window.clear(0, 0, 0);
+    window.flush();
+}
+
+## Window close
+window.close();
+
+## Draw pixel
+pixel(x, y, 255, 128, 64);
+
+## Fill triangle (flat color)
+## Backface culling: signed_area = (x1-x0)*(y2-y0) - (x2-x0)*(y1-y0); the
+## triangle is drawn only if signed_area < 0 (culled/skipped if >= 0).
+## Since screen y increases DOWNWARD, this means vertices (x0,y0),(x1,y1),
+## (x2,y2) must be ordered COUNTER-CLOCKWISE as seen on screen -- NOT
+## clockwise. Example (apex on top, base at bottom, kept/visible):
+##   fill_triangle(50,0, 0,100, 100,100, r,g,b);   // top, bottom-left, bottom-right
+## Swapping the last two vertices flips the winding and gets it culled.
+fill_triangle(x0, y0, x1, y1, x2, y2, r, g, b);
+
+## Key down event handler
+on key_down(int key) {
+    if (key == 27) {
+        window.close();
+    }
+}
+
+## Mouse move event handler
+on mouse_move(int mx, int my) {
+    pixel(mx, my, 255, 255, 0);
+}
+
+## Print integer
+println(42);
+
+## Print string
+println("Hello");
+
+## Print variable
+print(x);
+
+## Read file into string
+local str config = readfile("config.txt");
+
+## String can be passed directly to mem functions
+local str data = readfile("data.bin");
+local int ch = mem.peek8(data, 0);
+
+## Allocate memory
+local int buf = mem.alloc(1024);
+
+## Free memory
+mem.free(buf);
+
+## Poke byte at offset
+mem.poke8(buf, 0, 72);
+
+## Peek byte at offset
+local int ch = mem.peek8(buf, i);
+
+## Poke 64-bit at byte offset
+mem.poke64(buf, 0, 12345678);
+mem.poke64(buf, 8, 87654321);
+
+## Peek 64-bit at byte offset
+local int val = mem.peek64(buf, 0);
+
+## Poke 32-bit float at byte offset (for SIMD vec4 buffers)
+mem.pokef32(buf, 0, 1.0);
+mem.pokef32(buf, 4, 2.5);
+
+## File open (mode: 1=read, 2=write/truncate, 3=append) -> int handle, -1 on fail
+local int fh = file.open("save.dat", 2);
+
+## File write (handle, buf ptr, nbytes) -> int bytes written, -1 on fail
+local int written = file.write(fh, buf, 1024);
+
+## File read (handle, buf ptr, nbytes) -> int bytes read, -1 on fail
+local int n = file.read(fh, buf, 1024);
+
+## File seek (handle, offset, whence: 0=start, 1=current, 2=end) -> int new position
+file.seek(fh, 0, 0);
+
+## File size (handle) -> int size in bytes, -1 on fail
+local int sz = file.size(fh);
+
+## File close (handle)
+file.close(fh);
+
+## File exists (path) -> int bool (1/0)
+if (file.exists("save.dat")) {
+    println("save file found");
+}
+
+## File delete (path) -> int bool (1/0)
+file.delete("save.dat");
+
+## File mkdir (path) -> int bool (1/0)
+file.mkdir("saves");
+
+## Directory listing (per-handle; pattern is a glob, not a bare dir path)
+local int lh = file.list_open("saves/*.dat");
+while (file.list_next(lh)) {
+    println(file.list_name(lh));
+}
+file.list_close(lh);
+
+## Thread spawn
+thread {
+    println("running in thread");
+}
+
+## Sync wait for threads
+sync {
+    println("all threads done");
+}
+
+## Lock for mutual exclusion
+lock {
+    counter = counter + 1;
+}
+
+## CPU info
+println(cpu.physical_cores());
+println(cpu.logical_cores());
+
+## SIMD feature detection (auto-runs at startup; call to re-check)
+cpu.simd_detect();
+if (cpu.has_avx2()) {
+    println("AVX2 available");
+}
+
+## SIMD feature flags (each returns 1 or 0)
+cpu.has_sse();
+cpu.has_sse2();
+cpu.has_sse3();
+cpu.has_ssse3();
+cpu.has_sse41();
+cpu.has_sse42();
+cpu.has_fma();
+cpu.has_avx();
+cpu.has_avx2();
+cpu.has_avx512f();
+
+## Time in milliseconds
+local int ms = time.now_ms();
+
+## Time in microseconds
+local int us = time.now_us();
+
+## Matrix identity
+mat.identity();
+
+## Matrix push/pop
+mat.push();
+mat.pop();
+
+## Matrix translate (16.16 fixed point)
+mat.translate(x, y, z);
+
+## Matrix rotate (angle 0-255 = 0-360 degrees)
+mat.rotate_y(angle);
+
+## Matrix transform point
+local int tx = mat.transform_x(x, y, z);
+local int ty = mat.transform_y(x, y, z);
+local int tz = mat.transform_z(x, y, z);
+
+## SIMD normalize vector
+simd.normalize4(dest, src);
+
+## SIMD linear interpolation
+simd.lint4(dest, a, b, t);
+
+## SIMD dot product
+simd.dot4(dest, a, b);
+
+## SIMD cross product
+simd.cross3(dest, a, b);
+
+## Bit shift left (for 16.16 fixed point)
+local int fixed = bit.shl(n, 16);
+
+## Bit shift right
+local int integer = bit.shr(fixed, 16);
+
+## Network start
+net.start();
+
+## Network connect
+net.connect("127.0.0.1", 5555);
+
+## Network send buffer
+net.send_buf(buf, len);
+
+## Network receive buffer
+local int n = net.recv_buf(buf, maxlen);
+
+## Network end
+net.end();
+
+## Mouse capture for FPS controls
+window.capture_mouse();
+
+## Mouse release
+window.release_mouse();
+
+## Native screen resolution (returns "WxH" string)
+local str res = window.native();
+
+## Z-buffer clear
+zbuffer.clear();
+
+## Fill triangle with z-buffer
+fill_triangle_z(x0, y0, z0, x1, y1, z1, x2, y2, z2, r, g, b);
+// Vertices must be COUNTER-CLOCKWISE (as seen on screen) for backface culling -- see the fill_triangle note above
+
+## Fill triangle gradient (per-vertex colors)
+fill_triangle_gradient(x0, y0, r0, g0, b0, x1, y1, r1, g1, b1, x2, y2, r2, g2, b2);
+
+## Fill triangle affine textured (PS1-style, RGB565 texture)
+fill_triangle_affine(x0, y0, u0, v0, x1, y1, u1, v1, x2, y2, u2, v2, tex_ptr, tex_w, tex_h);
+
+## BMP image loading (24-bit uncompressed)
+local str data = readfile("image.bmp");
+local int w = mesh.bmp_width(data);
+local int h = mesh.bmp_height(data);
+local int rgb = mesh.bmp_pixel(data, x, y);
+local int gray = mesh.bmp_gray(data, x, y);
+
+## Mesh creation and access
+local int m = mesh.create(100, 200);
+mesh.set_vertex(m, 0, x, y, z);
+mesh.set_face(m, 0, v0, v1, v2);
+local int vx = mesh.get_vertex_x(m, i);
+local int vy = mesh.get_vertex_y(m, i);
+local int vz = mesh.get_vertex_z(m, i);
+local int vi = mesh.get_face(m, f, 0);
+mesh.destroy(m);
+
+## Mesh from heightmap
+local int terrain = mesh.from_heightmap(bmp_ptr, scale_xz, scale_y);
+local int num_verts = mesh.vertex_count(terrain);
+local int num_faces = mesh.face_count(terrain);
+
+## Procedural texture generation
+local int c = tex.checker(x, y, 32);
+local int gh = tex.gradient_h(x, 256);
+local int gv = tex.gradient_v(y, 256);
+local int b = tex.brick(x, y, 64, 32, 2);
+local int n = tex.noise2d(x, y, seed);
+
+## Fill triangle perspective-correct (PS2-style, RGB565 texture)
+fill_triangle_persp(x0, y0, z0, u0, v0, x1, y1, z1, u1, v1, x2, y2, z2, u2, v2, tex_ptr, tex_w, tex_h);
+## Note: fill_triangle_persp/fill_triangle_pcolor automatically discard
+## a triangle if any vertex is at/behind the camera (z <= 0) or projects
+## far outside the window's bounds -- a safety net, not a full clip.
+
+## Program entry point (main function)
+function main() {
+    window.open(800, 600, "Title");
+    while (window.is_open()) {
+        window.clear(0, 0, 0);
+        window.flush();
+    }
+    return;
+}
+
+## Fill triangle perspective-correct with vertex colors (vertex buffer)
+local int verts = mem.alloc(192);
+mem.poke64(verts, 0, x0);
+mem.poke64(verts, 8, y0);
+mem.poke64(verts, 16, z0);
+mem.poke64(verts, 24, u0);
+mem.poke64(verts, 32, v0);
+mem.poke64(verts, 40, r0);
+mem.poke64(verts, 48, g0);
+mem.poke64(verts, 56, b0);
+fill_triangle_pcolor(verts, tex_ptr, tex_w, tex_h);
+## Note: fill_triangle_persp/fill_triangle_pcolor automatically discard
+## a triangle if any vertex is at/behind the camera (z <= 0) or projects
+## far outside the window's bounds -- a safety net, not a full clip.

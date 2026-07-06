@@ -1,0 +1,87 @@
+// Config-driven heart renderer
+// Reads heart.txt: center_x, center_y, num_points, points..., r, g, b
+
+function parse_int(int ptr, int start, int end) {
+    local int val = 0;
+    local int i = start;
+    while (i < end) {
+        local int byte = mem.peek8(ptr, i);
+        if (byte >= 48) {
+            if (byte <= 57) {
+                val = $(($val * 10 + $byte - 48));
+            }
+        }
+        i = $(($i + 1));
+    }
+    return int val;
+}
+
+function main() {
+    window.open(640, 480, "Heart from Config");
+
+    local str config = readfile("heart.txt");
+    local int ptr = config;
+
+    // Parse all values into array (max 50 values)
+    local int[] values = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    local int val_idx = 0;
+    local int line_start = 0;
+    local int pos = 0;
+    local int done = 0;
+
+    while (done == 0) {
+        local int byte = mem.peek8(ptr, pos);
+        if (byte == 10) {
+            if (pos > line_start) {
+                values[val_idx] = parse_int(ptr, line_start, pos);
+                val_idx = $(($val_idx + 1));
+            }
+            line_start = $(($pos + 1));
+        }
+        if (byte == 0) {
+            if (pos > line_start) {
+                values[val_idx] = parse_int(ptr, line_start, pos);
+                val_idx = $(($val_idx + 1));
+            }
+            done = 1;
+        }
+        pos = $(($pos + 1));
+        if (pos > 2000) {
+            done = 1;
+        }
+    }
+
+    // Extract header
+    local int cx = values[0];
+    local int cy = values[1];
+    local int num_points = values[2];
+
+    // Color at the end: after center(2) + num(1) + points(num*2)
+    local int color_idx = $((3 + $num_points * 2));
+    local int r = values[color_idx];
+    local int g = values[$(($color_idx + 1))];
+    local int b = values[$(($color_idx + 2))];
+
+    while (window.is_open()) {
+        // Clear screen black
+        fill_triangle(0, 0, 640, 0, 640, 480, 0, 0, 0);
+        fill_triangle(0, 0, 640, 480, 0, 480, 0, 0, 0);
+
+        // Draw triangle fan
+        local int i = 0;
+        while (i < $(($num_points - 1))) {
+            local int idx1 = $((3 + $i * 2));
+            local int idx2 = $((3 + $i * 2 + 2));
+            local int x1 = values[idx1];
+            local int y1 = values[$(($idx1 + 1))];
+            local int x2 = values[idx2];
+            local int y2 = values[$(($idx2 + 1))];
+            fill_triangle(cx, cy, x1, y1, x2, y2, r, g, b);
+            i = $(($i + 1));
+        }
+
+        window.flush();
+    }
+
+    return int 0;
+}

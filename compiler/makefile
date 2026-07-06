@@ -12,7 +12,7 @@ NASMFLAGS = -f win64
 
 LDLIBS  = -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm
 
-SRCS = main.c lexer.c ast.c parser.c codegen.c window_runtime.c net_runtime.c server_runtime.c mem_runtime.c matrix_runtime.c simd_runtime.c mesh_runtime.c texture_runtime.c
+SRCS = main.c lexer.c ast.c parser.c codegen.c window_runtime.c net_runtime.c server_runtime.c mem_runtime.c file_runtime.c matrix_runtime.c simd_runtime.c mesh_runtime.c texture_runtime.c
 OBJS = $(SRCS:.c=.o)
 
 SLAG = slag.exe

@@ -608,11 +608,15 @@ fill_triangle_persp(x0, y0, z0, u0, v0, x1, y1, z1, u1, v1, x2, y2, z2, u2, v2, 
 
 PS2-style perspective-correct texture-mapped triangle. Interpolates 1/z, u/z, v/z per scanline. To keep the inner loop division-light, perspective is corrected exactly once every 8 pixels and UV is interpolated affinely between those points (the classic PS2 subdivision) — reducing per-pixel divisions ~20× versus per-pixel correction, with sub-pixel drift that is imperceptible at normal triangle sizes. Each pixel is written as a single 32-bit BGRA store.
 
+Near-plane safety: triangles with any vertex at or behind the camera (z <= 0), or whose projected screen coordinates land far outside the active window's bounds (a generous 8x-window-size margin), are silently discarded before rasterization. This is a cheap safety net against the degenerate 1/z blowup that near-camera geometry produces — not a full geometric clip — so it prevents corrupted/stretched-garbage triangles rather than rendering a correctly-clipped partial triangle. It does not protect against a caller's own perspective-divide-by-zero in Slag script code computing screen coordinates before the call; scripts should still guard `z > 0` themselves before projecting.
+
 ```
 fill_triangle_pcolor(verts, tex_ptr, tex_w, tex_h);
 ```
 
 Perspective-correct textured triangle with per-vertex colors. The `verts` parameter points to 24 consecutive int64 values (3 vertices × 8 values each: x, y, z, u, v, r, g, b). Texture color is multiplied by interpolated vertex color, enabling Gouraud-style shading combined with texturing.
+
+The same near-plane safety net as `fill_triangle_persp` applies here: any vertex at or behind the camera, or projected far outside the window's bounds, silently discards the triangle before rasterization.
 
 ### 12.4 Flush
 
@@ -994,6 +998,19 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `mem.poke64(ptr,byteoff,v)`     | Store 8 bytes at ptr + byteoff                     |
 | `mem.peek64(ptr,byteoff)`       | Load 8 bytes at ptr + byteoff -> int               |
 | `mem.pokef32(ptr,byteoff,f)`    | Store 32-bit float at ptr + byteoff                |
+| `file.open(path,mode)`          | Open file; mode 1=read/2=write/3=append -> handle (-1 fail) |
+| `file.close(handle)`            | Close a file handle                                |
+| `file.read(handle,buf,n)`       | Read n bytes into buf -> bytes read (-1 fail)      |
+| `file.write(handle,buf,n)`      | Write n bytes from buf -> bytes written (-1 fail)  |
+| `file.seek(handle,off,whence)`  | Seek; whence 0=start/1=current/2=end -> new pos    |
+| `file.size(handle)`             | File size in bytes (-1 fail)                       |
+| `file.exists(path)`             | 1/0: does path exist                               |
+| `file.delete(path)`             | Delete a file -> 1/0 success                       |
+| `file.mkdir(path)`              | Create a directory -> 1/0 success                  |
+| `file.list_open(pattern)`       | Open a directory listing (glob e.g. "dir/*.ext") -> handle (-1 fail) |
+| `file.list_next(handle)`        | Advance to next entry -> 1/0 (0 = no more)         |
+| `file.list_name(handle)`        | Current entry's filename -> str                    |
+| `file.list_close(handle)`       | Close a directory listing handle                   |
 | `bit.shl(val,count)`            | Left shift (inlined to shl instruction)            |
 | `bit.shr(val,count)`            | Unsigned right shift (inlined to shr instruction)  |
 | `mat.identity()`                | Reset current matrix to identity                   |
@@ -1159,7 +1176,9 @@ function main() {
 | 0.11    | Perspective-correct texture mapping (fill_triangle_persp, fill_triangle_pcolor) | ✅ Complete |
 | 0.12    | Backface culling on all fill_triangle* variants, window.clear/window.text (GDI overlay text), `global`/`local` as the sole declaration syntax (removed `var` and `$((...))`), mem.peek64/poke64 changed to byte-offset addressing | ✅ Complete |
 | 0.13    | Runtime SIMD detection (`cpu.simd_detect`/`cpu.has_*` via CPUID+XGETBV), `mem.pokef32`, perspective rasterizer inner-loop optimization (8px UV subdivision, single-store BGRA writes) | ✅ Complete |
-| 0.14    | Per-triangle alpha blending, near-plane triangle clipping   | 🔲 Planned  |
+| 0.13.1  | File I/O (`file.open/close/read/write/seek/size/exists/delete/mkdir`), per-handle directory listing (`file.list_open/next/name/close`) | ✅ Complete |
+| 0.13.2  | Near-plane cull safety net for `fill_triangle_persp`/`fill_triangle_pcolor` (degenerate z<=0 reject + adaptive window-bounds reject); `mem.poke8` register-clobber fix for nested inlined builtin calls | ✅ Complete |
+| 0.14    | Per-triangle alpha blending, full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net)   | 🔲 Planned  |
 | 0.15    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
 | 0.16    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
