@@ -1193,8 +1193,9 @@ function main() {
 | 0.13.1  | File I/O (`file.open/close/read/write/seek/size/exists/delete/mkdir`), per-handle directory listing (`file.list_open/next/name/close`) | ✅ Complete |
 | 0.13.2  | Near-plane cull safety net for `fill_triangle_persp`/`fill_triangle_pcolor` (degenerate z<=0 reject + adaptive window-bounds reject); `mem.poke8` register-clobber fix for nested inlined builtin calls | ✅ Complete |
 | 0.13.3  | Full audio runtime (`audio.init/close/load/free/play/loop/stop/volume/master_volume/is_playing/position`): 32-slot software mixer over waveOut, RIFF/WAVE parsing with automatic `smpl`-chunk loop-point support | ✅ Complete |
-| 0.14    | Per-triangle alpha blending, full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net)   | 🔲 Planned  |
-| 0.15    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
+| 0.13.4  | Bilinear texture filtering (4-tap weighted average) for `fill_triangle_persp`/`fill_triangle_pcolor` | ✅ Complete |
+| 0.14    | Full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net) | 🔲 Planned  |
+| 0.15    | Distance fog                                                | 🔲 Planned  |
 | 0.16    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
@@ -1207,12 +1208,10 @@ To achieve PS2-era rendering at 60fps, the following features are required:
 - Gouraud shading combined with texturing
 - Backface culling (signed-area winding test, applied to all fill_triangle* variants)
 
-**Core rendering (0.13, planned):**
-- Per-triangle alpha blending / transparency
+**Core rendering (0.14, planned):**
 - Near-plane triangle clipping (Sutherland-Hodgman)
 
-**Visual quality (0.14):**
-- Bilinear texture filtering (4-tap weighted average)
+**Visual quality (0.15, planned):**
 - Linear fog (blend to fog color based on z-depth)
 
 **Performance targets:**
