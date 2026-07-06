@@ -189,6 +189,32 @@ while (file.list_next(lh)) {
 }
 file.list_close(lh);
 
+## Audio init (rate, channels, bits) -> int bool; all loaded WAVs must match this
+local int ok = audio.init(44100, 2, 16);
+
+## Audio load (path) -> int handle, -1 on fail; smpl-chunk loop points parsed automatically
+local int music = audio.load("theme.wav");
+local int sfx = audio.load("jump.wav");
+
+## Audio play (one-shot, ignores loop points) / loop (repeats loop region forever)
+audio.play(sfx);
+audio.loop(music);
+
+## Audio volume (per-sound and master, 0-255)
+audio.volume(sfx, 200);
+audio.master_volume(255);
+
+## Audio query playback state
+if (audio.is_playing(sfx) == 0) {
+    audio.play(sfx);
+}
+local int pos = audio.position(music);
+
+## Audio stop / free / close
+audio.stop(sfx);
+audio.free(sfx);
+audio.close();
+
 ## Thread spawn
 thread {
     println("running in thread");

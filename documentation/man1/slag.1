@@ -460,6 +460,59 @@ Return the current entry's filename as a str.
 .TP
 .B file.list_close(handle)
 Close a directory listing handle.
+.SS Audio
+Software-mixed PCM audio output over winmm's waveOut (link with
+-lwinmm). Up to 32 sounds may be loaded and mixed simultaneously via a
+background thread; all loaded WAV files must exactly match the format
+given to audio.init \(em there is no resampling or format conversion.
+.TP
+.BI audio.init( rate , " channels" , " bits" )
+Open the audio device at this exact format. Returns 1 on success, 0 on
+failure.
+.TP
+.B audio.close()
+Stop the mixer thread and close the audio device.
+.TP
+.B audio.load(path)
+Parse a RIFF/WAVE file and register it as a loaded sound. Returns an
+int handle, or -1 on failure (file not found, malformed RIFF, missing
+fmt/data chunk, format mismatch against audio.init, or no free slot).
+If the file has a "smpl" chunk with at least one loop point, it is
+parsed automatically and used by audio.loop(); otherwise looping wraps
+the entire file.
+.TP
+.B audio.free(handle)
+Free a loaded sound and its underlying file buffer.
+.TP
+.B audio.play(handle)
+Play once from the start of the file, ignoring any loop points.
+.TP
+.B audio.loop(handle)
+Play from the start once, then repeat the
+.I "[loop_start, loop_end)"
+region forever (the whole file if no smpl chunk was found).
+.TP
+.B audio.stop(handle)
+Stop playback and reset position to the start.
+.TP
+.BI audio.volume( handle , " vol" )
+Set this sound's volume, 0-255.
+.TP
+.B audio.master_volume(vol)
+Set the master volume, 0-255, applied to every sound during mixing.
+.TP
+.B audio.is_playing(handle)
+Return 1 if the sound is currently playing (including mid-loop), 0
+otherwise.
+.TP
+.B audio.position(handle)
+Return the current byte offset into the sound's PCM data.
+.PP
+Known limitations: no pause/resume (audio.stop always resets position to
+0); no stereo panning (volume only, no left/right balance); each loaded
+sound has exactly one playback slot, so overlapping the same sound with
+itself requires loading it into separate handles; no pitch/rate
+variation; audio.load reads the entire file into memory (no streaming).
 .SS Bit manipulation
 .TP
 .B bit.shl(value,count)
@@ -742,7 +795,7 @@ A self-hosting compiler
 .nf
 cd compiler
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
-    window_runtime.c net_runtime.c mem_runtime.c file_runtime.c matrix_runtime.c \e
+    window_runtime.c net_runtime.c mem_runtime.c file_runtime.c audio_runtime.c matrix_runtime.c \e
     simd_runtime.c mesh_runtime.c texture_runtime.c
 .fi
 .RE

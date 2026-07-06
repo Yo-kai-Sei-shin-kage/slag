@@ -1011,6 +1011,18 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `file.list_next(handle)`        | Advance to next entry -> 1/0 (0 = no more)         |
 | `file.list_name(handle)`        | Current entry's filename -> str                    |
 | `file.list_close(handle)`       | Close a directory listing handle                   |
+| `audio.init(rate,channels,bits)` | Open waveOut device at this exact format -> 1/0    |
+| `audio.close()`                 | Stop mixer, close the audio device                 |
+| `audio.load(path)`              | Load a WAV (must match audio.init's format) -> handle (-1 fail) |
+| `audio.free(handle)`            | Free a loaded sound                                |
+| `audio.play(handle)`            | Play once from the start (ignores loop points)     |
+| `audio.loop(handle)`            | Play from start, then repeat [loop_start,loop_end) forever |
+| `audio.stop(handle)`            | Stop playback                                      |
+| `audio.volume(handle,vol)`      | Per-sound volume 0-255                             |
+| `audio.master_volume(vol)`      | Master volume 0-255                                |
+| `audio.is_playing(handle)`      | 1/0: is this sound currently playing                |
+| `audio.position(handle)`        | Current byte offset into the sound's PCM data      |
+
 | `bit.shl(val,count)`            | Left shift (inlined to shl instruction)            |
 | `bit.shr(val,count)`            | Unsigned right shift (inlined to shr instruction)  |
 | `mat.identity()`                | Reset current matrix to identity                   |
@@ -1066,6 +1078,8 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `net.discover_send()`          | Client: fire a UDP LAN discovery broadcast          |
 | `net.discover_poll()`           | Client: -> discovered slot idx or -1               |
 | `net.discover_count/ip/port/name/max/clients(idx)` | Client: read the discovered-server list |
+
+**Audio known limitations:** no pause/resume (`audio.stop` always resets position to 0), no stereo panning (volume only), each loaded sound has exactly one playback slot (overlapping the same sound with itself requires separate handles), no pitch/rate variation, and `audio.load` reads the entire file into memory (no streaming).
 
 ---
 
@@ -1178,6 +1192,7 @@ function main() {
 | 0.13    | Runtime SIMD detection (`cpu.simd_detect`/`cpu.has_*` via CPUID+XGETBV), `mem.pokef32`, perspective rasterizer inner-loop optimization (8px UV subdivision, single-store BGRA writes) | ✅ Complete |
 | 0.13.1  | File I/O (`file.open/close/read/write/seek/size/exists/delete/mkdir`), per-handle directory listing (`file.list_open/next/name/close`) | ✅ Complete |
 | 0.13.2  | Near-plane cull safety net for `fill_triangle_persp`/`fill_triangle_pcolor` (degenerate z<=0 reject + adaptive window-bounds reject); `mem.poke8` register-clobber fix for nested inlined builtin calls | ✅ Complete |
+| 0.13.3  | Full audio runtime (`audio.init/close/load/free/play/loop/stop/volume/master_volume/is_playing/position`): 32-slot software mixer over waveOut, RIFF/WAVE parsing with automatic `smpl`-chunk loop-point support | ✅ Complete |
 | 0.14    | Per-triangle alpha blending, full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net)   | 🔲 Planned  |
 | 0.15    | Bilinear texture filtering, distance fog                    | 🔲 Planned  |
 | 0.16    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |

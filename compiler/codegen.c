@@ -39,6 +39,7 @@
 #include "server_runtime.h"
 #include "mem_runtime.h"
 #include "file_runtime.h"
+#include "audio_runtime.h"
 #include "matrix_runtime.h"
 #include "simd_runtime.h"
 #include "mesh_runtime.h"
@@ -1836,7 +1837,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             }
         }
         // mem.free(ptr)
-        else if (strcmp(member, "free") == 0) {
+        else if (strcmp(member, "free") == 0 && strcmp(base, "mem") == 0) {
             emit(cg, "    ; mem.free");
             if (args->count >= 1) {
                 emit_int_expr(cg, args->items[0]);
@@ -2072,6 +2073,132 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  rcx, rax        ; handle");
                 emit(cg, "    sub  rsp, 32");
                 emit(cg, "    call _slag_file_list_close");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.init(rate, channels, bits) -> int bool (1/0)
+        else if (strcmp(member, "init") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.init");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; rate");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; channels");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8,  rax        ; bits");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_init");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.close()
+        else if (strcmp(member, "close") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.close");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call _slag_audio_close");
+            emit(cg, "    add  rsp, 32");
+        }
+        // audio.load(path) -> int handle (-1 on fail)
+        else if (strcmp(member, "load") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.load");
+            if (args->count >= 1) {
+                emit_str_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; path ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_load");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.free(handle)
+        else if (strcmp(member, "free") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.free");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_free");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.play(handle)
+        else if (strcmp(member, "play") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.play");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_play");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.loop(handle)
+        else if (strcmp(member, "loop") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.loop");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_loop");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.stop(handle)
+        else if (strcmp(member, "stop") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.stop");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_stop");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.volume(handle, vol)
+        else if (strcmp(member, "volume") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.volume");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; handle");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax        ; vol");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_volume");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.master_volume(vol)
+        else if (strcmp(member, "master_volume") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.master_volume");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; vol");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_master_volume");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.is_playing(handle) -> int bool (1/0)
+        else if (strcmp(member, "is_playing") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.is_playing");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_is_playing");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.position(handle) -> int byte offset
+        else if (strcmp(member, "position") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.position");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_position");
                 emit(cg, "    add  rsp, 32");
             }
         }
@@ -4380,6 +4507,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_server_imports(&cg);
     emit_mem_imports(&cg);
     emit_file_imports(&cg);
+    emit_audio_imports(&cg);
     emit_simd_imports(&cg);
 
     // .text section.
@@ -4459,6 +4587,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_server_runtime(&cg);
     emit_mem_runtime(&cg);
     emit_file_runtime(&cg);
+    emit_audio_runtime(&cg);
     emit_mat_runtime(&cg);
     emit_simd_runtime(&cg);
     emit_mesh_runtime(&cg);
@@ -4483,6 +4612,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_server_bss(&cg);
     emit_mem_bss(&cg);
     emit_file_bss(&cg);
+    emit_audio_bss(&cg);
     emit_mat_bss(&cg);
     emit_simd_bss(&cg);
     emit_mesh_bss(&cg);

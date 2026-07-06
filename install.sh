@@ -210,7 +210,7 @@ fi
 echo "Building the Slag compiler..."
 cd "$COMPILER_DIR"
 x86_64-w64-mingw32-gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \
-    window_runtime.c net_runtime.c server_runtime.c mem_runtime.c file_runtime.c matrix_runtime.c \
+    window_runtime.c net_runtime.c server_runtime.c mem_runtime.c file_runtime.c audio_runtime.c matrix_runtime.c \
     simd_runtime.c mesh_runtime.c texture_runtime.c
 
 # Decide the expected binary name per platform. On Cygwin/MSYS, GCC always
@@ -302,7 +302,7 @@ base="${1%.slag}"
 nasm -f win64 "$base.asm" -o "$base.obj"
 
 # Build link flags
-LDFLAGS="-nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32"
+LDFLAGS="-nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm"
 if [[ $gui -eq 1 ]]; then
     LDFLAGS="$LDFLAGS -mwindows"
 fi
