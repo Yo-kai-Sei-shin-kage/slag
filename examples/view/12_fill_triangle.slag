@@ -1,18 +1,10 @@
 // Example: Fill Triangle
-//
-//
-//
-//
-//
-//
 function main() {
-    window.open(400, 300, "Triangles");
+    window.open(400, 300, "Triangle");
 
     while (window.is_open()) {
         // fill_triangle(x0, y0, x1, y1, x2, y2, r, g, b)
-        fill_triangle(50, 250, 150, 250, 100, 100, 255, 0, 0);   // red
-        fill_triangle(150, 200, 250, 200, 200, 80, 0, 255, 0);   // green
-        fill_triangle(250, 250, 350, 250, 300, 120, 0, 0, 255);  // blue
+        fill_triangle(50, 250, 150, 250, 100, 100, 255, 0, 0);
         window.flush();
     }
 

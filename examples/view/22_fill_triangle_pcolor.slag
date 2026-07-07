@@ -1,46 +1,24 @@
 // Example: Textured Triangle with Vertex Colors
-//
-//
-//
-//
-//
-//
 function main() {
     window.open(400, 300, "PColor Triangle");
-    local int verts = mem.alloc(192);
-    local int tex = mem.alloc(2);
+
+    local int tex = mem.alloc(2);         // 1x1 texture
     mem.poke8(tex, 0, 255);
     mem.poke8(tex, 1, 255);
 
-    // Vertex 0: x,y,z,u,v,r,g,b
-    mem.poke64(verts, 0, 50);
-    mem.poke64(verts, 1, 50);
-    mem.poke64(verts, 2, 100);
-    mem.poke64(verts, 3, 0);
-    mem.poke64(verts, 4, 0);
-    mem.poke64(verts, 5, 255);
-    mem.poke64(verts, 6, 0);
-    mem.poke64(verts, 7, 0);
-
+    local int verts = mem.alloc(192);     // 3 verts x 8 fields (x,y,z,u,v,r,g,b)
+    // Vertex 0
+    mem.poke64(verts, 0, 50);  mem.poke64(verts, 1, 50);  mem.poke64(verts, 2, 100);
+    mem.poke64(verts, 3, 0);   mem.poke64(verts, 4, 0);
+    mem.poke64(verts, 5, 255); mem.poke64(verts, 6, 0);   mem.poke64(verts, 7, 0);
     // Vertex 1
-    mem.poke64(verts, 8, 350);
-    mem.poke64(verts, 9, 80);
-    mem.poke64(verts, 10, 400);
-    mem.poke64(verts, 11, 0);
-    mem.poke64(verts, 12, 0);
-    mem.poke64(verts, 13, 0);
-    mem.poke64(verts, 14, 255);
-    mem.poke64(verts, 15, 0);
-
+    mem.poke64(verts, 8, 350); mem.poke64(verts, 9, 80);  mem.poke64(verts, 10, 400);
+    mem.poke64(verts, 11, 0);  mem.poke64(verts, 12, 0);
+    mem.poke64(verts, 13, 0);  mem.poke64(verts, 14, 255); mem.poke64(verts, 15, 0);
     // Vertex 2
-    mem.poke64(verts, 16, 200);
-    mem.poke64(verts, 17, 250);
-    mem.poke64(verts, 18, 400);
-    mem.poke64(verts, 19, 0);
-    mem.poke64(verts, 20, 0);
-    mem.poke64(verts, 21, 0);
-    mem.poke64(verts, 22, 0);
-    mem.poke64(verts, 23, 255);
+    mem.poke64(verts, 16, 200); mem.poke64(verts, 17, 250); mem.poke64(verts, 18, 400);
+    mem.poke64(verts, 19, 0);   mem.poke64(verts, 20, 0);
+    mem.poke64(verts, 21, 0);   mem.poke64(verts, 22, 0);   mem.poke64(verts, 23, 255);
 
     while (window.is_open()) {
         // fill_triangle_pcolor(verts, tex_ptr, tex_w, tex_h)

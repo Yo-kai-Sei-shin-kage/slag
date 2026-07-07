@@ -1,33 +1,15 @@
-// Example: Multi-Window
-//
-//
-//
-//
-//
-//
-// Two windows from one binary using TLS
-
+// Example: Multi-Window  (two windows from one binary via threads + TLS)
 function red_window() {
     window.open(300, 200, "Window 1 - Red");
-    local int frame = 0;
     while (window.is_open()) {
-        local int p = 100 + frame % 100;
-        fill_triangle(0,0,300,0,300,200,p,30,30);
-        fill_triangle(0,0,300,200,0,200,p,30,30);
         window.flush();
-        frame = frame + 1;
     }
 }
 
 function blue_window() {
     window.open(300, 200, "Window 2 - Blue");
-    local int frame = 0;
     while (window.is_open()) {
-        local int p = 100 + frame % 100;
-        fill_triangle(0,0,300,0,300,200,30,30,p);
-        fill_triangle(0,0,300,200,0,200,30,30,p);
         window.flush();
-        frame = frame + 1;
     }
 }
 

@@ -1,4 +1,4 @@
-// audio_runtime.c -- winmm waveOut audio runtime for Slag.
+﻿// audio_runtime.c -- winmm waveOut audio runtime for Slag.
 // Emits NASM asm via cg_emit. Software-mixed PCM audio output.
 //
 // Linker dependency: -lwinmm
@@ -80,7 +80,8 @@ void emit_audio_runtime(Codegen *cg) {
     E("SOUND_FILEBUF    equ 48");
     E("SOUND_LOOP_START equ 56");
     E("SOUND_LOOP_END   equ 64");
-    E("SOUND_SIZE       equ 72");
+    E("SOUND_PAN        equ 72   ; 0=hard left .. 128=center .. 255=hard right");
+    E("SOUND_SIZE       equ 80");
     E("AUDIO_BUFFER_FRAMES equ 4096");
     E("AUDIO_BUFFER_BYTES  equ 16384");
     E("");
@@ -180,6 +181,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    jnz  .ai_fail");
     E("");
     E("    mov  qword [_audio_running], 1");
+    E("    mov  qword [_audio_master_vol], 255  ; default full master volume (BSS is 0 -> silence otherwise)");
     E("    mov  qword [_audio_hdr0_submitted], 0");
     E("    mov  qword [_audio_hdr1_submitted], 0");
     E("");
@@ -415,6 +417,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    mov  qword [rcx+SOUND_VOLUME], 255");
     E("    mov  qword [rcx+SOUND_LOOPING], 0");
     E("    mov  qword [rcx+SOUND_ACTIVE], 0");
+    E("    mov  qword [rcx+SOUND_PAN], 128   ; center pan (no-op) by default");
     E("    mov  rax, [rbp-8]");
     E("    mov  [rcx+SOUND_FILEBUF], rax");
     E("    mov  rax, [rbp-96]");
@@ -483,7 +486,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("_slag_audio_free:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 32");
+    E("    sub  rsp, 48   ; 32 shadow + 16 locals; keeps [rbp-8] out of callee shadow");
     E("    mov  [rbp-8], rcx");
     E("    cmp  rcx, 0");
     E("    jle  .af_done");
@@ -505,13 +508,22 @@ void emit_audio_runtime(Codegen *cg) {
     E("    jmp  .af_slot_loop");
     E(".af_slot_done:");
     E("");
+    E("    ; free the file buffer only if it is non-null, then null it out so a");
+    E("    ; second audio.free (or a free after audio.close) can't double-free.");
+    E("    mov  rax, [rbp-8]");
+    E("    mov  r8,  [rax+SOUND_FILEBUF]");
+    E("    test r8,  r8");
+    E("    jz   .af_free_struct");
     E("    call GetProcessHeap");
     E("    mov  rcx, rax");
     E("    xor  rdx, rdx");
-    E("    mov  r8,  [rbp-8]");
-    E("    mov  r8,  [r8+SOUND_FILEBUF]");
+    E("    mov  rax, [rbp-8]");
+    E("    mov  r8,  [rax+SOUND_FILEBUF]");
     E("    call HeapFree");
+    E("    mov  rax, [rbp-8]");
+    E("    mov  qword [rax+SOUND_FILEBUF], 0");
     E("");
+    E(".af_free_struct:");
     E("    call GetProcessHeap");
     E("    mov  rcx, rax");
     E("    xor  rdx, rdx");
@@ -519,7 +531,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    call HeapFree");
     E("");
     E(".af_done:");
-    E("    add  rsp, 32");
+    E("    add  rsp, 48");
     E("    pop  rbp");
     E("    ret");
     E("");
@@ -577,6 +589,25 @@ void emit_audio_runtime(Codegen *cg) {
     E("    ret");
     E("");
 
+    // _slag_audio_pan(rcx=handle, rdx=pan): 0=hard left, 128=center,
+    // 255=hard right. Clamped to 0-255, stored per-sound.
+    E("; --- _slag_audio_pan (rcx=handle, rdx=pan) ---");
+    E("_slag_audio_pan:");
+    E("    cmp  rcx, 0");
+    E("    jle  .apan_done");
+    E("    cmp  rdx, 0");
+    E("    jge  .apan_low_ok");
+    E("    xor  rdx, rdx");
+    E(".apan_low_ok:");
+    E("    cmp  rdx, 255");
+    E("    jle  .apan_high_ok");
+    E("    mov  rdx, 255");
+    E(".apan_high_ok:");
+    E("    mov  [rcx+SOUND_PAN], rdx");
+    E(".apan_done:");
+    E("    ret");
+    E("");
+
     // _slag_audio_master_volume(rcx=vol)
     E("; --- _slag_audio_master_volume (rcx=vol) ---");
     E("_slag_audio_master_volume:");
@@ -618,15 +649,16 @@ void emit_audio_runtime(Codegen *cg) {
 
     // _slag_audio_mix_buffer(rcx=buf_ptr): fills AUDIO_BUFFER_FRAMES stereo
     // int16 frames by summing every active sound slot (per-sound + master
-    // volume, both 0-255), clamped to int16 range. No calls are made
+    // volume + pan, all 0-255), clamped to int16 range. No calls are made
     // inside this proc, so alignment isn't a concern here.
-    // Stack: [rbp-8]=buf_ptr [rbp-16]=frame_i [rbp-24]=acc_l
-    //        [rbp-32]=acc_r  [rbp-40]=slot_i
+    // Stack: [rbp-8]=buf_ptr  [rbp-16]=frame_i [rbp-24]=acc_l
+    //        [rbp-32]=acc_r   [rbp-40]=slot_i  [rbp-48]=pan_gain_l
+    //        [rbp-56]=pan_gain_r
     E("; --- _slag_audio_mix_buffer (rcx=buf_ptr) ---");
     E("_slag_audio_mix_buffer:");
     E("    push rbp");
     E("    mov  rbp, rsp");
-    E("    sub  rsp, 48");
+    E("    sub  rsp, 64");
     E("    mov  [rbp-8], rcx");
     E("    mov  qword [rbp-16], 0   ; frame_i");
     E("");
@@ -657,14 +689,21 @@ void emit_audio_runtime(Codegen *cg) {
     E("    mov  rcx, [r11+SOUND_LOOPING]");
     E("    test rcx, rcx");
     E("    jz   .mb_check_end_oneshot");
-    E("    cmp  rax, [r11+SOUND_LOOP_END]");
-    E("    jl   .mb_read_sample");
+    E("    ; A frame read touches bytes [pos .. pos+3]; wrap when pos+4 would");
+    E("    ; exceed LOOP_END so we never read past the PCM buffer into heap.");
+    E("    mov  rcx, rax");
+    E("    add  rcx, 4");
+    E("    cmp  rcx, [r11+SOUND_LOOP_END]");
+    E("    jle  .mb_read_sample");
     E("    mov  rax, [r11+SOUND_LOOP_START]");
     E("    mov  [r11+SOUND_POS], rax");
     E("    jmp  .mb_read_sample");
     E(".mb_check_end_oneshot:");
-    E("    cmp  rax, [r11+SOUND_PCM_LEN]");
-    E("    jl   .mb_read_sample");
+    E("    ; same guard: need a full 4-byte frame before PCM_LEN.");
+    E("    mov  rcx, rax");
+    E("    add  rcx, 4");
+    E("    cmp  rcx, [r11+SOUND_PCM_LEN]");
+    E("    jle  .mb_read_sample");
     E("    mov  qword [r11+SOUND_ACTIVE], 0");
     E("    jmp  .mb_slot_next");
     E("");
@@ -675,10 +714,29 @@ void emit_audio_runtime(Codegen *cg) {
     E("    mov  r8,  [r11+SOUND_VOLUME]");
     E("    mov  r9,  [_audio_master_vol]");
     E("");
+    E("    ; pan gains: left = min(128,255-pan), right = min(128,pan).");
+    E("    ; Peak gain is 128, matching the 128 term in the /8323200 divide");
+    E("    ; so center (128) and full-side both render at unity, not ~2x.");
+    E("    mov  rcx, [r11+SOUND_PAN]");
+    E("    mov  rax, 255");
+    E("    sub  rax, rcx           ; 255 - pan");
+    E("    cmp  rax, 128");
+    E("    jle  .mb_panl_ok");
+    E("    mov  rax, 128");
+    E(".mb_panl_ok:");
+    E("    mov  [rbp-48], rax      ; pan_gain_l");
+    E("    mov  rax, rcx");
+    E("    cmp  rax, 128");
+    E("    jle  .mb_panr_ok");
+    E("    mov  rax, 128");
+    E(".mb_panr_ok:");
+    E("    mov  [rbp-56], rax      ; pan_gain_r");
+    E("");
     E("    movsx rax, word [r10+0] ; sample_l");
     E("    imul rax, r8");
     E("    imul rax, r9");
-    E("    mov  rcx, 65025         ; 255*255");
+    E("    imul rax, [rbp-48]      ; * pan_gain_l");
+    E("    mov  rcx, 8323200       ; 255*255*128");
     E("    cqo");
     E("    idiv rcx                ; rax = scaled_l");
     E("    add  [rbp-24], rax      ; acc_l += scaled_l");
@@ -686,7 +744,8 @@ void emit_audio_runtime(Codegen *cg) {
     E("    movsx rax, word [r10+2] ; sample_r");
     E("    imul rax, r8");
     E("    imul rax, r9");
-    E("    mov  rcx, 65025");
+    E("    imul rax, [rbp-56]      ; * pan_gain_r");
+    E("    mov  rcx, 8323200");
     E("    cqo");
     E("    idiv rcx                ; rax = scaled_r");
     E("    add  [rbp-32], rax      ; acc_r += scaled_r");
@@ -739,7 +798,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    jmp  .mb_frame_loop");
     E("");
     E(".mb_frame_done:");
-    E("    add  rsp, 48");
+    E("    add  rsp, 64");
     E("    pop  rbp");
     E("    ret");
     E("");

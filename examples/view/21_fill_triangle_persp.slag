@@ -1,13 +1,8 @@
 // Example: Perspective-Correct Textured Triangle
-//
-//
-//
-//
-//
-//
 function main() {
     window.open(400, 300, "Persp Triangle");
-    local int tex = mem.alloc(2);
+
+    local int tex = mem.alloc(2);        // 1x1 texture the builtin samples
     mem.poke8(tex, 0, 255);
     mem.poke8(tex, 1, 255);
 

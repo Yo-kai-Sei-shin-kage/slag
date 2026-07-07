@@ -1,27 +1,16 @@
 // Example: Mouse Input
-//
-//
-//
-//
-//
-//
 global int mx = 0;
 global int my = 0;
 
 function main() {
     window.open(400, 300, "Move mouse");
 
-    on mouse_move(int x, int y) {      // called when mouse moves
+    on mouse_move(int x, int y) {      // called when the mouse moves
         mx = x;
         my = y;
     }
 
-    on mouse_down(int button) {        // 0=left, 1=right, 2=middle
-        println(button);
-    }
-
     while (window.is_open()) {
-        pixel(mx, my, 255, 255, 0);    // draw at mouse position
         window.flush();
     }
 

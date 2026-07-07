@@ -2169,6 +2169,26 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    add  rsp, 32");
             }
         }
+        // audio.pan(handle, pan)  0=left, 128=center, 255=right
+        else if (strcmp(member, "pan") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.pan");
+            if (args->count >= 2) {
+                // Preserve r12 across the pan-arg eval: emit_int_expr may
+                // recurse into an inlined builtin (mem.peek8/poke*, etc.)
+                // that uses r12 as scratch without saving it. push keeps the
+                // stack 8 (mod 16) so sub rsp,32 realigns for the call.
+                emit(cg, "    push r12");
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; handle");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax        ; pan");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_pan");
+                emit(cg, "    add  rsp, 32");
+                emit(cg, "    pop  r12");
+            }
+        }
         // audio.master_volume(vol)
         else if (strcmp(member, "master_volume") == 0 && strcmp(base, "audio") == 0) {
             emit(cg, "    ; audio.master_volume");
