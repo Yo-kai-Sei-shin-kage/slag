@@ -1,0 +1,161 @@
+(* ==========================================================================
+   Slag Language Grammar (EBNF)
+
+   Derived directly from the reference implementation:
+     - compiler/lexer.c   (lexical grammar / tokens)
+     - compiler/parser.c  (syntactic grammar / precedence)
+
+   This grammar describes what the parser ACCEPTS. Some constructs that are
+   syntactically accepted here are further constrained or rejected during
+   semantic analysis / code generation (noted inline where relevant).
+
+   Notation:
+     =            rule definition            ;   end of rule
+     |            alternation                ( )  grouping
+     { X }        zero or more X             [ X ] optional X (zero or one)
+     "abc"        literal terminal           (* ... *) comment
+   ========================================================================== *)
+
+
+(* ------------------------------------------------------------------ *)
+(* Lexical grammar                                                     *)
+(* ------------------------------------------------------------------ *)
+
+letter        = "A" .. "Z" | "a" .. "z" | "_" ;
+digit         = "0" .. "9" ;
+
+identifier    = letter { letter | digit } ;
+
+int_lit       = digit { digit } ;                         (* decimal only - no hex/octal/binary *)
+float_lit     = digit { digit } "." digit { digit } ;     (* a fractional part is required *)
+bool_lit      = "true" | "false" ;
+
+str_lit       = '"' { str_char | escape } '"' ;
+str_char      = ? any character except '"', '\' or newline ? ;
+escape        = "\n" | "\t" | "\\" | "\" '"' | "\0" ;
+
+regex_lit     = "/" { ? any character except '/' or newline ? } "/" ;
+                (* regex literals are lexed but the match() engine is not yet implemented *)
+
+comment       = line_comment | block_comment ;
+line_comment  = "//" { ? any character ? } newline ;
+block_comment = "/*" { ? any character ? } "*/" ;
+
+(* Reserved keywords (cannot be used as ordinary identifiers):
+     int  float  str  bool  void
+     if  else  while  true  false  function  return
+     thread  sync  lock  on  global  local
+     window  pixel  flush
+   Note: window / pixel / flush are keyword tokens but are ALSO accepted
+   wherever `identifier` may appear as an expression base or after a "."
+   (e.g. window.open(...), window.flush()). *)
+
+
+(* ------------------------------------------------------------------ *)
+(* Program structure                                                  *)
+(* ------------------------------------------------------------------ *)
+
+program       = { function | global_decl } ;             (* top level: functions and globals only *)
+
+function      = "function" identifier "(" [ param_list ] ")" block ;
+param_list    = param { "," param } ;
+param         = type identifier ;
+type          = "int" | "float" | "str" | "bool" | "void" ;
+
+block         = "{" { statement } "}" ;
+
+
+(* ------------------------------------------------------------------ *)
+(* Statements                                                         *)
+(* ------------------------------------------------------------------ *)
+
+statement     = local_decl
+              | global_decl
+              | if_stmt
+              | while_stmt
+              | return_stmt
+              | thread_stmt
+              | sync_stmt
+              | lock_stmt
+              | on_handler
+              | block
+              | simple_stmt
+              | ";" ;                                     (* empty statement *)
+
+(* -- Declarations -- *)
+local_decl    = "local"  var_decl ;
+global_decl   = "global" var_decl ;
+var_decl      = scalar_decl | array_decl ;
+
+scalar_decl   = type identifier "=" expr ";" ;
+array_decl    = type "[" [ expr ] "]" identifier "=" array_init ";" ;
+                (* size expr is fixed for globals; local arrays typically use "[]"
+                   and size from the initializer (e.g. string data) *)
+array_init    = "{" [ expr { "," expr } [ "," ] ] "}"     (* literal element list, trailing comma ok *)
+              | expr ;                                     (* initialize from a call, e.g. readfile(...) *)
+
+(* -- Control flow -- *)
+if_stmt       = "if" "(" expr ")" block [ "else" ( if_stmt | block ) ] ;
+while_stmt    = "while" "(" expr ")" block ;              (* Slag has no `for` loop *)
+return_stmt   = "return" ";"                              (* void return *)
+              | "return" type expr ";" ;                  (* typed return: type precedes the value *)
+
+(* -- Concurrency -- *)
+thread_stmt   = "thread" block ;
+sync_stmt     = "sync"   block ;
+lock_stmt     = "lock"   block ;
+
+(* -- Event handlers -- *)
+on_handler    = "on" event_name "(" [ param_list ] ")" block ;
+event_name    = identifier ;                              (* e.g. key_down, key_up, mouse_move,
+                                                             mouse_down, mouse_up - validated by codegen *)
+
+(* -- Assignment / expression statement --
+   The parser parses an expression, then treats a trailing "=" as assignment.
+   When "=" is present the left-hand side must be an lvalue: an identifier,
+   an index expression, or a member expression (enforced after parsing). *)
+simple_stmt   = expr [ "=" expr ] ";" ;
+
+
+(* ------------------------------------------------------------------ *)
+(* Expressions  (rules listed lowest to highest precedence)           *)
+(* ------------------------------------------------------------------ *)
+
+expr           = logical_or ;
+logical_or     = logical_and    { "||" logical_and } ;
+logical_and    = equality       { "&&" equality } ;
+equality       = relational     { ( "==" | "!=" ) relational } ;
+relational     = additive       { ( "<" | ">" | "<=" | ">=" ) additive } ;
+additive       = multiplicative { ( "+" | "-" ) multiplicative } ;
+multiplicative = unary          { ( "*" | "/" | "%" ) unary } ;
+unary          = ( "!" | "-" ) unary                      (* prefix, right-associative *)
+               | postfix ;
+postfix        = primary { index_suffix | member_suffix } ;
+index_suffix   = "[" expr "]" ;
+member_suffix  = "." identifier [ "(" [ arg_list ] ")" ] ;   (* field access, or method / namespace call *)
+
+primary        = int_lit
+               | float_lit
+               | str_lit
+               | regex_lit                                (* not indexable or callable *)
+               | bool_lit
+               | "(" expr ")"
+               | call
+               | identifier ;
+
+call           = identifier "(" [ arg_list ] ")" ;        (* builtin or user function call *)
+arg_list       = expr { "," expr } ;
+
+
+(* ------------------------------------------------------------------ *)
+(* Notes on what the surface syntax deliberately omits                *)
+(* ------------------------------------------------------------------ *)
+(*
+   - No `for` loop - use `while` with an explicit counter.
+   - No ternary (?:), increment/decrement (++/--), or compound-assign (+=, ...).
+   - No bitwise operators as tokens - shifts/masks are namespace calls (bit.shl,
+     bit.shr, ...) parsed as member_suffix.
+   - Assignment is a statement, not an expression - no chained `a = b = c`.
+   - Binary operators are left-associative; unary "!" and "-" are right-assoc.
+   - Every statement is terminated by ";".
+*)

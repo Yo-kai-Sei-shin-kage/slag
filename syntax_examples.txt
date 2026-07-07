@@ -258,6 +258,9 @@ local int ms = time.now_ms();
 ## Time in microseconds
 local int us = time.now_us();
 
+## Sleep (busy-wait delay, milliseconds)
+sleep(16);
+
 ## Matrix identity
 mat.identity();
 

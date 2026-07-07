@@ -1152,6 +1152,40 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // For now emit a stub call.
             emit(cg, "    ; match() - regex engine not yet implemented");
             emit(cg, "    xor  rax, rax");
+        } else if (strcmp(name, "sleep") == 0) {
+            // sleep(ms) - busy-wait delay using QueryPerformanceCounter.
+            // Accurate to microseconds; spins one core while counting.
+            if (args->count >= 1) {
+                int loop = new_label(cg);
+                emit(cg, "    ; sleep(ms) busy-wait");
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_sleep_target], rax   ; ms");
+                emit(cg, "    lea  rcx, [_qpc_freq]");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call QueryPerformanceFrequency");
+                emit(cg, "    add  rsp, 32");
+                emit(cg, "    mov  rax, [_sleep_target]");
+                emit(cg, "    mov  rcx, [_qpc_freq]");
+                emit(cg, "    mul  rcx                    ; rdx:rax = ms * freq");
+                emit(cg, "    mov  rcx, 1000");
+                emit(cg, "    div  rcx                    ; rax = delay ticks");
+                emit(cg, "    mov  [_sleep_target], rax");
+                emit(cg, "    lea  rcx, [_qpc_now]");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call QueryPerformanceCounter");
+                emit(cg, "    add  rsp, 32");
+                emit(cg, "    mov  rax, [_qpc_now]");
+                emit(cg, "    add  rax, [_sleep_target]   ; target = start + delay");
+                emit(cg, "    mov  [_sleep_target], rax");
+                emit(cg, ".L%d:", loop);
+                emit(cg, "    lea  rcx, [_qpc_now]");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call QueryPerformanceCounter");
+                emit(cg, "    add  rsp, 32");
+                emit(cg, "    mov  rax, [_qpc_now]");
+                emit(cg, "    cmp  rax, [_sleep_target]");
+                emit(cg, "    jb   .L%d", loop);
+            }
         } else if (strcmp(name, "sqrt") == 0 ||
                    strcmp(name, "sin") == 0 ||
                    strcmp(name, "cos") == 0) {
@@ -4133,6 +4167,7 @@ static void emit_bss_section(Codegen *cg) {
     emit(cg, "_readline_buf:  resb 1024  ; line input buffer for readline()");
     emit(cg, "_qpc_now:  resq 1   ; QueryPerformanceCounter scratch");
     emit(cg, "_qpc_freq: resq 1   ; QueryPerformanceFrequency scratch");
+    emit(cg, "_sleep_target: resq 1  ; sleep busy-wait target counter");
     emit(cg, "_slag_lock_cs:  resb 40   ; CRITICAL_SECTION (40 bytes x64) for lock{}");
     emit(cg, "_slag_thread_handles: resq %d  ; HANDLEs from CreateThread, drained by sync{}", MAX_THREADS);
     emit(cg, "");

@@ -316,6 +316,11 @@ high-resolution timing for benchmarks and precise frame timing.
 .B time.now_ms()
 Returns milliseconds elapsed since system start, for frame timing and
 FPS measurement.
+.TP
+.B sleep(ms)
+Busy-wait for approximately ms milliseconds by spinning on
+QueryPerformanceCounter. Stays accurate below the ~15 ms resolution
+floor of Sleep(), at the cost of keeping one core busy for the duration.
 .SS CPU topology
 At startup the runtime calls
 .B GetLogicalProcessorInformation

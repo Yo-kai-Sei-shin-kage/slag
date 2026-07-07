@@ -49,6 +49,6 @@ Or use the helper script: `slagrun program.slag`
 
 ## Documentation
 
-- [`slag_spec.md`](slag_spec.md) — full language specification
+- [`slag_spec.md`](documentation/slag_spec.md) — full language specification
 - `documentation/man1/slag.1` — man page (`man slag`)
 - `syntax_examples.txt` — quick syntax reference
