@@ -642,9 +642,12 @@ Resets the depth buffer to a far value prior to rendering a frame.
 
 > **Note:** `time.now_ms()` wraps at ~49.7 days (32-bit overflow). For long-running server processes, use `time.now_us()` which has a much longer overflow period.
 
+`sleep(ms)` busy-waits for approximately `ms` milliseconds by spinning on `QueryPerformanceCounter`. Because it spins rather than yielding the CPU, it stays accurate well below the ~15 ms floor of `Sleep()` — `sleep(1)` waits ~1 ms — at the cost of keeping one core busy for the duration.
+
 ```
 time.now_ms()    // int — milliseconds since system start (GetTickCount)
 time.now_us()    // int — microseconds (QueryPerformanceCounter, high-res)
+sleep(ms)        // busy-wait ~ms milliseconds (QueryPerformanceCounter spin)
 ```
 
 ### 12.7 Keyboard Events
@@ -972,6 +975,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `zbuffer.clear()`               | Reset depth buffer                                 |
 | `time.now_ms()`                 | Milliseconds since system start (GetTickCount)     |
 | `time.now_us()`                 | Microseconds (QueryPerformanceCounter, high-res)   |
+| `sleep(ms)`                     | Busy-wait ~ms milliseconds (QueryPerformanceCounter spin) |
 | `cpu.physical_cores()`          | Physical core count                                |
 | `cpu.logical_cores()`           | Logical processor count                            |
 | `cpu.threads_per_core()`        | Logical / physical cores                           |
@@ -1020,9 +1024,9 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `audio.stop(handle)`            | Stop playback                                      |
 | `audio.volume(handle,vol)`      | Per-sound volume 0-255                             |
 | `audio.master_volume(vol)`      | Master volume 0-255                                |
+| `audio.pan(handle,pan)`         | Stereo pan: 0=left, 128=center, 255=right          |
 | `audio.is_playing(handle)`      | 1/0: is this sound currently playing                |
 | `audio.position(handle)`        | Current byte offset into the sound's PCM data      |
-
 | `bit.shl(val,count)`            | Left shift (inlined to shl instruction)            |
 | `bit.shr(val,count)`            | Unsigned right shift (inlined to shr instruction)  |
 | `mat.identity()`                | Reset current matrix to identity                   |
@@ -1079,7 +1083,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `net.discover_poll()`           | Client: -> discovered slot idx or -1               |
 | `net.discover_count/ip/port/name/max/clients(idx)` | Client: read the discovered-server list |
 
-**Audio known limitations:** no pause/resume (`audio.stop` always resets position to 0), no stereo panning (volume only), each loaded sound has exactly one playback slot (overlapping the same sound with itself requires separate handles), no pitch/rate variation, and `audio.load` reads the entire file into memory (no streaming).
+**Audio known limitations:** no pause/resume (`audio.stop` always resets position to 0), each loaded sound has exactly one playback slot (overlapping the same sound with itself requires separate handles), no pitch/rate variation, and `audio.load` reads the entire file into memory (no streaming).
 
 ---
 
@@ -1192,7 +1196,7 @@ function main() {
 | 0.13    | Runtime SIMD detection (`cpu.simd_detect`/`cpu.has_*` via CPUID+XGETBV), `mem.pokef32`, perspective rasterizer inner-loop optimization (8px UV subdivision, single-store BGRA writes) | ✅ Complete |
 | 0.13.1  | File I/O (`file.open/close/read/write/seek/size/exists/delete/mkdir`), per-handle directory listing (`file.list_open/next/name/close`) | ✅ Complete |
 | 0.13.2  | Near-plane cull safety net for `fill_triangle_persp`/`fill_triangle_pcolor` (degenerate z<=0 reject + adaptive window-bounds reject); `mem.poke8` register-clobber fix for nested inlined builtin calls | ✅ Complete |
-| 0.13.3  | Full audio runtime (`audio.init/close/load/free/play/loop/stop/volume/master_volume/is_playing/position`): 32-slot software mixer over waveOut, RIFF/WAVE parsing with automatic `smpl`-chunk loop-point support | ✅ Complete |
+| 0.13.3  | Full audio runtime (`audio.init/close/load/free/play/loop/stop/volume/pan/master_volume/is_playing/position`): 32-slot software mixer over waveOut, RIFF/WAVE parsing with automatic `smpl`-chunk loop-point support | ✅ Complete |
 | 0.13.4  | Bilinear texture filtering (4-tap weighted average) for `fill_triangle_persp`/`fill_triangle_pcolor` | ✅ Complete |
 | 0.14    | Full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net) | 🔲 Planned  |
 | 0.15    | Distance fog                                                | 🔲 Planned  |
