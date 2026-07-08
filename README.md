@@ -1,8 +1,7 @@
 # FYI
 
-Slag is in development and is not a full V1.0 release yet. Please keep this in mind as I am actively working to optimize, bug fix, and add new features as I go. I am one person developing this language and it's taken 6 years to get to this point where I feel it can be useful even as an incomplete language. It's current state is very powerful for what it is. I am hoping I can make it into something more developers see as a very useful tool rather than just a toy to play with. My ultimate goal is absolute raw CPU performance and syntax simplicity. Some features and API calls may change in syntax over the future work to more closely align with this goal.
-
-Please keep this in mind if you choose to try out slag for yourself. I hope you enjoy slag as much as I do. Please let me know if you have any issues at all by reporting in the issues section. Include your hardware specs and your OS + OS version so I can dive in and figure out what is causing the issue you are having.
+Slag is pre-1.0 and under active development — I'm one person building it, and it's taken 6 years to reach this point. What's here now is fully capable and I use it daily for real projects (including the engine for a co-op survival game). Some syntax and APIs may still shift as I push toward the core goals: raw CPU performance and simplicity.
+My goal is for Slag to be seen as a serious tool, not just an experiment. If you try it and hit issues, please report them — include your hardware specs and OS/version so I can dig in.
 
 
 # Slag
