@@ -1,3 +1,8 @@
+# FYI
+
+Slag is in development and is not a full V1.0 release yet. Please keep this in mind as I am actively working to optimize, bug fix, and add new features as I go. I am one person developing this language and it's taken 6 years to get to this point where I feel it can be useful even as an I complete language. It's current state is very powerful for what it is. I am hoping I can make it into something more developers see as a very useful tool rather than just a toy to play with. My ultimate goal is absolute raw CPU performance and syntax simplicity. Some features and API calls may change in syntax over the future work to more closely align with this goal. Please keep this in mind if you choose to try out slag for yourself. I hope you enjoy slag as much as I do. Please let me know if you have any issues at all by reporting in the issues section. Include your hardware specs and your OS + OS version so I can dive in and figure out what is causing the issue you are having.
+
+
 # Slag
 
 A statically typed, compiled systems programming language targeting native Win64 PE executables.
