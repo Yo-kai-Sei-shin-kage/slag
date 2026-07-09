@@ -1211,23 +1211,26 @@ function main() {
 
 ### PS2-Era Graphics Target (60fps)
 
-To achieve PS2-era rendering at 60fps, the following features are required:
+PS2-era software rendering at 60fps. Current pipeline status:
 
-**Core rendering (0.11-0.12, complete):**
-- Perspective-correct texture interpolation (1/z correction per scanline)
-- Gouraud shading combined with texturing
-- Backface culling (signed-area winding test, applied to all fill_triangle* variants)
+**Core rendering (complete):**
+- Perspective-correct texture interpolation (1/z correction, 8px UV subdivision)
+- Bilinear texture filtering (4-tap) on `fill_triangle_persp`/`fill_triangle_pcolor`
+- Gouraud shading (`fill_triangle_gradient`), and Gouraud combined with texturing (`fill_triangle_pcolor` per-vertex color modulation)
+- Backface culling (signed-area winding test, all `fill_triangle*` variants)
+- Z-buffer depth testing (`fill_triangle_z`, `zbuffer.clear`)
 
-**Core rendering (0.14, planned):**
-- Near-plane triangle clipping (Sutherland-Hodgman)
+**Performance (complete):**
+- Multi-threaded rasterization is fully implemented: `fill_triangle*` calls enqueue into a deferred queue and are drained at `window.flush()` across a persistent worker pool, split into horizontal bands (one per worker thread; worker count scales with CPU cores). Batches below `FT_POOL_THRESHOLD` draw sequentially to avoid wake/wait overhead.
+- Uncapped presentation (no frame-rate limiting; `sleep(ms)` available for pacing).
 
-**Visual quality (0.15, planned):**
-- Linear fog (blend to fog color based on z-depth)
+**Performance target:**
+- 1,000,000 polygons per frame at 1920x1080 (native 1080p), sub-16ms (60fps). The multi-threaded rasterizer already surpasses earlier 10K-class counts with no SIMD dispatch; SIMD auto-dispatch is the remaining lever toward the 1M-polygon target.
 
-**Performance targets:**
-- 10K+ textured triangles per frame at 1920x1080 (native 1080p)
-- Sub-16ms frame time (60fps)
-- SIMD-accelerated rasterization where possible
+**Planned:**
+- Near-plane triangle clipping (Sutherland-Hodgman) — 0.14
+- Distance fog as a built-in (z-depth blend to fog color; currently done in Slag script, e.g. the terrain demo) — 0.15
+- SIMD-vectorized rasterizer inner loops with auto-dispatch on detected CPU features
 
 ---
 
