@@ -1,0 +1,6 @@
+# Local working area, not part of the repo
+my_slag_projects/
+
+# Claude Code local files (never commit)
+CLAUDE.md
+.claude/

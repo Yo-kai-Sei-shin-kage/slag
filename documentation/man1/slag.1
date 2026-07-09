@@ -190,6 +190,19 @@ own independent window. Rendering calls (
 and per-window input state both resolve their target window fresh
 via TLS on every call, so multiple simultaneously open windows do
 not interfere with each other's drawing or input.
+An optional fourth argument, a nonzero fullscreen flag, opens a
+borderless window at the native screen resolution (the
+.I width
+and
+.I height
+arguments are ignored; 0 or omitted keeps the window sized). When the
+user resizes a window, its framebuffer and z-buffer are recreated at
+the new client size on the next
+.B window.flush()
+call; query the live size with
+.B window.width()
+and
+.BR window.height() .
 .TP
 .B window.close()
 Request that the open window close.
@@ -217,6 +230,16 @@ Release mouse capture and show the cursor.
 Returns the native screen resolution as a string in "WxH" format
 (e.g., "1920x1080").
 .TP
+.B window.width()
+Returns the current window client width in pixels as an
+.BR int .
+It tracks the live size, so it reflects user resizes.
+.TP
+.B window.height()
+Returns the current window client height in pixels as an
+.BR int .
+It tracks the live size, so it reflects user resizes.
+.TP
 .BI window.clear( r , " g" , " b" )
 Fill the entire DIB framebuffer with a solid color via a single
 .B rep stosd
@@ -236,6 +259,10 @@ via GDI
 composited into the same DIB surface that
 .B window.flush()
 blits.
+Any pending
+.B fill_triangle*
+calls are drained (rasterized) first, so the text always composites
+on top of the current frame's geometry.
 .TP
 .BI pixel( x , " y" , " r" , " g" , " b" )
 Write a single RGB pixel into the framebuffer at

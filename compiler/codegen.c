@@ -1248,16 +1248,24 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
            // h → rdx
            emit_int_expr(cg, args->items[1]);
            emit(cg, "    mov  r13, rax");
-           // title string → r8 (ptr), r9 (len)
+           // optional fullscreen flag -> r14 (default 0)
+           if (args->count >= 4) {
+               emit_int_expr(cg, args->items[3]);
+               emit(cg, "    mov  r14, rax");
+           } else {
+               emit(cg, "    xor  r14, r14");
+           }
+           // title string -> r8 (ptr), r9 (len)
            emit_str_expr(cg, args->items[2]);
            // rax=ptr, rdx=len at this point
            emit(cg, "    mov  r8,  rax");
            emit(cg, "    mov  r9,  rdx");
            emit(cg, "    mov  rcx, r12");
            emit(cg, "    mov  rdx, r13");
-           emit(cg, "    sub  rsp, 32");
+           emit(cg, "    sub  rsp, 48");
+           emit(cg, "    mov  qword [rsp+32], r14   ; arg5 = fullscreen flag");
            emit(cg, "    call _slag_window_open");
-           emit(cg, "    add  rsp, 32");
+           emit(cg, "    add  rsp, 48");
        }
    }
         // window.close()
@@ -1383,6 +1391,38 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call TlsGetValue");
             emit(cg, "    mov  rbx, rax");
             emit(cg, "    mov  rax, [rbx + WSTATE_OPEN]");
+            emit(cg, "    add  rsp, 40");
+            emit(cg, "    pop  rbx");
+        }
+        // window.width() -> int current client width (TLS, tracks resize)
+        else if (strcmp(member, "width") == 0 && strcmp(base, "window") == 0) {
+            int nl = new_label(cg);
+            emit(cg, "    ; window.width (TLS, null-guarded -> 0 if no window)");
+            emit(cg, "    push rbx");
+            emit(cg, "    sub  rsp, 40");
+            emit(cg, "    mov  rcx, [_window_tls_index]");
+            emit(cg, "    call TlsGetValue");
+            emit(cg, "    mov  rbx, rax");
+            emit(cg, "    test rbx, rbx");
+            emit(cg, "    jz   .L%d", nl);
+            emit(cg, "    mov  rax, [rbx + WSTATE_WIDTH]");
+            emit(cg, ".L%d:", nl);
+            emit(cg, "    add  rsp, 40");
+            emit(cg, "    pop  rbx");
+        }
+        // window.height() -> int current client height (TLS, tracks resize)
+        else if (strcmp(member, "height") == 0 && strcmp(base, "window") == 0) {
+            int nl = new_label(cg);
+            emit(cg, "    ; window.height (TLS, null-guarded -> 0 if no window)");
+            emit(cg, "    push rbx");
+            emit(cg, "    sub  rsp, 40");
+            emit(cg, "    mov  rcx, [_window_tls_index]");
+            emit(cg, "    call TlsGetValue");
+            emit(cg, "    mov  rbx, rax");
+            emit(cg, "    test rbx, rbx");
+            emit(cg, "    jz   .L%d", nl);
+            emit(cg, "    mov  rax, [rbx + WSTATE_HEIGHT]");
+            emit(cg, ".L%d:", nl);
             emit(cg, "    add  rsp, 40");
             emit(cg, "    pop  rbx");
         }

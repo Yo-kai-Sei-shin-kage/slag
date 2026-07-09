@@ -70,13 +70,22 @@ while (i < 10) {
     i = i + 1;
 }
 
-## Window open
+## Window open (optional 4th arg = fullscreen flag: nonzero = borderless
+## fullscreen at screen resolution with w/h ignored; 0 or omitted = windowed)
 window.open(1024, 768, "Window Title");
+window.open(0, 0, "Fullscreen Title", 1);
+
+## Window current client size (int; tracks the live size, updates after a
+## user resize -- read each frame for resolution-independent layout)
+local int cw = window.width();
+local int ch = window.height();
 
 ## Window clear (r, g, b)
 window.clear(0, 0, 0);
 
-## Window text (GDI, str or int)
+## Window text (GDI overlay, str or int) -- composites ON TOP of any pending
+## fill_triangle* (it drains the deferred queue first), so HUD/overlay text
+## always draws above the scene presented by the following window.flush()
 window.text(50, 50, "Hello", 255, 255, 255);
 window.text(50, 80, 12345, 100, 255, 100);
 

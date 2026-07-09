@@ -548,15 +548,20 @@ normally and stays listed.
 ### 12.1 Window Lifecycle
 
 ```
-window.open(width, height, title);   // create window on its own thread
+window.open(width, height, title);            // windowed, on its own thread
+window.open(width, height, title, fullscreen);// nonzero 4th arg = borderless fullscreen, w/h ignored
 window.is_open()                     // returns 1 if open, 0 if closed
 window.close();                      // post WM_CLOSE to the window
 window.capture_mouse();              // capture mouse, clip to window, hide cursor
 window.release_mouse();              // release capture, show cursor
 window.native();                     // returns native resolution as "WxH" string
+window.width();                      // current client width  (int; tracks live resize)
+window.height();                     // current client height (int; tracks live resize)
 ```
 
 **Thread-Local Storage (TLS):** Window state is stored per-thread via `TlsAlloc`/`TlsSetValue`, enabling multiple independent windows from a single program. Each thread that calls `window.open()` gets its own window with separate framebuffer, z-buffer, and event handling.
+
+**Dynamic resize:** When the user resizes the window, the framebuffer and z-buffer are recreated at the new client size on the next `window.flush()`, and `window.width()`/`window.height()` report the updated dimensions. Read them each frame and derive all positions from them for resolution-independent rendering.
 
 Mouse capture is useful for FPS-style controls where the cursor should be hidden and constrained to the window. Press ESC or call `release_mouse()` to restore normal cursor behavior.
 
@@ -963,15 +968,16 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `fill_triangle_affine(...)`     | PS1-style affine textured triangle (RGB565)        |
 | `fill_triangle_persp(...)`      | PS2-style perspective-correct textured triangle    |
 | `fill_triangle_pcolor(...)`     | Perspective-correct textured triangle, per-vertex color |
-| `window.open(w,h,title)`        | Open graphical window on its own thread            |
+| `window.open(w,h,title[,fs])`   | Open window on its own thread; nonzero `fs` = fullscreen |
 | `window.close()`                | Post WM_CLOSE to window                            |
 | `window.is_open()`              | Returns 1 if window is open                        |
 | `window.clear(r,g,b)`           | Fill framebuffer with a solid color                |
-| `window.text(x,y,val,r,g,b)`    | Draw str/int text at (x,y) via GDI TextOutA        |
+| `window.text(x,y,val,r,g,b)`    | Draw str/int text at (x,y); drains pending fill_triangle* first, so it composites on top |
 | `window.flush()`                | Drain deferred fill_triangle* queue, blit to window (uncapped) |
 | `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
 | `window.release_mouse()`        | Release capture, show cursor                       |
 | `window.native()`               | Returns native resolution as "WxH" string          |
+| `window.width()` / `window.height()` | Current client size as int (tracks live resize)   |
 | `zbuffer.clear()`               | Reset depth buffer                                 |
 | `time.now_ms()`                 | Milliseconds since system start (GetTickCount)     |
 | `time.now_us()`                 | Microseconds (QueryPerformanceCounter, high-res)   |

@@ -81,8 +81,8 @@ function main() {
     }
 
     local int frame = 0;
-    local int hw = 512;
-    local int hh = 384;
+    local int hw = window.width() / 2;
+    local int hh = window.height() / 2;
     local int fov = 400;
     local int fog_dist = 2500;
     local int fog_r = 85;
@@ -97,6 +97,12 @@ function main() {
 
     while (window.is_open()) {
         window.clear(50, 80, 140);
+        local int win_w = window.width();
+        local int win_h = window.height();
+        hw = win_w / 2;
+        hh = win_h / 2;
+        local int box_w = 200;
+        local int box_h = 88;
 
         // Camera movement
         local float yaw_rad = cam_yaw * 0.01;
@@ -159,12 +165,12 @@ function main() {
         // Horizon shifts with pitch
         local int horizon = hh + cam_pitch;
 
-        // Clear sky
-        fill_triangle_gradient(0, 0, 50, 80, 140, 1024, horizon, fog_r, fog_g, fog_b, 1024, 0, 50, 80, 140);
-        fill_triangle_gradient(0, 0, 50, 80, 140, 0, horizon, fog_r, fog_g, fog_b, 1024, horizon, fog_r, fog_g, fog_b);
+        // Sky gradient (full width)
+        fill_triangle_gradient(0, 0, 50, 80, 140, win_w, horizon, fog_r, fog_g, fog_b, win_w, 0, 50, 80, 140);
+        fill_triangle_gradient(0, 0, 50, 80, 140, 0, horizon, fog_r, fog_g, fog_b, win_w, horizon, fog_r, fog_g, fog_b);
         // Ground base
-        fill_triangle_gradient(0, horizon, fog_r, fog_g, fog_b, 1024, 768, 95, 60, 42, 1024, horizon, fog_r, fog_g, fog_b);
-        fill_triangle_gradient(0, horizon, fog_r, fog_g, fog_b, 0, 768, 95, 60, 42, 1024, 768, 95, 60, 42);
+        fill_triangle_gradient(0, horizon, fog_r, fog_g, fog_b, win_w, win_h, 95, 60, 42, win_w, horizon, fog_r, fog_g, fog_b);
+        fill_triangle_gradient(0, horizon, fog_r, fog_g, fog_b, 0, win_h, 95, 60, 42, win_w, win_h, 95, 60, 42);
 
         // Ground grid with shared vertex buffer (301x301 for subdivision)
         local int half_grid = 250;
@@ -416,12 +422,14 @@ function main() {
             }
         }
 
-        // Draw controls text (top-left, 2x scale)
+        // Opaque black HUD box, enqueued last so it covers all scene geometry.
+        // window.text drains the queue first, so text lands on top of the box.
+        fill_triangle(0, 0, box_w, box_h, box_w, 0, 0, 0, 0);
+        fill_triangle(0, 0, 0, box_h, box_w, box_h, 0, 0, 0);
         window.text(10, 10, ctrl1, 255, 255, 255);
         window.text(10, 28, ctrl2, 255, 255, 255);
         window.text(10, 46, ctrl3, 255, 255, 255);
         window.text(10, 64, ctrl4, 255, 255, 255);
-
         window.flush();
         frame = frame + 1;
     }
