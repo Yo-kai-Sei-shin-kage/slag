@@ -6,7 +6,7 @@
 //
 //
 function main() {
-    global int[] values = {10, 25, 42, 99, 7};  // fixed-size array
+    local int[] values = {10, 25, 42, 99, 7};   // fixed-size array
     local int len = values.len;                 // .len returns count
 
     println(values[0]);                       // index access (zero-based)

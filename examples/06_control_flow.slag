@@ -31,6 +31,7 @@ function main() {
         }
         
         window.flush();
+	sleep(16);
     }
     return int 0;
 }

@@ -1,17 +1,7 @@
 // Example: Perspective-Correct Textured Triangle
 function main() {
-    window.open(400, 300, "Persp Triangle");
+    // fill_triangle_persp(x0,y0,z0,u0,v0, x1,y1,z1,u1,v1, x2,y2,z2,u2,v2, tex,w,h)
+    fill_triangle_persp(50, 50, 100, 0, 0, 350, 80, 400, 63, 0, 200, 250, 400, 32, 63, tex, 1, 1);
 
-    local int tex = mem.alloc(2);        // 1x1 texture the builtin samples
-    mem.poke8(tex, 0, 255);
-    mem.poke8(tex, 1, 255);
-
-    while (window.is_open()) {
-        // fill_triangle_persp(x0,y0,z0,u0,v0, x1,y1,z1,u1,v1, x2,y2,z2,u2,v2, tex,w,h)
-        fill_triangle_persp(50, 50, 100, 0, 0, 350, 80, 400, 63, 0, 200, 250, 400, 32, 63, tex, 1, 1);
-        window.flush();
-    }
-
-    mem.free(tex);
     return;
 }

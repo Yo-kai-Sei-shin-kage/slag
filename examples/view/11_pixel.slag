@@ -1,11 +1,6 @@
 // Example: Pixel Drawing
 function main() {
-    window.open(400, 300, "Pixels");
-
-    while (window.is_open()) {
-        pixel(100, 50, 255, 0, 0);       // pixel(x, y, r, g, b)
-        window.flush();
-    }
+    pixel(100, 50, 255, 0, 0);       // pixel(x, y, r, g, b)
 
     return;
 }

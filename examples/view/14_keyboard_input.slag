@@ -2,15 +2,9 @@
 global int x = 200;                    // event handlers require globals
 
 function main() {
-    window.open(400, 300, "Press W/S");
-
     on key_down(int key) {             // called when a key is pressed
         if (key == 87) { x = x - 10; }  // W = 87
         if (key == 83) { x = x + 10; }  // S = 83
-    }
-
-    while (window.is_open()) {
-        window.flush();
     }
 
     return;

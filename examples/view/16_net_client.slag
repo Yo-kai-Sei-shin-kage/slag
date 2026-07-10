@@ -1,20 +1,10 @@
 // Example: Networking
-//
-//
-//
-//
-//
-//
 function main() {
     net.start();                       // initialize networking
 
     net.connect("127.0.0.1", 9000);    // connect to server
     if (net.ack() == 1) {              // check if connected
-        local int buf = mem.alloc(64);
-        mem.poke8(buf, 0, 72);         // H
-        mem.poke8(buf, 1, 73);         // I
-        net.send_buf(buf, 2);          // send 2 bytes
-        mem.free(buf);
+        net.send_buf(buf, 2);          // send 2 bytes from a buffer
     }
 
     net.end();                         // cleanup

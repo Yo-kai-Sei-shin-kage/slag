@@ -7,7 +7,7 @@
 //
 // Using 16.16 fixed-point coordinates
 
-function example(int angle, int inner_angle) {
+function example(int angle) {
     // Reset to identity matrix
     mat.identity();
 
@@ -29,14 +29,6 @@ local int world_y = mat.transform_y(0, 0, 0);
 // Convert back from fixed-point to screen coords
 local int screen_x = bit.shr(world_x, 16);
 local int screen_y = bit.shr(world_y, 16);
-
-// Nested transform: object orbiting the orbiting object
-mat.push();
-mat.rotate_z(inner_angle);
-mat.translate(bit.shl(30, 16), 0, 0);
-local int moon_x = bit.shr(mat.transform_x(0, 0, 0), 16);
-local int moon_y = bit.shr(mat.transform_y(0, 0, 0), 16);
-mat.pop();
 
 mat.pop();  // Back to center
 }

@@ -11,8 +11,5 @@ function main() {
     println(cpu.threads_per_core());   // threads per core (2 = hyperthreaded)
     println(cpu.safe_thread_limit());  // suggested max worker threads
     println(cpu.hyperthreaded());      // 1 if hyperthreading on, 0 if off
-    cpu.simd_detect();                 // re-run CPUID feature probe (also runs at startup)
-    println(cpu.has_sse42());          // 1 if SSE4.2 supported
-    println(cpu.has_avx2());           // 1 if AVX2 supported and OS-enabled
     return;
 }

@@ -3,15 +3,9 @@ global int mx = 0;
 global int my = 0;
 
 function main() {
-    window.open(400, 300, "Move mouse");
-
     on mouse_move(int x, int y) {      // called when the mouse moves
         mx = x;
         my = y;
-    }
-
-    while (window.is_open()) {
-        window.flush();
     }
 
     return;

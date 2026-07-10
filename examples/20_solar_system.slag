@@ -101,6 +101,7 @@ function main() {
 
         window.flush();
         frame = frame + 1;
+	sleep(16);
     }
 
     return int 0;
