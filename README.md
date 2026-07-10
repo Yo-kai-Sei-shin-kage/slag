@@ -1,6 +1,6 @@
 # FYI
 
-Slag is pre-1.0 and under active development — I'm one person building it, and it's taken 6 years to reach this point. What's here now is fully capable and I use it daily for real projects (including the engine for a co-op survival game). Some syntax and APIs may still shift as I push toward the core goals: raw CPU performance and simplicity.
+Slag is pre-1.0 and under active development — I'm one person building it, and it's taken 6 years to reach this point. I have only recently made a public repository for this because I finally feel like it is ready for others to try, even if incomplete as far as my personal standards are concerned. What's here now is fully capable and I use it daily for real projects (including the engine for a co-op survival game). Some syntax and APIs may still shift as I push toward the core goals: raw CPU performance and simplicity.
 My goal is for Slag to be seen as a serious tool, not just an experiment. If you try it and hit issues, please report them — include your hardware specs and OS/version so I can dig in.
 
 
