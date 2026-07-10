@@ -2229,6 +2229,39 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    add  rsp, 32");
             }
         }
+        // audio.pause(handle)
+        else if (strcmp(member, "pause") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.pause");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_pause");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.resume(handle)
+        else if (strcmp(member, "resume") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.resume");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_resume");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // audio.is_paused(handle) -> int bool (1/0)
+        else if (strcmp(member, "is_paused") == 0 && strcmp(base, "audio") == 0) {
+            emit(cg, "    ; audio.is_paused");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; handle");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_audio_is_paused");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
         // audio.volume(handle, vol)
         else if (strcmp(member, "volume") == 0 && strcmp(base, "audio") == 0) {
             emit(cg, "    ; audio.volume");

@@ -24,6 +24,9 @@
 //                                                 forever (whole file if
 //                                                 no smpl chunk was found)
 //   audio.stop(handle)               -> (void)
+//   audio.pause(handle)              -> (void)   halt playback, keep position
+//   audio.resume(handle)             -> (void)   continue a paused sound
+//   audio.is_paused(handle)          -> int bool (1/0)
 //   audio.volume(handle, vol)        -> (void)   per-sound volume 0-255
 //   audio.master_volume(vol)         -> (void)
 //   audio.is_playing(handle)         -> int bool (1/0)
@@ -81,7 +84,8 @@ void emit_audio_runtime(Codegen *cg) {
     E("SOUND_LOOP_START equ 56");
     E("SOUND_LOOP_END   equ 64");
     E("SOUND_PAN        equ 72   ; 0=hard left .. 128=center .. 255=hard right");
-    E("SOUND_SIZE       equ 80");
+    E("SOUND_PAUSED     equ 80   ; 1=paused (ACTIVE=0 but POS retained), 0=not");
+    E("SOUND_SIZE       equ 88");
     E("AUDIO_BUFFER_FRAMES equ 4096");
     E("AUDIO_BUFFER_BYTES  equ 16384");
     E("");
@@ -417,6 +421,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    mov  qword [rcx+SOUND_VOLUME], 255");
     E("    mov  qword [rcx+SOUND_LOOPING], 0");
     E("    mov  qword [rcx+SOUND_ACTIVE], 0");
+    E("    mov  qword [rcx+SOUND_PAUSED], 0");
     E("    mov  qword [rcx+SOUND_PAN], 128   ; center pan (no-op) by default");
     E("    mov  rax, [rbp-8]");
     E("    mov  [rcx+SOUND_FILEBUF], rax");
@@ -492,6 +497,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    jle  .af_done");
     E("");
     E("    mov  qword [rcx+SOUND_ACTIVE], 0");
+    E("    mov  qword [rcx+SOUND_PAUSED], 0");
     E("");
     E("    lea  r10, [_audio_sounds]");
     E("    xor  r11, r11");
@@ -544,6 +550,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    mov  qword [rcx+SOUND_POS], 0");
     E("    mov  qword [rcx+SOUND_LOOPING], 0");
     E("    mov  qword [rcx+SOUND_ACTIVE], 1");
+    E("    mov  qword [rcx+SOUND_PAUSED], 0");
     E(".ap_done:");
     E("    ret");
     E("");
@@ -556,6 +563,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    mov  qword [rcx+SOUND_POS], 0");
     E("    mov  qword [rcx+SOUND_LOOPING], 1");
     E("    mov  qword [rcx+SOUND_ACTIVE], 1");
+    E("    mov  qword [rcx+SOUND_PAUSED], 0");
     E(".alo_done:");
     E("    ret");
     E("");
@@ -566,10 +574,51 @@ void emit_audio_runtime(Codegen *cg) {
     E("    cmp  rcx, 0");
     E("    jle  .as_done");
     E("    mov  qword [rcx+SOUND_ACTIVE], 0");
+    E("    mov  qword [rcx+SOUND_PAUSED], 0");
     E("    mov  qword [rcx+SOUND_POS], 0");
     E(".as_done:");
     E("    ret");
     E("");
+    // _slag_audio_pause(rcx=handle): stop advancing but retain POS.
+    // Only pauses a currently-active sound; no-op on stopped/paused.
+    E("; --- _slag_audio_pause (rcx=handle) ---");
+    E("_slag_audio_pause:");
+    E("    cmp  rcx, 0");
+    E("    jle  .apause_done");
+    E("    cmp  qword [rcx+SOUND_ACTIVE], 0");
+    E("    je   .apause_done   ; not playing -> nothing to pause");
+    E("    mov  qword [rcx+SOUND_ACTIVE], 0");
+    E("    mov  qword [rcx+SOUND_PAUSED], 1");
+    E(".apause_done:");
+    E("    ret");
+    E("");
+
+    // _slag_audio_resume(rcx=handle): re-activate only a paused sound,
+    // continuing from its retained POS. No-op on stopped/playing sounds.
+    E("; --- _slag_audio_resume (rcx=handle) ---");
+    E("_slag_audio_resume:");
+    E("    cmp  rcx, 0");
+    E("    jle  .aresume_done");
+    E("    cmp  qword [rcx+SOUND_PAUSED], 0");
+    E("    je   .aresume_done  ; not paused -> nothing to resume");
+    E("    mov  qword [rcx+SOUND_PAUSED], 0");
+    E("    mov  qword [rcx+SOUND_ACTIVE], 1");
+    E(".aresume_done:");
+    E("    ret");
+    E("");
+
+    // _slag_audio_is_paused(rcx=handle) -> rax = 1/0
+    E("; --- _slag_audio_is_paused (rcx=handle) -> rax ---");
+    E("_slag_audio_is_paused:");
+    E("    cmp  rcx, 0");
+    E("    jle  .aispaused_false");
+    E("    mov  rax, [rcx+SOUND_PAUSED]");
+    E("    ret");
+    E(".aispaused_false:");
+    E("    xor  rax, rax");
+    E("    ret");
+    E("");
+
 
     // _slag_audio_volume(rcx=handle, rdx=vol)
     E("; --- _slag_audio_volume (rcx=handle, rdx=vol) ---");
@@ -705,6 +754,7 @@ void emit_audio_runtime(Codegen *cg) {
     E("    cmp  rcx, [r11+SOUND_PCM_LEN]");
     E("    jle  .mb_read_sample");
     E("    mov  qword [r11+SOUND_ACTIVE], 0");
+    E("    mov  qword [r11+SOUND_PAUSED], 0");
     E("    jmp  .mb_slot_next");
     E("");
     E(".mb_read_sample:");
