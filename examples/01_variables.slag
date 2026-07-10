@@ -7,28 +7,15 @@
 //
 // Example: var declarations, int, float, str, bool types
 
+global int var1 = 1;
+global str var1 = hello;
+global bool var1 = 0;
+
 function main() {
-    window.open(320, 200, "Variables");
-    
-    local int x = 100;
-    local int y = 50;
-    local str label = "X =";
-    local bool active = true;
-    
-    while (window.is_open()) {
-        window.clear(20, 20, 40);
-        
-        window.text(20, 20, "VARIABLES DEMO", 255, 255, 100);
-        window.text(20, 50, label, 150, 255, 150);
-        window.text(80, 50, x, 255, 255, 255);
-        window.text(20, 70, "Y =", 150, 255, 150);
-        window.text(80, 70, y, 255, 255, 255);
-        window.text(20, 90, "ACTIVE =", 150, 255, 150);
-        if (active) {
-            window.text(120, 90, "TRUE", 100, 255, 100);
-        }
-        
-        window.flush();
-    }
+
+    local int var1 = 1;
+    local str var1 = hello;
+    local bool var1 = 0;
     return int 0;
+
 }
