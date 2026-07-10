@@ -88,7 +88,7 @@ while true; do
     clear; show_header; list_examples
     printf "%sChoice: %s" "$CYAN" "$NC"; read -r choice
     case $choice in
-        q|Q) clear; printf "%sBye.%s\n" "$GREEN" "$NC"; exit 0 ;;
+        q|Q) clear; printf "%sThanks for trying the slag language browser.%s\n" "$GREEN" "$NC"; exit 0 ;;
         *)
             case $choice in *[!0-9]*|"") continue ;; esac
             idx=$((choice-1))

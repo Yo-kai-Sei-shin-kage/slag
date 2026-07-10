@@ -327,11 +327,18 @@ guard z > 0 themselves before projecting.
 Perspective-correct textured triangle with per-vertex colors. The
 .I verts
 parameter points to 24 int64 values (3 vertices x 8 values: x,y,z,u,v,r,g,b).
+The texture must be in 32-bit BGRA format (4 bytes per pixel), unlike the
+RGB565 textures used by fill_triangle_affine.
 Texture color is multiplied by interpolated vertex color.
 .PP
 The same near-plane safety net as fill_triangle_persp applies: any
 vertex at or behind the camera, or projected far outside the window's
 bounds, silently discards the triangle before rasterization.
+.PP
+On CPUs reporting AVX2 (see cpu.has_avx2()) the inner loop automatically
+dispatches to an 8-pixel-wide SoA kernel for roughly 2x throughput;
+otherwise it uses a single-pixel SSE2 path. The dispatch is transparent
+to callers.
 .TP
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.

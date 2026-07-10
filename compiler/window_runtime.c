@@ -3128,6 +3128,13 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
     E("    mov  rax, r15");
     E("    sub  rax, r13");
     E("    cvtsi2sd xmm7, rax");  // span width
+    // incremental t: dt = 1/span (per scanline), cur_t starts at 0
+    E("    mov  rax, 0x3FF0000000000000");
+    E("    movq xmm5, rax");
+    E("    divsd xmm5, xmm7");
+    E("    movsd [rbp-664], xmm5");   // dt
+    E("    xorpd xmm5, xmm5");
+    E("    movsd [rbp-672], xmm5");   // cur_t = 0
 
     // Pixel loop
     E("    mov  [rbp-568], r13");  // current x
@@ -3137,48 +3144,48 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
     E("    jg   .ftpc_pxd");
 
     // Interpolate across scanline
-    E("    mov  rcx, [rbp-568]");
-    E("    sub  rcx, r13");
-    E("    cvtsi2sd xmm5, rcx");
     E("    xorpd xmm6, xmm6");
     E("    ucomisd xmm7, xmm6");
     E("    je   .ftpc_uvd");
-    E("    divsd xmm5, xmm7");  // t = (x - x_left) / span
+    E("    movsd xmm5, [rbp-672]");   // t = cur_t (incremental)
 
     // Interpolate 1/z
     E("    movsd xmm0, [rbp-520]");
     E("    subsd xmm0, [rbp-472]");
     E("    mulsd xmm0, xmm5");
     E("    addsd xmm0, [rbp-472]");  // 1/z
+    E("    mov  rax, 0x3FF0000000000000");
+    E("    movq xmm9, rax");
+    E("    divsd xmm9, xmm0");   // inv_z = 1/(1/z), reciprocal-hoist
 
     // Interpolate u/z, v/z and divide by 1/z
     E("    movsd xmm1, [rbp-528]");
     E("    subsd xmm1, [rbp-480]");
     E("    mulsd xmm1, xmm5");
     E("    addsd xmm1, [rbp-480]");
-    E("    divsd xmm1, xmm0");  // u
+    E("    mulsd xmm1, xmm9");  // u
     E("    movsd xmm2, [rbp-536]");
     E("    subsd xmm2, [rbp-488]");
     E("    mulsd xmm2, xmm5");
     E("    addsd xmm2, [rbp-488]");
-    E("    divsd xmm2, xmm0");  // v
+    E("    mulsd xmm2, xmm9");  // v
 
     // Interpolate r/z, g/z, b/z and divide by 1/z
     E("    movsd xmm3, [rbp-544]");
     E("    subsd xmm3, [rbp-496]");
     E("    mulsd xmm3, xmm5");
     E("    addsd xmm3, [rbp-496]");
-    E("    divsd xmm3, xmm0");  // r
+    E("    mulsd xmm3, xmm9");  // r
     E("    movsd xmm4, [rbp-552]");
     E("    subsd xmm4, [rbp-504]");
     E("    mulsd xmm4, xmm5");
     E("    addsd xmm4, [rbp-504]");
-    E("    divsd xmm4, xmm0");  // g
+    E("    mulsd xmm4, xmm9");  // g
     E("    movsd xmm8, [rbp-560]");
     E("    subsd xmm8, [rbp-512]");
     E("    mulsd xmm8, xmm5");
     E("    addsd xmm8, [rbp-512]");
-    E("    divsd xmm8, xmm0");  // b
+    E("    mulsd xmm8, xmm9");  // b
 
     // Convert to int
     E("    cvttsd2si r8, xmm1");   // u
@@ -3190,16 +3197,19 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
 
     E(".ftpc_uvd:");  // degenerate span
     E("    movsd xmm0, [rbp-472]");
+    E("    mov  rax, 0x3FF0000000000000");
+    E("    movq xmm9, rax");
+    E("    divsd xmm9, xmm0");
     E("    movsd xmm1, [rbp-480]");
-    E("    divsd xmm1, xmm0");
+    E("    mulsd xmm1, xmm9");
     E("    movsd xmm2, [rbp-488]");
-    E("    divsd xmm2, xmm0");
+    E("    mulsd xmm2, xmm9");
     E("    movsd xmm3, [rbp-496]");
-    E("    divsd xmm3, xmm0");
+    E("    mulsd xmm3, xmm9");
     E("    movsd xmm4, [rbp-504]");
-    E("    divsd xmm4, xmm0");
+    E("    mulsd xmm4, xmm9");
     E("    movsd xmm8, [rbp-512]");
-    E("    divsd xmm8, xmm0");
+    E("    mulsd xmm8, xmm9");
     E("    cvttsd2si r8, xmm1");
     E("    cvttsd2si r9, xmm2");
     E("    cvttsd2si r10, xmm3");
@@ -3306,147 +3316,95 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
     E("    mov  rdi, 255");
     E(".ftpc_b1:");
 
-    // Fetch 4 taps: p00=(u0,v0) p10=(u1,v0) p01=(u0,v1) p11=(u1,v1)
+    // Fetch 4 taps as 32-bit BGRA: p00=(u0,v0) p10=(u1,v0) p01=(u0,v1) p11=(u1,v1)
     E("    mov  rax, r9");
     E("    imul rax, [rbp-584]");
     E("    add  rax, r8");
-    E("    shl  rax, 1");
+    E("    shl  rax, 2");
     E("    add  rax, [rbp-576]");
-    E("    movzx rcx, word [rax]      ; p00");
+    E("    mov  ecx, [rax]            ; p00 BGRA");
     E("    mov  rax, r9");
     E("    imul rax, [rbp-584]");
     E("    add  rax, [rbp-624]");
-    E("    shl  rax, 1");
+    E("    shl  rax, 2");
     E("    add  rax, [rbp-576]");
-    E("    movzx rdx, word [rax]      ; p10");
+    E("    mov  edx, [rax]            ; p10 BGRA");
     E("    mov  rax, [rbp-632]");
     E("    imul rax, [rbp-584]");
     E("    add  rax, r8");
-    E("    shl  rax, 1");
+    E("    shl  rax, 2");
     E("    add  rax, [rbp-576]");
-    E("    movzx rsi, word [rax]      ; p01");
+    E("    mov  esi, [rax]            ; p01 BGRA");
     E("    mov  rax, [rbp-632]");
     E("    imul rax, [rbp-584]");
     E("    add  rax, [rbp-624]");
-    E("    shl  rax, 1");
+    E("    shl  rax, 2");
     E("    add  rax, [rbp-576]");
-    E("    movzx r9, word [rax]       ; p11");
+    E("    mov  r9d, [rax]            ; p11 BGRA");
     E("    mov  r8, [rbp-616]         ; r8 = out_addr (u0 no longer needed)");
 
-    // Red: (pix>>11)&0x1F<<3, bilinear blend, then modulate by vertex color
-    E("    mov  rax, rcx");
-    E("    shr  rax, 11");
-    E("    and  rax, 0x1F");
-    E("    shl  rax, 3");
-    E("    imul rax, [rbp-648]");
-    E("    mov  [rbp-640], rax");
-    E("    mov  rax, rdx");
-    E("    shr  rax, 11");
-    E("    and  rax, 0x1F");
-    E("    shl  rax, 3");
-    E("    imul rax, [rbp-600]");
-    E("    add  rax, [rbp-640]");
-    E("    mov  [rbp-640], rax        ; top_r");
-    E("    mov  rax, rsi");
-    E("    shr  rax, 11");
-    E("    and  rax, 0x1F");
-    E("    shl  rax, 3");
-    E("    imul rax, [rbp-648]");
-    E("    mov  [rbp-664], rax");
-    E("    mov  rax, r9");
-    E("    shr  rax, 11");
-    E("    and  rax, 0x1F");
-    E("    shl  rax, 3");
-    E("    imul rax, [rbp-600]");
-    E("    add  rax, [rbp-664]");
-    E("    mov  [rbp-664], rax        ; bot_r");
-    E("    mov  rax, [rbp-640]");
-    E("    imul rax, [rbp-656]");
-    E("    mov  [rbp-640], rax");
-    E("    mov  rax, [rbp-664]");
-    E("    imul rax, [rbp-608]");
-    E("    add  rax, [rbp-640]");
-    E("    shr  rax, 16");
-    E("    and  eax, 0xFF             ; blended tex_r");
-    E("    imul rax, r10");
-    E("    shr  rax, 8               ; final_r");
-    E("    mov  byte [r8+2], al");
+    // --- SSE2 single-pixel bilinear blend + vertex-color modulate ---
+    // taps: ecx=p00 edx=p10 esi=p01 r9d=p11 (BGRA). weights 0-256 at
+    // [rbp-600]=wu [rbp-648]=inv_wu [rbp-608]=wv [rbp-656]=inv_wv.
+    // vertex color r10=R r11=G rdi=B. out_addr=r8. xmm7 is loop-carried
+    // (span) -- must NOT be touched; this uses xmm0-6,8,9 only.
+    E("    pxor    xmm6, xmm6");
+    // horizontal weights, halved so pmaddwd operands stay signed-16 safe
+    E("    mov     eax, [rbp-648]");
+    E("    shr     eax, 1");
+    E("    movd    xmm4, eax");
+    E("    pshuflw xmm4, xmm4, 0");
+    E("    pshufd  xmm4, xmm4, 0        ; ihu x8");
+    E("    mov     eax, [rbp-600]");
+    E("    shr     eax, 1");
+    E("    movd    xmm5, eax");
+    E("    pshuflw xmm5, xmm5, 0");
+    E("    pshufd  xmm5, xmm5, 0        ; hu x8");
+    // vertical weight pairs [inv_wv, wv] x4 for pmaddwd
+    E("    mov     eax, [rbp-608]");
+    E("    shl     eax, 16");
+    E("    or      eax, [rbp-656]");
+    E("    movd    xmm8, eax");
+    E("    pshufd  xmm8, xmm8, 0        ; [iwv,wv] x4");
+    // vertex color vector [B,G,R,A] 16-bit
+    E("    pxor    xmm9, xmm9");
+    E("    pinsrw  xmm9, edi, 0         ; B");
+    E("    pinsrw  xmm9, r11d, 1        ; G");
+    E("    pinsrw  xmm9, r10d, 2        ; R");
+    E("    mov     eax, 255");
+    E("    pinsrw  xmm9, eax, 3         ; A");
+    // taps -> 16-bit lanes [B,G,R,A,0,0,0,0]
+    E("    movd    xmm0, ecx");
+    E("    punpcklbw xmm0, xmm6         ; p00");
+    E("    movd    xmm1, edx");
+    E("    punpcklbw xmm1, xmm6         ; p10");
+    E("    movd    xmm2, esi");
+    E("    punpcklbw xmm2, xmm6         ; p01");
+    E("    movd    xmm3, r9d");
+    E("    punpcklbw xmm3, xmm6         ; p11");
+    // horizontal: top = p00*ihu + p10*hu ; bot = p01*ihu + p11*hu
+    E("    pmullw  xmm0, xmm4");
+    E("    pmullw  xmm1, xmm5");
+    E("    paddw   xmm0, xmm1           ; top (<=32640)");
+    E("    pmullw  xmm2, xmm4");
+    E("    pmullw  xmm3, xmm5");
+    E("    paddw   xmm2, xmm3           ; bot");
+    // vertical: pmaddwd on interleaved [top,bot] pairs
+    E("    punpcklwd xmm0, xmm2         ; top.c,bot.c interleaved");
+    E("    pmaddwd xmm0, xmm8           ; 4x32 = chan*32768");
+    E("    psrad   xmm0, 15             ; 4x32 = chan 0-255");
+    E("    packssdw xmm0, xmm0          ; 4x16 [B,G,R,A]");
+    // modulate by vertex color, >>8, pack to bytes, store
+    E("    pmullw  xmm0, xmm9");
+    E("    psrlw   xmm0, 8");
+    E("    packuswb xmm0, xmm0          ; 4x8 [B,G,R,A]");
+    E("    movd    [r8], xmm0");
+    E("    mov  byte [r8+3], 0xFF       ; A");
 
-    // Green: (pix>>5)&0x3F<<2
-    E("    mov  rax, rcx");
-    E("    shr  rax, 5");
-    E("    and  rax, 0x3F");
-    E("    shl  rax, 2");
-    E("    imul rax, [rbp-648]");
-    E("    mov  [rbp-640], rax");
-    E("    mov  rax, rdx");
-    E("    shr  rax, 5");
-    E("    and  rax, 0x3F");
-    E("    shl  rax, 2");
-    E("    imul rax, [rbp-600]");
-    E("    add  rax, [rbp-640]");
-    E("    mov  [rbp-640], rax        ; top_g");
-    E("    mov  rax, rsi");
-    E("    shr  rax, 5");
-    E("    and  rax, 0x3F");
-    E("    shl  rax, 2");
-    E("    imul rax, [rbp-648]");
-    E("    mov  [rbp-664], rax");
-    E("    mov  rax, r9");
-    E("    shr  rax, 5");
-    E("    and  rax, 0x3F");
-    E("    shl  rax, 2");
-    E("    imul rax, [rbp-600]");
-    E("    add  rax, [rbp-664]");
-    E("    mov  [rbp-664], rax        ; bot_g");
-    E("    mov  rax, [rbp-640]");
-    E("    imul rax, [rbp-656]");
-    E("    mov  [rbp-640], rax");
-    E("    mov  rax, [rbp-664]");
-    E("    imul rax, [rbp-608]");
-    E("    add  rax, [rbp-640]");
-    E("    shr  rax, 16");
-    E("    and  eax, 0xFF             ; blended tex_g");
-    E("    imul rax, r11");
-    E("    shr  rax, 8               ; final_g");
-    E("    mov  byte [r8+1], al");
-
-    // Blue: pix&0x1F<<3
-    E("    mov  rax, rcx");
-    E("    and  rax, 0x1F");
-    E("    shl  rax, 3");
-    E("    imul rax, [rbp-648]");
-    E("    mov  [rbp-640], rax");
-    E("    mov  rax, rdx");
-    E("    and  rax, 0x1F");
-    E("    shl  rax, 3");
-    E("    imul rax, [rbp-600]");
-    E("    add  rax, [rbp-640]");
-    E("    mov  [rbp-640], rax        ; top_b");
-    E("    mov  rax, rsi");
-    E("    and  rax, 0x1F");
-    E("    shl  rax, 3");
-    E("    imul rax, [rbp-648]");
-    E("    mov  [rbp-664], rax");
-    E("    mov  rax, r9");
-    E("    and  rax, 0x1F");
-    E("    shl  rax, 3");
-    E("    imul rax, [rbp-600]");
-    E("    add  rax, [rbp-664]");
-    E("    mov  [rbp-664], rax        ; bot_b");
-    E("    mov  rax, [rbp-640]");
-    E("    imul rax, [rbp-656]");
-    E("    mov  [rbp-640], rax");
-    E("    mov  rax, [rbp-664]");
-    E("    imul rax, [rbp-608]");
-    E("    add  rax, [rbp-640]");
-    E("    shr  rax, 16");
-    E("    and  eax, 0xFF             ; blended tex_b");
-    E("    imul rax, rdi");
-    E("    shr  rax, 8               ; final_b");
-    E("    mov  byte [r8], al");
-    E("    mov  byte [r8+3], 0xFF     ; A");
-
+    // step incremental t
+    E("    movsd xmm5, [rbp-672]");
+    E("    addsd xmm5, [rbp-664]");
+    E("    movsd [rbp-672], xmm5");
     E("    inc  qword [rbp-568]");
     E("    jmp  .ftpc_px");
 
@@ -3455,6 +3413,840 @@ static void emit_fill_triangle_pcolor_core(Codegen *cg) {
     E("    jmp  .ftpc_scan");
     E(".ftpc_done:");
     E("    add  rsp, 624");
+    E("    pop  rdi");
+    E("    pop  rsi");
+    E("    pop  r15");
+    E("    pop  r14");
+    E("    pop  r13");
+    E("    pop  r12");
+    E("    pop  rbx");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+}
+
+static void emit_fill_triangle_pcolor_core_avx2(Codegen *cg) {
+    E("; --- _slag_ftpc_core(rcx=window_ptr, rdx=tri_ptr, r8=band_lo, r9=band_hi) ---");
+    E("_slag_ftpc_core_avx2:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    push r12");
+    E("    push r13");
+    E("    push r14");
+    E("    push r15");
+    E("    push rsi");
+    E("    push rdi");
+    E("    sub  rsp, 1120");
+    E("");
+    E("    mov  rbx, rcx            ; window_ptr");
+    E("    mov  r10, rdx            ; tri_ptr");
+    E("");
+    E("    ; raw copy of the 27-qword sorted attr/x/y/attr_base block, then tex info");
+    E("    mov  rax, [r10+0]");
+    E("    mov  [rbp-448], rax");
+    E("    mov  rax, [r10+8]");
+    E("    mov  [rbp-440], rax");
+    E("    mov  rax, [r10+16]");
+    E("    mov  [rbp-432], rax");
+    E("    mov  rax, [r10+24]");
+    E("    mov  [rbp-424], rax");
+    E("    mov  rax, [r10+32]");
+    E("    mov  [rbp-416], rax");
+    E("    mov  rax, [r10+40]");
+    E("    mov  [rbp-408], rax");
+    E("    mov  rax, [r10+48]");
+    E("    mov  [rbp-400], rax");
+    E("    mov  rax, [r10+56]");
+    E("    mov  [rbp-392], rax");
+    E("    mov  rax, [r10+64]");
+    E("    mov  [rbp-384], rax");
+    E("    mov  rax, [r10+72]");
+    E("    mov  [rbp-376], rax");
+    E("    mov  rax, [r10+80]");
+    E("    mov  [rbp-368], rax");
+    E("    mov  rax, [r10+88]");
+    E("    mov  [rbp-360], rax");
+    E("    mov  rax, [r10+96]");
+    E("    mov  [rbp-352], rax");
+    E("    mov  rax, [r10+104]");
+    E("    mov  [rbp-344], rax");
+    E("    mov  rax, [r10+112]");
+    E("    mov  [rbp-336], rax");
+    E("    mov  rax, [r10+120]");
+    E("    mov  [rbp-328], rax");
+    E("    mov  rax, [r10+128]");
+    E("    mov  [rbp-320], rax");
+    E("    mov  rax, [r10+136]");
+    E("    mov  [rbp-312], rax");
+    E("    mov  rax, [r10+144]");
+    E("    mov  [rbp-304], rax");
+    E("    mov  rax, [r10+152]");
+    E("    mov  [rbp-296], rax");
+    E("    mov  rax, [r10+160]");
+    E("    mov  [rbp-288], rax");
+    E("    mov  rax, [r10+168]");
+    E("    mov  [rbp-280], rax");
+    E("    mov  rax, [r10+176]");
+    E("    mov  [rbp-272], rax");
+    E("    mov  rax, [r10+184]");
+    E("    mov  [rbp-264], rax");
+    E("    mov  rax, [r10+192]");
+    E("    mov  [rbp-256], rax");
+    E("    mov  rax, [r10+200]");
+    E("    mov  [rbp-248], rax");
+    E("    mov  rax, [r10+208]");
+    E("    mov  [rbp-240], rax");
+    E("    mov  rax, [r10+216]");
+    E("    mov  [rbp-576], rax   ; tex_ptr");
+    E("    mov  rax, [r10+224]");
+    E("    mov  [rbp-584], rax   ; tex_w");
+    E("    mov  rax, [r10+232]");
+    E("    mov  [rbp-592], rax   ; tex_h");
+    E("");
+    E("    ; clamp scanline range to [max(ya,band_lo), min(yc,band_hi,height-1)]");
+    E("    mov  rax, [rbp-384]       ; ya");
+    E("    cmp  rax, r8              ; band_lo");
+    E("    jge  .ftpc2_ys");
+    E("    mov  rax, r8");
+    E(".ftpc2_ys:");
+    E("    mov  [rbp-456], rax");
+    E("    mov  r12, [rbp-400]       ; yc");
+    E("    cmp  r12, r9              ; band_hi");
+    E("    jle  .ftpc2_ye_band_ok");
+    E("    mov  r12, r9");
+    E(".ftpc2_ye_band_ok:");
+    E("    mov  rax, [rbx + WSTATE_HEIGHT]");
+    E("    dec  rax");
+    E("    cmp  r12, rax");
+    E("    jle  .ftpc2_ye");
+    E("    mov  r12, rax");
+    E(".ftpc2_ye:");
+    E("");
+    E(".ftpc2_scan:");
+    E("    mov  rax, [rbp-456]");
+    E("    cmp  rax, r12");
+    E("    jg   .ftpc2_done");
+
+    // Interpolate along long edge (v0 to v2)
+    E("    mov  rax, [rbp-400]");
+    E("    sub  rax, [rbp-384]");
+    E("    cvtsi2sd xmm7, rax");
+    E("    xorpd xmm6, xmm6");
+    E("    ucomisd xmm7, xmm6");
+    E("    je   .ftpc2_longd");
+    E("    mov  rcx, [rbp-456]");
+    E("    sub  rcx, [rbp-384]");
+    E("    cvtsi2sd xmm5, rcx");
+    E("    divsd xmm5, xmm7");  // t = (y - y0) / (y2 - y0)
+
+    // x_long = x0 + t * (x2 - x0)
+    E("    mov  rcx, [rbp-424]");
+    E("    sub  rcx, [rbp-408]");
+    E("    cvtsi2sd xmm0, rcx");
+    E("    mulsd xmm0, xmm5");
+    E("    cvtsi2sd xmm1, qword [rbp-408]");
+    E("    addsd xmm0, xmm1");
+    E("    cvttsd2si r13, xmm0");  // x_long in r13
+
+    // Interpolate attributes along long edge
+    // Load attr0 base and attr2 base
+    E("    mov  rdi, [rbp-432]");  // attr0 offset
+    E("    neg  rdi");
+    E("    mov  rsi, [rbp-448]");  // attr2 offset
+    E("    neg  rsi");
+
+    // 1/z_long
+    E("    movsd xmm0, [rbp+rsi]");     // 1/z2
+    E("    subsd xmm0, [rbp+rdi]");     // 1/z2 - 1/z0
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi]");
+    E("    movsd [rbp-472], xmm0");     // 1/z_long
+
+    // u/z_long
+    E("    movsd xmm0, [rbp+rsi-8]");
+    E("    subsd xmm0, [rbp+rdi-8]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-8]");
+    E("    movsd [rbp-480], xmm0");
+
+    // v/z_long
+    E("    movsd xmm0, [rbp+rsi-16]");
+    E("    subsd xmm0, [rbp+rdi-16]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-16]");
+    E("    movsd [rbp-488], xmm0");
+
+    // r/z_long
+    E("    movsd xmm0, [rbp+rsi-24]");
+    E("    subsd xmm0, [rbp+rdi-24]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-24]");
+    E("    movsd [rbp-496], xmm0");
+
+    // g/z_long
+    E("    movsd xmm0, [rbp+rsi-32]");
+    E("    subsd xmm0, [rbp+rdi-32]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-32]");
+    E("    movsd [rbp-504], xmm0");
+
+    // b/z_long
+    E("    movsd xmm0, [rbp+rsi-40]");
+    E("    subsd xmm0, [rbp+rdi-40]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-40]");
+    E("    movsd [rbp-512], xmm0");
+    E("    jmp  .ftpc2_short");
+
+    E(".ftpc2_longd:");  // degenerate long edge
+    E("    mov  r13, [rbp-408]");
+    E("    mov  rdi, [rbp-432]");
+    E("    neg  rdi");
+    E("    movsd xmm0, [rbp+rdi]");
+    E("    movsd [rbp-472], xmm0");
+    E("    movsd xmm0, [rbp+rdi-8]");
+    E("    movsd [rbp-480], xmm0");
+    E("    movsd xmm0, [rbp+rdi-16]");
+    E("    movsd [rbp-488], xmm0");
+    E("    movsd xmm0, [rbp+rdi-24]");
+    E("    movsd [rbp-496], xmm0");
+    E("    movsd xmm0, [rbp+rdi-32]");
+    E("    movsd [rbp-504], xmm0");
+    E("    movsd xmm0, [rbp+rdi-40]");
+    E("    movsd [rbp-512], xmm0");
+
+    // Interpolate along short edges (v0-v1 or v1-v2)
+    E(".ftpc2_short:");
+    E("    mov  rax, [rbp-456]");
+    E("    cmp  rax, [rbp-392]");
+    E("    jl   .ftpc2_upper");
+
+    // Lower half: v1 to v2
+    E("    mov  rax, [rbp-400]");
+    E("    sub  rax, [rbp-392]");
+    E("    cvtsi2sd xmm7, rax");
+    E("    xorpd xmm6, xmm6");
+    E("    ucomisd xmm7, xmm6");
+    E("    je   .ftpc2_shortd");
+    E("    mov  rcx, [rbp-456]");
+    E("    sub  rcx, [rbp-392]");
+    E("    cvtsi2sd xmm5, rcx");
+    E("    divsd xmm5, xmm7");
+
+    E("    mov  rcx, [rbp-424]");
+    E("    sub  rcx, [rbp-416]");
+    E("    cvtsi2sd xmm0, rcx");
+    E("    mulsd xmm0, xmm5");
+    E("    cvtsi2sd xmm1, qword [rbp-416]");
+    E("    addsd xmm0, xmm1");
+    E("    cvttsd2si r15, xmm0");  // x_short in r15
+
+    E("    mov  rdi, [rbp-440]");
+    E("    neg  rdi");
+    E("    mov  rsi, [rbp-448]");
+    E("    neg  rsi");
+    E("    jmp  .ftpc2_shortattr");
+
+    // Upper half: v0 to v1
+    E(".ftpc2_upper:");
+    E("    mov  rax, [rbp-392]");
+    E("    sub  rax, [rbp-384]");
+    E("    cvtsi2sd xmm7, rax");
+    E("    xorpd xmm6, xmm6");
+    E("    ucomisd xmm7, xmm6");
+    E("    je   .ftpc2_shortd");
+    E("    mov  rcx, [rbp-456]");
+    E("    sub  rcx, [rbp-384]");
+    E("    cvtsi2sd xmm5, rcx");
+    E("    divsd xmm5, xmm7");
+
+    E("    mov  rcx, [rbp-416]");
+    E("    sub  rcx, [rbp-408]");
+    E("    cvtsi2sd xmm0, rcx");
+    E("    mulsd xmm0, xmm5");
+    E("    cvtsi2sd xmm1, qword [rbp-408]");
+    E("    addsd xmm0, xmm1");
+    E("    cvttsd2si r15, xmm0");
+
+    E("    mov  rdi, [rbp-432]");
+    E("    neg  rdi");
+    E("    mov  rsi, [rbp-440]");
+    E("    neg  rsi");
+
+    E(".ftpc2_shortattr:");
+    // Interpolate short edge attributes
+    E("    movsd xmm0, [rbp+rsi]");
+    E("    subsd xmm0, [rbp+rdi]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi]");
+    E("    movsd [rbp-520], xmm0");  // 1/z_short
+    E("    movsd xmm0, [rbp+rsi-8]");
+    E("    subsd xmm0, [rbp+rdi-8]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-8]");
+    E("    movsd [rbp-528], xmm0");  // u/z_short
+    E("    movsd xmm0, [rbp+rsi-16]");
+    E("    subsd xmm0, [rbp+rdi-16]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-16]");
+    E("    movsd [rbp-536], xmm0");  // v/z_short
+    E("    movsd xmm0, [rbp+rsi-24]");
+    E("    subsd xmm0, [rbp+rdi-24]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-24]");
+    E("    movsd [rbp-544], xmm0");  // r/z_short
+    E("    movsd xmm0, [rbp+rsi-32]");
+    E("    subsd xmm0, [rbp+rdi-32]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-32]");
+    E("    movsd [rbp-552], xmm0");  // g/z_short
+    E("    movsd xmm0, [rbp+rsi-40]");
+    E("    subsd xmm0, [rbp+rdi-40]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp+rdi-40]");
+    E("    movsd [rbp-560], xmm0");  // b/z_short
+    E("    jmp  .ftpc2_xsetup");
+
+    E(".ftpc2_shortd:");  // degenerate short edge
+    E("    mov  r15, [rbp-408]");
+    E("    mov  rdi, [rbp-432]");
+    E("    neg  rdi");
+    E("    movsd xmm0, [rbp+rdi]");
+    E("    movsd [rbp-520], xmm0");
+    E("    movsd xmm0, [rbp+rdi-8]");
+    E("    movsd [rbp-528], xmm0");
+    E("    movsd xmm0, [rbp+rdi-16]");
+    E("    movsd [rbp-536], xmm0");
+    E("    movsd xmm0, [rbp+rdi-24]");
+    E("    movsd [rbp-544], xmm0");
+    E("    movsd xmm0, [rbp+rdi-32]");
+    E("    movsd [rbp-552], xmm0");
+    E("    movsd xmm0, [rbp+rdi-40]");
+    E("    movsd [rbp-560], xmm0");
+
+    E(".ftpc2_xsetup:");
+    // Ensure x_left <= x_right
+    E("    cmp  r13, r15");
+    E("    jle  .ftpc2_xok");
+    E("    xchg r13, r15");
+    // Swap all the /z values
+    E("    movsd xmm0, [rbp-472]");
+    E("    movsd xmm1, [rbp-520]");
+    E("    movsd [rbp-472], xmm1");
+    E("    movsd [rbp-520], xmm0");
+    E("    movsd xmm0, [rbp-480]");
+    E("    movsd xmm1, [rbp-528]");
+    E("    movsd [rbp-480], xmm1");
+    E("    movsd [rbp-528], xmm0");
+    E("    movsd xmm0, [rbp-488]");
+    E("    movsd xmm1, [rbp-536]");
+    E("    movsd [rbp-488], xmm1");
+    E("    movsd [rbp-536], xmm0");
+    E("    movsd xmm0, [rbp-496]");
+    E("    movsd xmm1, [rbp-544]");
+    E("    movsd [rbp-496], xmm1");
+    E("    movsd [rbp-544], xmm0");
+    E("    movsd xmm0, [rbp-504]");
+    E("    movsd xmm1, [rbp-552]");
+    E("    movsd [rbp-504], xmm1");
+    E("    movsd [rbp-552], xmm0");
+    E("    movsd xmm0, [rbp-512]");
+    E("    movsd xmm1, [rbp-560]");
+    E("    movsd [rbp-512], xmm1");
+    E("    movsd [rbp-560], xmm0");
+
+    E(".ftpc2_xok:");
+    // Clamp x to screen
+    E("    cmp  r13, 0");
+    E("    jge  .ftpc2_xl");
+    E("    xor  r13, r13");
+    E(".ftpc2_xl:");
+    E("    mov  rax, [rbx + WSTATE_WIDTH]");
+    E("    dec  rax");
+    E("    cmp  r15, rax");
+    E("    jle  .ftpc2_xr");
+    E("    mov  r15, rax");
+    E(".ftpc2_xr:");
+
+    // Compute row offset
+    E("    mov  rax, [rbp-456]");
+    E("    imul rax, [rbx + WSTATE_WIDTH]");
+    E("    mov  r14, rax");  // row offset in r14
+
+    // x span width
+    E("    mov  rax, r15");
+    E("    sub  rax, r13");
+    E("    cvtsi2sd xmm7, rax");  // span width
+    // incremental t: dt = 1/span (per scanline), cur_t starts at 0
+    E("    mov  rax, 0x3FF0000000000000");
+    E("    movq xmm5, rax");
+    E("    divsd xmm5, xmm7");
+    E("    movsd [rbp-664], xmm5");   // dt
+    E("    xorpd xmm5, xmm5");
+    E("    movsd [rbp-672], xmm5");   // cur_t = 0
+
+    // Pixel loop
+    E("    mov  [rbp-568], r13");  // current x
+
+    // ===== AVX2 8-wide SoA fast path (float32) — BYPASSED =====
+    // Delete the 'jmp .ftpc2_px' below to enable, then render-test/debug.
+    // First cut is point-sampled (1 gather); bilinear taps are the follow-up.
+    // Persistent: ymm8-13 = invz/uoz/voz/roz/goz/boz accums, ymm15 = 1.0.
+    // xmm7 (span, loop-carried) is NOT touched. Scratch is below [rbp-680].
+    E("    mov  rax, r15");
+    E("    sub  rax, r13");
+    E("    add  rax, 1");
+    E("    cmp  rax, 8");
+    E("    jl   .ftpc2_px");
+    E("    and  rax, -8");
+    E("    mov  [rbp-968], rax");
+    E("    mov  dword [rbp-1000], 0xFF");
+    E("    mov  eax, [rbp-584]");
+    E("    dec  eax");
+    E("    mov  [rbp-1032], eax");
+    E("    mov  eax, [rbp-592]");
+    E("    dec  eax");
+    E("    mov  [rbp-1064], eax");
+    E("    mov  eax, [rbp-584]");
+    E("    mov  [rbp-1096], eax");
+    E("    mov  dword [rbp-1128], 0xFF000000");
+    E("    mov  eax, 0x3F800000");
+    E("    vmovd xmm15, eax");
+    E("    vbroadcastss ymm15, xmm15");
+    E("    mov  rax, r15");
+    E("    sub  rax, r13");
+    E("    vcvtsi2ss xmm0, xmm0, rax");
+    E("    vdivss xmm0, xmm15, xmm0");
+    E("    vmovss [rbp-712], xmm0");
+    E("    mov  dword [rbp-744], 0");
+    E("    mov  dword [rbp-740], 1");
+    E("    mov  dword [rbp-736], 2");
+    E("    mov  dword [rbp-732], 3");
+    E("    mov  dword [rbp-728], 4");
+    E("    mov  dword [rbp-724], 5");
+    E("    mov  dword [rbp-720], 6");
+    E("    mov  dword [rbp-716], 7");
+    E("    vmovdqu ymm0, [rbp-744]");
+    E("    vcvtdq2ps ymm0, ymm0");
+    E("    vmovdqu [rbp-744], ymm0");
+    E("    mov  eax, 0x41000000");
+    E("    vmovd xmm14, eax");
+    E("    vbroadcastss ymm14, xmm14");
+    E("    vmovsd xmm1, [rbp-520]");
+    E("    vsubsd xmm1, xmm1, [rbp-472]");
+    E("    vcvtsd2ss xmm1, xmm1, xmm1");
+    E("    vmulss xmm1, xmm1, [rbp-712]");
+    E("    vbroadcastss ymm0, xmm1");
+    E("    vmulps ymm2, ymm0, ymm14");
+    E("    vmovups [rbp-776], ymm2");
+    E("    vmulps ymm2, ymm0, [rbp-744]");
+    E("    vmovsd xmm3, [rbp-472]");
+    E("    vcvtsd2ss xmm3, xmm3, xmm3");
+    E("    vbroadcastss ymm3, xmm3");
+    E("    vaddps ymm8, ymm3, ymm2");
+    E("    vmovsd xmm1, [rbp-528]");
+    E("    vsubsd xmm1, xmm1, [rbp-480]");
+    E("    vcvtsd2ss xmm1, xmm1, xmm1");
+    E("    vmulss xmm1, xmm1, [rbp-712]");
+    E("    vbroadcastss ymm0, xmm1");
+    E("    vmulps ymm2, ymm0, ymm14");
+    E("    vmovups [rbp-808], ymm2");
+    E("    vmulps ymm2, ymm0, [rbp-744]");
+    E("    vmovsd xmm3, [rbp-480]");
+    E("    vcvtsd2ss xmm3, xmm3, xmm3");
+    E("    vbroadcastss ymm3, xmm3");
+    E("    vaddps ymm9, ymm3, ymm2");
+    E("    vmovsd xmm1, [rbp-536]");
+    E("    vsubsd xmm1, xmm1, [rbp-488]");
+    E("    vcvtsd2ss xmm1, xmm1, xmm1");
+    E("    vmulss xmm1, xmm1, [rbp-712]");
+    E("    vbroadcastss ymm0, xmm1");
+    E("    vmulps ymm2, ymm0, ymm14");
+    E("    vmovups [rbp-840], ymm2");
+    E("    vmulps ymm2, ymm0, [rbp-744]");
+    E("    vmovsd xmm3, [rbp-488]");
+    E("    vcvtsd2ss xmm3, xmm3, xmm3");
+    E("    vbroadcastss ymm3, xmm3");
+    E("    vaddps ymm10, ymm3, ymm2");
+    E("    vmovsd xmm1, [rbp-544]");
+    E("    vsubsd xmm1, xmm1, [rbp-496]");
+    E("    vcvtsd2ss xmm1, xmm1, xmm1");
+    E("    vmulss xmm1, xmm1, [rbp-712]");
+    E("    vbroadcastss ymm0, xmm1");
+    E("    vmulps ymm2, ymm0, ymm14");
+    E("    vmovups [rbp-872], ymm2");
+    E("    vmulps ymm2, ymm0, [rbp-744]");
+    E("    vmovsd xmm3, [rbp-496]");
+    E("    vcvtsd2ss xmm3, xmm3, xmm3");
+    E("    vbroadcastss ymm3, xmm3");
+    E("    vaddps ymm11, ymm3, ymm2");
+    E("    vmovsd xmm1, [rbp-552]");
+    E("    vsubsd xmm1, xmm1, [rbp-504]");
+    E("    vcvtsd2ss xmm1, xmm1, xmm1");
+    E("    vmulss xmm1, xmm1, [rbp-712]");
+    E("    vbroadcastss ymm0, xmm1");
+    E("    vmulps ymm2, ymm0, ymm14");
+    E("    vmovups [rbp-904], ymm2");
+    E("    vmulps ymm2, ymm0, [rbp-744]");
+    E("    vmovsd xmm3, [rbp-504]");
+    E("    vcvtsd2ss xmm3, xmm3, xmm3");
+    E("    vbroadcastss ymm3, xmm3");
+    E("    vaddps ymm12, ymm3, ymm2");
+    E("    vmovsd xmm1, [rbp-560]");
+    E("    vsubsd xmm1, xmm1, [rbp-512]");
+    E("    vcvtsd2ss xmm1, xmm1, xmm1");
+    E("    vmulss xmm1, xmm1, [rbp-712]");
+    E("    vbroadcastss ymm0, xmm1");
+    E("    vmulps ymm2, ymm0, ymm14");
+    E("    vmovups [rbp-936], ymm2");
+    E("    vmulps ymm2, ymm0, [rbp-744]");
+    E("    vmovsd xmm3, [rbp-512]");
+    E("    vcvtsd2ss xmm3, xmm3, xmm3");
+    E("    vbroadcastss ymm3, xmm3");
+    E("    vaddps ymm13, ymm3, ymm2");
+    E("    mov  [rbp-976], r12       ; save y_end (r12 is loop-carried across scanlines)");
+    E("    mov  r12, r13");
+    E(".ftpc2_soa_loop:");
+    E("    vdivps ymm0, ymm15, ymm8");
+    E("    vmulps ymm1, ymm9, ymm0");
+    E("    vmulps ymm2, ymm10, ymm0");
+    E("    vcvttps2dq ymm1, ymm1");
+    E("    vcvttps2dq ymm2, ymm2");
+    E("    vpxor ymm3, ymm3, ymm3");
+    E("    vpmaxsd ymm1, ymm1, ymm3");
+    E("    vpmaxsd ymm2, ymm2, ymm3");
+    E("    vpbroadcastd ymm4, [rbp-1032]");
+    E("    vpminsd ymm1, ymm1, ymm4");
+    E("    vpbroadcastd ymm4, [rbp-1064]");
+    E("    vpminsd ymm2, ymm2, ymm4");
+    E("    vpbroadcastd ymm4, [rbp-1096]");
+    E("    vpmulld ymm2, ymm2, ymm4");
+    E("    vpaddd ymm1, ymm1, ymm2");
+    E("    vpcmpeqd ymm4, ymm4, ymm4");
+    E("    mov  rax, [rbp-576]");
+    E("    vpgatherdd ymm3, [rax + ymm1*4], ymm4");
+    E("    vmulps ymm5, ymm11, ymm0");
+    E("    vmulps ymm6, ymm12, ymm0");
+    E("    vmulps ymm7, ymm13, ymm0");
+    E("    vcvttps2dq ymm5, ymm5");
+    E("    vcvttps2dq ymm6, ymm6");
+    E("    vcvttps2dq ymm7, ymm7");
+    E("    vpbroadcastd ymm4, [rbp-1000]");
+    E("    vpand ymm2, ymm3, ymm4");
+    E("    vpmulld ymm2, ymm2, ymm7");
+    E("    vpsrld ymm2, ymm2, 8");
+    E("    vpsrld ymm0, ymm3, 8");
+    E("    vpand ymm0, ymm0, ymm4");
+    E("    vpmulld ymm0, ymm0, ymm6");
+    E("    vpsrld ymm0, ymm0, 8");
+    E("    vpslld ymm0, ymm0, 8");
+    E("    vpor ymm2, ymm2, ymm0");
+    E("    vpsrld ymm0, ymm3, 16");
+    E("    vpand ymm0, ymm0, ymm4");
+    E("    vpmulld ymm0, ymm0, ymm5");
+    E("    vpsrld ymm0, ymm0, 8");
+    E("    vpslld ymm0, ymm0, 16");
+    E("    vpor ymm2, ymm2, ymm0");
+    E("    vpbroadcastd ymm0, [rbp-1128]");
+    E("    vpor ymm2, ymm2, ymm0");
+    E("    mov  rax, r14");
+    E("    add  rax, r12");
+    E("    shl  rax, 2");
+    E("    add  rax, [rbx + WSTATE_PIXELS]");
+    E("    vmovdqu [rax], ymm2");
+    E("    vaddps ymm8, ymm8, [rbp-776]");
+    E("    vaddps ymm9, ymm9, [rbp-808]");
+    E("    vaddps ymm10, ymm10, [rbp-840]");
+    E("    vaddps ymm11, ymm11, [rbp-872]");
+    E("    vaddps ymm12, ymm12, [rbp-904]");
+    E("    vaddps ymm13, ymm13, [rbp-936]");
+    E("    add  r12, 8");
+    E("    sub  qword [rbp-968], 8");
+    E("    jg   .ftpc2_soa_loop");
+    E("    vzeroupper");
+    E("    mov  [rbp-568], r12");
+    E("    mov  rax, r12");
+    E("    sub  rax, r13");
+    E("    vcvtsi2sd xmm5, xmm5, rax");
+    E("    vmulsd xmm5, xmm5, [rbp-664]");
+    E("    vmovsd [rbp-672], xmm5");
+    E("    mov  r12, [rbp-976]       ; restore y_end (SoA path clobbered r12)");
+    E(".ftpc2_px:");
+    E("    mov  rax, [rbp-568]");
+    E("    cmp  rax, r15");
+    E("    jg   .ftpc2_pxd");
+
+    // Interpolate across scanline
+    E("    xorpd xmm6, xmm6");
+    E("    ucomisd xmm7, xmm6");
+    E("    je   .ftpc2_uvd");
+    E("    movsd xmm5, [rbp-672]");   // t = cur_t (incremental)
+
+    // Interpolate 1/z
+    E("    movsd xmm0, [rbp-520]");
+    E("    subsd xmm0, [rbp-472]");
+    E("    mulsd xmm0, xmm5");
+    E("    addsd xmm0, [rbp-472]");  // 1/z
+    E("    mov  rax, 0x3FF0000000000000");
+    E("    movq xmm9, rax");
+    E("    divsd xmm9, xmm0");   // inv_z = 1/(1/z), reciprocal-hoist
+
+    // Interpolate u/z, v/z and divide by 1/z
+    E("    movsd xmm1, [rbp-528]");
+    E("    subsd xmm1, [rbp-480]");
+    E("    mulsd xmm1, xmm5");
+    E("    addsd xmm1, [rbp-480]");
+    E("    mulsd xmm1, xmm9");  // u
+    E("    movsd xmm2, [rbp-536]");
+    E("    subsd xmm2, [rbp-488]");
+    E("    mulsd xmm2, xmm5");
+    E("    addsd xmm2, [rbp-488]");
+    E("    mulsd xmm2, xmm9");  // v
+
+    // Interpolate r/z, g/z, b/z and divide by 1/z
+    E("    movsd xmm3, [rbp-544]");
+    E("    subsd xmm3, [rbp-496]");
+    E("    mulsd xmm3, xmm5");
+    E("    addsd xmm3, [rbp-496]");
+    E("    mulsd xmm3, xmm9");  // r
+    E("    movsd xmm4, [rbp-552]");
+    E("    subsd xmm4, [rbp-504]");
+    E("    mulsd xmm4, xmm5");
+    E("    addsd xmm4, [rbp-504]");
+    E("    mulsd xmm4, xmm9");  // g
+    E("    movsd xmm8, [rbp-560]");
+    E("    subsd xmm8, [rbp-512]");
+    E("    mulsd xmm8, xmm5");
+    E("    addsd xmm8, [rbp-512]");
+    E("    mulsd xmm8, xmm9");  // b
+
+    // Convert to int
+    E("    cvttsd2si r8, xmm1");   // u
+    E("    cvttsd2si r9, xmm2");   // v
+    E("    cvttsd2si r10, xmm3");  // r
+    E("    cvttsd2si r11, xmm4");  // g
+    E("    cvttsd2si rdi, xmm8");  // b (use rdi temp)
+    E("    jmp  .ftpc2_sample");
+
+    E(".ftpc2_uvd:");  // degenerate span
+    E("    movsd xmm0, [rbp-472]");
+    E("    mov  rax, 0x3FF0000000000000");
+    E("    movq xmm9, rax");
+    E("    divsd xmm9, xmm0");
+    E("    movsd xmm1, [rbp-480]");
+    E("    mulsd xmm1, xmm9");
+    E("    movsd xmm2, [rbp-488]");
+    E("    mulsd xmm2, xmm9");
+    E("    movsd xmm3, [rbp-496]");
+    E("    mulsd xmm3, xmm9");
+    E("    movsd xmm4, [rbp-504]");
+    E("    mulsd xmm4, xmm9");
+    E("    movsd xmm8, [rbp-512]");
+    E("    mulsd xmm8, xmm9");
+    E("    cvttsd2si r8, xmm1");
+    E("    cvttsd2si r9, xmm2");
+    E("    cvttsd2si r10, xmm3");
+    E("    cvttsd2si r11, xmm4");
+    E("    cvttsd2si rdi, xmm8");
+
+    E(".ftpc2_sample:");
+    // Compute output pixel address early, before rsi/r9 are repurposed as tap holders
+    E("    mov  rax, r14");
+    E("    add  rax, [rbp-568]");
+    E("    shl  rax, 2");
+    E("    add  rax, [rbx + WSTATE_PIXELS]");
+    E("    mov  [rbp-616], rax        ; out_addr");
+    // Bilinear weights (8.8 fixed-point) from fractional part of raw u,v
+    E("    cvtsi2sd xmm5, r8");
+    E("    subsd    xmm1, xmm5       ; frac_u");
+    E("    xorpd    xmm6, xmm6");
+    E("    maxsd    xmm1, xmm6");
+    E("    mov      rax, 0x3FF0000000000000");
+    E("    movq     xmm0, rax");
+    E("    minsd    xmm1, xmm0");
+    E("    mov      rax, 0x4070000000000000");
+    E("    movq     xmm3, rax");
+    E("    mulsd    xmm1, xmm3");
+    E("    cvttsd2si rax, xmm1");
+    E("    mov  [rbp-600], rax        ; wu");
+    E("    cvtsi2sd xmm5, r9");
+    E("    subsd    xmm2, xmm5       ; frac_v");
+    E("    maxsd    xmm2, xmm6");
+    E("    minsd    xmm2, xmm0");
+    E("    mulsd    xmm2, xmm3");
+    E("    cvttsd2si rax, xmm2");
+    E("    mov  [rbp-608], rax        ; wv");
+    E("    mov  rax, 256");
+    E("    sub  rax, [rbp-600]");
+    E("    mov  [rbp-648], rax        ; inv_wu");
+    E("    mov  rax, 256");
+    E("    sub  rax, [rbp-608]");
+    E("    mov  [rbp-656], rax        ; inv_wv");
+    // Clamp UV
+    E("    cmp  r8, 0");
+    E("    jge  .ftpc2_bu0");
+    E("    xor  r8, r8");
+    E(".ftpc2_bu0:");
+    E("    mov  rax, [rbp-584]");
+    E("    dec  rax");
+    E("    cmp  r8, rax");
+    E("    jle  .ftpc2_bu1");
+    E("    mov  r8, rax");
+    E(".ftpc2_bu1:");
+    E("    cmp  r9, 0");
+    E("    jge  .ftpc2_bv0");
+    E("    xor  r9, r9");
+    E(".ftpc2_bv0:");
+    E("    mov  rax, [rbp-592]");
+    E("    dec  rax");
+    E("    cmp  r9, rax");
+    E("    jle  .ftpc2_bv1");
+    E("    mov  r9, rax");
+    E(".ftpc2_bv1:");
+    // u1=min(u0+1,tex_w-1)  v1=min(v0+1,tex_h-1)
+    E("    mov  rax, r8");
+    E("    inc  rax");
+    E("    mov  rcx, [rbp-584]");
+    E("    dec  rcx");
+    E("    cmp  rax, rcx");
+    E("    jle  .ftpc2_bu1ok");
+    E("    mov  rax, rcx");
+    E(".ftpc2_bu1ok:");
+    E("    mov  [rbp-624], rax        ; u1");
+    E("    mov  rax, r9");
+    E("    inc  rax");
+    E("    mov  rcx, [rbp-592]");
+    E("    dec  rcx");
+    E("    cmp  rax, rcx");
+    E("    jle  .ftpc2_bv1ok");
+    E("    mov  rax, rcx");
+    E(".ftpc2_bv1ok:");
+    E("    mov  [rbp-632], rax        ; v1");
+
+    // Clamp vertex colors to 0-255
+    E("    cmp  r10, 0");
+    E("    jge  .ftpc2_r0");
+    E("    xor  r10, r10");
+    E(".ftpc2_r0:");
+    E("    cmp  r10, 255");
+    E("    jle  .ftpc2_r1");
+    E("    mov  r10, 255");
+    E(".ftpc2_r1:");
+    E("    cmp  r11, 0");
+    E("    jge  .ftpc2_g0");
+    E("    xor  r11, r11");
+    E(".ftpc2_g0:");
+    E("    cmp  r11, 255");
+    E("    jle  .ftpc2_g1");
+    E("    mov  r11, 255");
+    E(".ftpc2_g1:");
+    E("    cmp  rdi, 0");
+    E("    jge  .ftpc2_b0");
+    E("    xor  rdi, rdi");
+    E(".ftpc2_b0:");
+    E("    cmp  rdi, 255");
+    E("    jle  .ftpc2_b1");
+    E("    mov  rdi, 255");
+    E(".ftpc2_b1:");
+
+    // Fetch 4 taps as 32-bit BGRA: p00=(u0,v0) p10=(u1,v0) p01=(u0,v1) p11=(u1,v1)
+    E("    mov  rax, r9");
+    E("    imul rax, [rbp-584]");
+    E("    add  rax, r8");
+    E("    shl  rax, 2");
+    E("    add  rax, [rbp-576]");
+    E("    mov  ecx, [rax]            ; p00 BGRA");
+    E("    mov  rax, r9");
+    E("    imul rax, [rbp-584]");
+    E("    add  rax, [rbp-624]");
+    E("    shl  rax, 2");
+    E("    add  rax, [rbp-576]");
+    E("    mov  edx, [rax]            ; p10 BGRA");
+    E("    mov  rax, [rbp-632]");
+    E("    imul rax, [rbp-584]");
+    E("    add  rax, r8");
+    E("    shl  rax, 2");
+    E("    add  rax, [rbp-576]");
+    E("    mov  esi, [rax]            ; p01 BGRA");
+    E("    mov  rax, [rbp-632]");
+    E("    imul rax, [rbp-584]");
+    E("    add  rax, [rbp-624]");
+    E("    shl  rax, 2");
+    E("    add  rax, [rbp-576]");
+    E("    mov  r9d, [rax]            ; p11 BGRA");
+    E("    mov  r8, [rbp-616]         ; r8 = out_addr (u0 no longer needed)");
+
+    // --- SSE2 single-pixel bilinear blend + vertex-color modulate ---
+    // taps: ecx=p00 edx=p10 esi=p01 r9d=p11 (BGRA). weights 0-256 at
+    // [rbp-600]=wu [rbp-648]=inv_wu [rbp-608]=wv [rbp-656]=inv_wv.
+    // vertex color r10=R r11=G rdi=B. out_addr=r8. xmm7 is loop-carried
+    // (span) -- must NOT be touched; this uses xmm0-6,8,9 only.
+    E("    pxor    xmm6, xmm6");
+    // horizontal weights, halved so pmaddwd operands stay signed-16 safe
+    E("    mov     eax, [rbp-648]");
+    E("    shr     eax, 1");
+    E("    movd    xmm4, eax");
+    E("    pshuflw xmm4, xmm4, 0");
+    E("    pshufd  xmm4, xmm4, 0        ; ihu x8");
+    E("    mov     eax, [rbp-600]");
+    E("    shr     eax, 1");
+    E("    movd    xmm5, eax");
+    E("    pshuflw xmm5, xmm5, 0");
+    E("    pshufd  xmm5, xmm5, 0        ; hu x8");
+    // vertical weight pairs [inv_wv, wv] x4 for pmaddwd
+    E("    mov     eax, [rbp-608]");
+    E("    shl     eax, 16");
+    E("    or      eax, [rbp-656]");
+    E("    movd    xmm8, eax");
+    E("    pshufd  xmm8, xmm8, 0        ; [iwv,wv] x4");
+    // vertex color vector [B,G,R,A] 16-bit
+    E("    pxor    xmm9, xmm9");
+    E("    pinsrw  xmm9, edi, 0         ; B");
+    E("    pinsrw  xmm9, r11d, 1        ; G");
+    E("    pinsrw  xmm9, r10d, 2        ; R");
+    E("    mov     eax, 255");
+    E("    pinsrw  xmm9, eax, 3         ; A");
+    // taps -> 16-bit lanes [B,G,R,A,0,0,0,0]
+    E("    movd    xmm0, ecx");
+    E("    punpcklbw xmm0, xmm6         ; p00");
+    E("    movd    xmm1, edx");
+    E("    punpcklbw xmm1, xmm6         ; p10");
+    E("    movd    xmm2, esi");
+    E("    punpcklbw xmm2, xmm6         ; p01");
+    E("    movd    xmm3, r9d");
+    E("    punpcklbw xmm3, xmm6         ; p11");
+    // horizontal: top = p00*ihu + p10*hu ; bot = p01*ihu + p11*hu
+    E("    pmullw  xmm0, xmm4");
+    E("    pmullw  xmm1, xmm5");
+    E("    paddw   xmm0, xmm1           ; top (<=32640)");
+    E("    pmullw  xmm2, xmm4");
+    E("    pmullw  xmm3, xmm5");
+    E("    paddw   xmm2, xmm3           ; bot");
+    // vertical: pmaddwd on interleaved [top,bot] pairs
+    E("    punpcklwd xmm0, xmm2         ; top.c,bot.c interleaved");
+    E("    pmaddwd xmm0, xmm8           ; 4x32 = chan*32768");
+    E("    psrad   xmm0, 15             ; 4x32 = chan 0-255");
+    E("    packssdw xmm0, xmm0          ; 4x16 [B,G,R,A]");
+    // modulate by vertex color, >>8, pack to bytes, store
+    E("    pmullw  xmm0, xmm9");
+    E("    psrlw   xmm0, 8");
+    E("    packuswb xmm0, xmm0          ; 4x8 [B,G,R,A]");
+    E("    movd    [r8], xmm0");
+    E("    mov  byte [r8+3], 0xFF       ; A");
+
+    // step incremental t
+    E("    movsd xmm5, [rbp-672]");
+    E("    addsd xmm5, [rbp-664]");
+    E("    movsd [rbp-672], xmm5");
+    E("    inc  qword [rbp-568]");
+    E("    jmp  .ftpc2_px");
+
+    E(".ftpc2_pxd:");
+    E("    inc  qword [rbp-456]");
+    E("    jmp  .ftpc2_scan");
+    E(".ftpc2_done:");
+    E("    add  rsp, 1120");
     E("    pop  rdi");
     E("    pop  rsi");
     E("    pop  r15");
@@ -3631,7 +4423,13 @@ static void emit_pool_worker(Codegen *cg) {
     E("    jmp  .pw_tri_next");
     E(".pw_call_pcolor:");
     E("    sub  rsp, 32");
+    E("    cmp  byte [_simd_f_avx2], 0");
+    E("    je   .pw_pc_sse");
+    E("    call _slag_ftpc_core_avx2");
+    E("    jmp  .pw_pc_done");
+    E(".pw_pc_sse:");
     E("    call _slag_ftpc_core");
+    E(".pw_pc_done:");
     E("    add  rsp, 32");
     E(".pw_tri_next:");
     E("    inc  r14");
@@ -3884,7 +4682,13 @@ static void emit_window_utils(Codegen *cg) {
     E("    jmp  .wf_seq_tri_next");
     E(".wf_seq_call_pcolor:");
     E("    sub  rsp, 32");
+    E("    cmp  byte [_simd_f_avx2], 0");
+    E("    je   .wf_pc_sse");
+    E("    call _slag_ftpc_core_avx2");
+    E("    jmp  .wf_pc_done");
+    E(".wf_pc_sse:");
     E("    call _slag_ftpc_core");
+    E(".wf_pc_done:");
     E("    add  rsp, 32");
     E(".wf_seq_tri_next:");
     E("    inc  r12");
@@ -6304,6 +7108,7 @@ void emit_window_runtime(Codegen *cg, const EventHandlerFlags *flags) {
     emit_fill_triangle_affine_core(cg);
     emit_fill_triangle_persp_core(cg);
     emit_fill_triangle_pcolor_core(cg);
+    emit_fill_triangle_pcolor_core_avx2(cg);
     emit_ftqueue_ensure_capacity(cg);
     emit_pool_worker(cg);
     emit_pool_ensure_init(cg);
