@@ -503,6 +503,50 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
     }
 }
 
+// Emit a path/pointer argument for a file.* builtin, leaving the byte
+// pointer in rax. A str expression yields ptr(rax)+len(rdx) as usual, but
+// an int expression (e.g. a mem.alloc buffer the caller filled with
+// mem.poke8 and null-terminated) is taken as the null-terminated path
+// pointer directly. This lets programs build filenames/paths at runtime
+// instead of being limited to string literals/str variables.
+static void emit_path_expr(Codegen *cg, const Expr *e) {
+    if (expr_type(cg, e, TYPE_STR) == TYPE_STR) {
+        emit_str_expr(cg, e);   // rax = ptr, rdx = len
+    } else {
+        emit_int_expr(cg, e);   // rax = ptr (runtime-built byte buffer)
+    }
+}
+
+// Maps a string literal used in a key comparison (e.g. `key == "a"` or
+// `key == "left"`) to its canonical key code, matching the value the
+// window runtime delivers to on key_down/on key_up after translating the
+// raw virtual key. Printable keys keep their ASCII value (a single-char
+// literal is just its byte, case-sensitive); non-character keys (arrows,
+// F-keys, modifiers, etc.) are encoded as VK+256 so they never collide
+// with a real character. Returns 1 and sets *out on a match, else 0.
+static int keylit_code(const char *s, int *out) {
+    if (s == NULL) return 0;
+    if (s[0] != '\0' && s[1] == '\0') {      // single character -> its byte
+        *out = (unsigned char)s[0];
+        return 1;
+    }
+    static const struct { const char *name; int code; } tbl[] = {
+        {"esc",27},{"escape",27},{"enter",13},{"return",13},
+        {"backspace",8},{"bksp",8},{"tab",9},{"space",32},
+        {"left",256+37},{"up",256+38},{"right",256+39},{"down",256+40},
+        {"home",256+36},{"end",256+35},{"pageup",256+33},{"pagedown",256+34},
+        {"insert",256+45},{"delete",256+46},{"del",256+46},
+        {"shift",256+16},{"ctrl",256+17},{"control",256+17},{"alt",256+18},
+        {"f1",256+112},{"f2",256+113},{"f3",256+114},{"f4",256+115},
+        {"f5",256+116},{"f6",256+117},{"f7",256+118},{"f8",256+119},
+        {"f9",256+120},{"f10",256+121},{"f11",256+122},{"f12",256+123},
+    };
+    for (size_t i = 0; i < sizeof(tbl)/sizeof(tbl[0]); i++) {
+        if (strcmp(s, tbl[i].name) == 0) { *out = tbl[i].code; return 1; }
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------------
 // Integer expression emission — result in rax
 // ---------------------------------------------------------------------
@@ -556,6 +600,31 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
         case EXPR_BINARY: {
             SlagType lt = expr_type(cg, e->as.binary.left, TYPE_INT);
             SlagType rt = expr_type(cg, e->as.binary.right, TYPE_INT);
+            // Key/char comparison: `intexpr == "a"` / `"left" == intexpr`
+            // (and !=). The string literal lowers to its key code and the
+            // comparison is done as plain integers. Lets key handlers test
+            // characters and named keys instead of raw virtual-key numbers.
+            if (e->as.binary.op == TOK_EQ || e->as.binary.op == TOK_NEQ) {
+                const Expr *L = e->as.binary.left;
+                const Expr *R = e->as.binary.right;
+                const Expr *lit = NULL; const Expr *other = NULL;
+                if (L->kind == EXPR_STR_LIT && rt != TYPE_STR) { lit = L; other = R; }
+                else if (R->kind == EXPR_STR_LIT && lt != TYPE_STR) { lit = R; other = L; }
+                if (lit) {
+                    int code = 0;
+                    if (keylit_code(lit->as.str.value, &code)) {
+                        emit_int_expr(cg, other);
+                        emit(cg, "    cmp  rax, %d", code);
+                        if (e->as.binary.op == TOK_EQ) {
+                            emit(cg, "    sete al");
+                        } else {
+                            emit(cg, "    setne al");
+                        }
+                        emit(cg, "    movzx rax, al");
+                        break;
+                    }
+                }
+            }
             if (lt == TYPE_STR || rt == TYPE_STR) {
                 if (e->as.binary.op != TOK_EQ && e->as.binary.op != TOK_NEQ) {
                     fprintf(stderr, "codegen error: operator not supported on str operands (only == and != are)\n");
@@ -1071,7 +1140,20 @@ static void emit_user_call(Codegen *cg, const char *name, const ExprList *args) 
     const char *int_regs[] = { "rcx", "rdx", "r8", "r9" };
 
     // Evaluate first 4 args and push to temp stack storage.
+    // Each PUSH_RAX/PUSH_XMM0 is 8 bytes; an odd number of register args
+    // therefore leaves rsp misaligned by 8. Since `alloc` below is always a
+    // multiple of 16, rsp would be misaligned at the `call` whenever reg_args
+    // is odd (1 or 3), which corrupts the 16-byte-alignment the Win64 ABI
+    // requires — Win32 APIs called (transitively) by the callee then fault
+    // deep in ntdll (SwitchBack/SbSelectProcedure). Emit an 8-byte pad first
+    // so the total displacement (pad + reg_args*8 + alloc) stays a multiple
+    // of 16. The pad sits above the pushed args, so shadow/stack-arg offsets
+    // (measured from the post-`sub` rsp) are unaffected.
     int reg_args = n < 4 ? n : 4;
+    int align_pad = (reg_args % 2 == 1) ? 8 : 0;
+    if (align_pad) {
+        emit(cg, "    sub  rsp, 8          ; align pad (odd reg-arg count)");
+    }
     for (int i = 0; i < reg_args; i++) {
         SlagType t = expr_type(cg, args->items[i], TYPE_INT);
         if (t == TYPE_FLOAT) {
@@ -1121,8 +1203,8 @@ static void emit_user_call(Codegen *cg, const char *name, const ExprList *args) 
 
     emit(cg, "    call _%s", name);
 
-    // Clean up shadow + stack args + temp reg storage.
-    emit(cg, "    add  rsp, %d", alloc + reg_args * 8);
+    // Clean up shadow + stack args + temp reg storage + alignment pad.
+    emit(cg, "    add  rsp, %d", alloc + reg_args * 8 + align_pad);
 }
 
 // Dispatch a call expression (EXPR_CALL or EXPR_MEMBER_CALL).
@@ -1371,6 +1453,47 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    mov  [rsp+32], rax");
             emit(cg, "    mov  [rsp+40], r11");
             emit(cg, "    mov  [rsp+48], r10");
+            emit(cg, "    mov  rcx, r12");
+            emit(cg, "    mov  rdx, r13");
+            emit(cg, "    mov  r8,  r14");
+            emit(cg, "    mov  r9,  r15");
+            emit(cg, "    call _slag_window_text");
+            emit(cg, "    add  rsp, 80");          // 56 + 24
+            emit(cg, "    pop  r15");
+            emit(cg, "    pop  r14");
+            emit(cg, "    pop  r13");
+            emit(cg, "    pop  r12");
+        }
+        // window.textbuf(x, y, ptr, len, r, g, b) - draw a runtime byte
+        // buffer (len bytes at ptr) as text; same GDI path as window.text,
+        // but the text comes from a pointer+length instead of a str/int.
+        else if (strcmp(member, "textbuf") == 0 && args->count >= 7) {
+            emit(cg, "    ; window.textbuf");
+            emit(cg, "    push r12");
+            emit(cg, "    push r13");
+            emit(cg, "    push r14");
+            emit(cg, "    push r15");
+            emit_int_expr(cg, args->items[0]);
+            emit(cg, "    mov  r12, rax");         // x
+            emit_int_expr(cg, args->items[1]);
+            emit(cg, "    mov  r13, rax");         // y
+            emit(cg, "    sub  rsp, 24");          // balance (matches window.text)
+            emit_int_expr(cg, args->items[2]);
+            emit(cg, "    mov  r14, rax");         // ptr
+            emit_int_expr(cg, args->items[3]);
+            emit(cg, "    mov  r15, rax");         // len
+            emit_int_expr(cg, args->items[4]);
+            emit(cg, "    push rax");              // r
+            emit_int_expr(cg, args->items[5]);
+            emit(cg, "    push rax");              // g
+            emit_int_expr(cg, args->items[6]);
+            emit(cg, "    mov  r10, rax");         // b
+            emit(cg, "    pop  r11");              // g
+            emit(cg, "    pop  rax");              // r
+            emit(cg, "    sub  rsp, 56");
+            emit(cg, "    mov  [rsp+32], rax");    // r
+            emit(cg, "    mov  [rsp+40], r11");    // g
+            emit(cg, "    mov  [rsp+48], r10");    // b
             emit(cg, "    mov  rcx, r12");
             emit(cg, "    mov  rdx, r13");
             emit(cg, "    mov  r8,  r14");
@@ -1990,7 +2113,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "open") == 0 && strcmp(base, "file") == 0) {
             emit(cg, "    ; file.open");
             if (args->count >= 2) {
-                emit_str_expr(cg, args->items[0]);   // rax=ptr, rdx=len (path)
+                emit_path_expr(cg, args->items[0]);  // rax=ptr (str or buffer)
                 emit(cg, "    mov  r12, rax        ; path ptr");
                 emit_int_expr(cg, args->items[1]);   // mode
                 emit(cg, "    mov  rdx, rax        ; mode");
@@ -2077,7 +2200,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "exists") == 0 && strcmp(base, "file") == 0) {
             emit(cg, "    ; file.exists");
             if (args->count >= 1) {
-                emit_str_expr(cg, args->items[0]);
+                emit_path_expr(cg, args->items[0]);
                 emit(cg, "    mov  rcx, rax        ; path ptr");
                 emit(cg, "    sub  rsp, 32");
                 emit(cg, "    call _slag_file_exists");
@@ -2088,7 +2211,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "delete") == 0 && strcmp(base, "file") == 0) {
             emit(cg, "    ; file.delete");
             if (args->count >= 1) {
-                emit_str_expr(cg, args->items[0]);
+                emit_path_expr(cg, args->items[0]);
                 emit(cg, "    mov  rcx, rax        ; path ptr");
                 emit(cg, "    sub  rsp, 32");
                 emit(cg, "    call _slag_file_delete");
@@ -2099,10 +2222,37 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "mkdir") == 0 && strcmp(base, "file") == 0) {
             emit(cg, "    ; file.mkdir");
             if (args->count >= 1) {
-                emit_str_expr(cg, args->items[0]);
+                emit_path_expr(cg, args->items[0]);
                 emit(cg, "    mov  rcx, rax        ; path ptr");
                 emit(cg, "    sub  rsp, 32");
                 emit(cg, "    call _slag_file_mkdir");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.rmdir(path) -> int bool (1/0); removes an empty directory
+        else if (strcmp(member, "rmdir") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.rmdir");
+            if (args->count >= 1) {
+                emit_path_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; path ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_rmdir");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // file.make(dir, filename) -> int bool (1/0)
+        // Joins dir + "/" + filename, creates missing parent folders, then
+        // creates the file (an existing file is left untouched, not truncated).
+        else if (strcmp(member, "make") == 0 && strcmp(base, "file") == 0) {
+            emit(cg, "    ; file.make");
+            if (args->count >= 2) {
+                emit_path_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; dir ptr");
+                emit_path_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax        ; filename ptr");
+                emit(cg, "    mov  rcx, r12        ; dir ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_file_make");
                 emit(cg, "    add  rsp, 32");
             }
         }
@@ -2110,7 +2260,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "list_open") == 0 && strcmp(base, "file") == 0) {
             emit(cg, "    ; file.list_open");
             if (args->count >= 1) {
-                emit_str_expr(cg, args->items[0]);
+                emit_path_expr(cg, args->items[0]);
                 emit(cg, "    mov  rcx, rax        ; pattern ptr");
                 emit(cg, "    sub  rsp, 32");
                 emit(cg, "    call _slag_file_list_open");
@@ -2178,7 +2328,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "load") == 0 && strcmp(base, "audio") == 0) {
             emit(cg, "    ; audio.load");
             if (args->count >= 1) {
-                emit_str_expr(cg, args->items[0]);
+                emit_path_expr(cg, args->items[0]);
                 emit(cg, "    mov  rcx, rax        ; path ptr");
                 emit(cg, "    sub  rsp, 32");
                 emit(cg, "    call _slag_audio_load");

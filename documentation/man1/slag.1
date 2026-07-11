@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-07-03" "slag 0.13" "Slag Programming Language"
+.TH SLAG 1 "2026-07-11" "slag 0.13.5" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -264,6 +264,22 @@ Any pending
 calls are drained (rasterized) first, so the text always composites
 on top of the current frame's geometry.
 .TP
+.BI window.textbuf( x , " y" , " ptr" , " len" , " r" , " g" , " b" )
+Draw
+.I len
+bytes from the runtime byte buffer at
+.I ptr
+as text, using the same GDI path as
+.BR window.text .
+Where
+.B window.text
+takes a compile-time
+.BR str / int ,
+this takes a pointer + length, so strings assembled at run time (keyboard
+input, composed file paths, output built with
+.BR mem.poke8 )
+can be rendered without a string literal.
+.TP
 .BI pixel( x , " y" , " r" , " g" , " b" )
 Write a single RGB pixel into the framebuffer at
 .RI ( x , " y" ).
@@ -447,10 +463,15 @@ Store a 32-bit float at a byte offset (narrowed from Slag's 64-bit
 double). Lets SIMD vec4 buffers be filled with readable float literals
 instead of hand-packed IEEE-754 bit patterns.
 .SS File I/O
-Handle-based file primitives plus path-based utility ops. Paths are
-plain null-terminated strings; string literals in Slag are always
-null-terminated. Sizes/offsets use the classic 32-bit Win32 file APIs,
-so files over ~4GB are not supported.
+Handle-based file primitives plus path-based utility ops. Every path
+argument accepts either a string literal/variable or a runtime-built,
+null-terminated byte buffer (a
+.B mem.alloc
+pointer filled with
+.BR mem.poke8 ),
+so filenames and paths can be composed at run time; string literals in Slag
+are always null-terminated. Sizes/offsets use the classic 32-bit Win32 file
+APIs, so files over ~4GB are not supported.
 .TP
 .BI file.open( path , " mode" )
 Open a file. mode: 1=read, 2=write (create/truncate), 3=append. Returns
@@ -479,7 +500,20 @@ Return 1 if path exists, 0 otherwise.
 Delete a file. Returns 1 on success, 0 on failure.
 .TP
 .B file.mkdir(path)
-Create a directory. Returns 1 on success, 0 on failure.
+Create a single directory. Returns 1 on success, 0 on failure (including
+when the directory already exists or a parent is missing).
+.TP
+.B file.rmdir(path)
+Remove an empty directory. Returns 1 on success, 0 on failure.
+.TP
+.BI file.make( dir , " filename" )
+One-call file creation: joins
+.I dir
++ "/" +
+.IR filename ,
+creates any missing parent directories along the way (like mkdir -p), then
+creates the file. An existing file is left untouched (never truncated).
+Returns 1 on success, 0 on failure.
 .PP
 Directory listing is per-handle: each file.list_open() call heap-allocates
 its own search state, so multiple listings can be open and interleaved
@@ -798,7 +832,35 @@ on mouse_wheel(int delta) { ... }   // delta is +-120 per notch
 .fi
 .RE
 .PP
-Handlers not declared by the program default to no-op stubs.
+For
+.B key_down
+and
+.BR key_up ,
+the runtime translates the raw virtual key into its character using the live
+keyboard state (GetKeyboardState + ToAscii), so shift, caps lock, and the
+active layout are already applied: pressing A yields
+.BR a ,
+Shift+A yields
+.BR A .
+Keys with no character (arrows, function keys, modifiers) arrive as
+virtual_key + 256. Compare the parameter against character or named-key
+string literals rather than numbers \(em the compiler lowers a one-character
+literal to its byte (case-sensitive) and a named key to the runtime's code:
+.PP
+.RS
+.nf
+on key_down(int key) {
+    if (key == "a")    { }   // lower-case a
+    if (key == "A")    { }   // Shift+A
+    if (key == "esc")  { window.close(); }
+    if (key == "left") { }   // arrow key
+}
+.fi
+.RE
+.PP
+Recognized names: esc/escape, enter/return, backspace, tab, space, left,
+right, up, down, home, end, pageup, pagedown, insert, delete, shift, ctrl,
+alt, and f1\-f12. Handlers not declared by the program default to no-op stubs.
 .SS Per-window input state
 Because event handlers execute in their own stack frames, separate
 from the main loop, a small set of accessor builtins is provided so
@@ -834,8 +896,8 @@ A self-hosting compiler
 .nf
 cd compiler
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
-    window_runtime.c net_runtime.c mem_runtime.c file_runtime.c audio_runtime.c matrix_runtime.c \e
-    simd_runtime.c mesh_runtime.c texture_runtime.c
+    window_runtime.c net_runtime.c server_runtime.c mem_runtime.c file_runtime.c audio_runtime.c \e
+    matrix_runtime.c simd_runtime.c mesh_runtime.c texture_runtime.c
 .fi
 .RE
 .SS Compiling and running a Slag program
@@ -858,7 +920,7 @@ function main() {
     window.open(320, 240, "Slag Demo");
 
     on key_down(int key) {
-        if (key == 27) {        // Escape
+        if (key == "esc") {     // Escape
             window.close();
         }
     }

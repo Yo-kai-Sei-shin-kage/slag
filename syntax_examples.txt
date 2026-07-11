@@ -89,6 +89,12 @@ window.clear(0, 0, 0);
 window.text(50, 50, "Hello", 255, 255, 255);
 window.text(50, 80, 12345, 100, 255, 100);
 
+## Window textbuf -- draw `len` bytes from a runtime byte buffer (ptr) as
+## text. Same GDI path as window.text, but the text comes from a pointer +
+## length instead of a str/int literal, so dynamically built strings (typed
+## input, composed paths, etc.) can be rendered.
+window.textbuf(50, 110, buf, len, 255, 255, 255);
+
 ## Window main loop
 while (window.is_open()) {
     window.clear(0, 0, 0);
@@ -111,12 +117,22 @@ pixel(x, y, 255, 128, 64);
 ## Swapping the last two vertices flips the winding and gets it culled.
 fill_triangle(x0, y0, x1, y1, x2, y2, r, g, b);
 
-## Key down event handler
+## Key down / key up event handlers. The runtime TRANSLATES the raw virtual
+## key to its character (honoring shift/caps/layout) before calling the
+## handler, so compare against character or named-key string literals -- not
+## raw numbers. A one-char literal is that character (case-sensitive);
+## non-character keys have names: "esc" "enter" "backspace" "tab" "space"
+## "left" "right" "up" "down" "home" "end" "pageup" "pagedown" "insert"
+## "delete" "shift" "ctrl" "alt" "f1".."f12".
 on key_down(int key) {
-    if (key == 27) {
+    if (key == "esc") {
         window.close();
     }
+    if (key == "a") { }        // lower-case a
+    if (key == "A") { }        // Shift+A
+    if (key == "left") { }     // arrow key
 }
+on key_up(int key) { }
 
 ## Mouse move event handler
 on mouse_move(int mx, int my) {
@@ -188,8 +204,25 @@ if (file.exists("save.dat")) {
 ## File delete (path) -> int bool (1/0)
 file.delete("save.dat");
 
-## File mkdir (path) -> int bool (1/0)
+## File mkdir (path) -> int bool (1/0); creates ONE directory (fails if it
+## already exists or a parent is missing)
 file.mkdir("saves");
+
+## File rmdir (path) -> int bool (1/0); removes an EMPTY directory
+file.rmdir("saves");
+
+## File make (dir, filename) -> int bool (1/0). One-call file creation: joins
+## dir + "/" + filename, creates any missing parent folders (mkdir -p), then
+## creates the file. An existing file is left UNTOUCHED (not truncated).
+file.make("saves/slot1", "player.dat");   // -> saves/slot1/player.dat
+
+## Any file.* path arg (open/exists/delete/mkdir/rmdir/make/list_open) and
+## audio.load accept EITHER a str literal/variable OR a runtime-built,
+## null-terminated byte buffer pointer (from mem.alloc + mem.poke8), so paths
+## and filenames can be composed at run time:
+local int path = mem.alloc(64);
+mem.poke8(path, 0, 100); mem.poke8(path, 1, 0);   // "d\0"
+local int fh2 = file.open(path, 2);
 
 ## Directory listing (per-handle; pattern is a glob, not a bare dir path)
 local int lh = file.list_open("saves/*.dat");

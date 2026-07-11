@@ -13,6 +13,10 @@
 //   file.exists(path)       -> int bool (1/0)
 //   file.delete(path)       -> int bool (1/0)
 //   file.mkdir(path)        -> int bool (1/0)
+//   file.rmdir(path)        -> int bool (1/0); removes an EMPTY directory
+//   file.make(dir, filename)-> int bool (1/0); joins dir + "/" + filename,
+//                              mkdir -p's parent folders, creates the file
+//                              (existing file left untouched, not truncated)
 //
 // Paths are passed as a plain pointer (rcx) and treated as null-terminated
 // C strings -- string literals in Slag are always emitted with a trailing
@@ -34,6 +38,7 @@ void emit_file_imports(Codegen *cg) {
     E("extern DeleteFileA");
     E("extern GetFileAttributesA");
     E("extern CreateDirectoryA");
+    E("extern RemoveDirectoryA");
     E("extern FindFirstFileA");
     E("extern FindNextFileA");
     E("extern FindClose");
@@ -270,6 +275,141 @@ void emit_file_runtime(Codegen *cg) {
     E(".fmkdir_fail:");
     E("    xor  rax, rax");
     E(".fmkdir_done:");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    E("; --- _slag_file_rmdir (rcx=path) -> rax (1/0) ---");
+    E("; Removes an EMPTY directory. Fails (0) if it is missing or non-empty.");
+    E("_slag_file_rmdir:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    sub  rsp, 32");
+    E("    call RemoveDirectoryA");
+    E("    add  rsp, 32");
+    E("    test rax, rax");
+    E("    jz   .frmdir_fail");
+    E("    mov  rax, 1");
+    E("    jmp  .frmdir_done");
+    E(".frmdir_fail:");
+    E("    xor  rax, rax");
+    E(".frmdir_done:");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // _slag_file_make(rcx=dir ptr, rdx=filename ptr) -> rax (1/0)
+    // One-call file creation: joins dir + "/" + filename, creates every
+    // missing parent directory along the way (mkdir -p), then creates the
+    // file itself with OPEN_ALWAYS -- so an already-existing file is left
+    // untouched (never truncated). Both pointers are null-terminated.
+    //
+    // Stack frame (616 bytes, keeps rsp 16-aligned after 5 pushes):
+    //   [rsp+0  .. 31 ] shadow space for callees
+    //   [rsp+32 .. 591] combined path buffer (560 bytes)
+    //   [rsp+592.. 599] saved separator byte across CreateDirectoryA
+    E("; --- _slag_file_make (rcx=dir, rdx=filename) -> rax (1/0) ---");
+    E("_slag_file_make:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push r12");
+    E("    push r13");
+    E("    push r14");
+    E("    push r15");
+    E("    push rbx");
+    E("    sub  rsp, 616");
+    E("    mov  r12, rcx           ; dir ptr");
+    E("    mov  r13, rdx           ; filename ptr");
+    E("    lea  r14, [rsp+32]      ; combined path buffer");
+    E("    xor  rbx, rbx           ; write index");
+    E("");
+    E("    ; --- copy dir ---");
+    E("    xor  r15, r15           ; src index");
+    E(".fmake_cpdir:");
+    E("    mov  al, [r12+r15]");
+    E("    test al, al");
+    E("    jz   .fmake_dircopied");
+    E("    mov  [r14+rbx], al");
+    E("    inc  rbx");
+    E("    inc  r15");
+    E("    jmp  .fmake_cpdir");
+    E(".fmake_dircopied:");
+    E("    test rbx, rbx");
+    E("    jz   .fmake_copyfile    ; empty dir -> filename only, no sep");
+    E("    mov  al, [r14+rbx-1]    ; last dir char");
+    E("    cmp  al, '/'");
+    E("    je   .fmake_copyfile    ; already ends with separator");
+    E("    cmp  al, 0x5C           ; backslash");
+    E("    je   .fmake_copyfile");
+    E("    mov  byte [r14+rbx], '/'");
+    E("    inc  rbx");
+    E(".fmake_copyfile:");
+    E("    mov  r15, rbx           ; r15 = dir boundary (len of dir portion)");
+    E("    xor  rcx, rcx           ; filename src index (no calls until copied)");
+    E(".fmake_cpfile:");
+    E("    mov  al, [r13+rcx]");
+    E("    test al, al");
+    E("    jz   .fmake_terminated");
+    E("    mov  [r14+rbx], al");
+    E("    inc  rbx");
+    E("    inc  rcx");
+    E("    jmp  .fmake_cpfile");
+    E(".fmake_terminated:");
+    E("    mov  byte [r14+rbx], 0  ; null-terminate full path");
+    E("");
+    E("    ; --- mkdir -p over the dir portion [1, r15) ---");
+    E("    mov  rbx, 1             ; i = 1");
+    E(".fmake_mkloop:");
+    E("    cmp  rbx, r15");
+    E("    jae  .fmake_mkdone");
+    E("    mov  al, [r14+rbx]");
+    E("    cmp  al, '/'");
+    E("    je   .fmake_mkhit");
+    E("    cmp  al, 0x5C");
+    E("    je   .fmake_mkhit");
+    E("    inc  rbx");
+    E("    jmp  .fmake_mkloop");
+    E(".fmake_mkhit:");
+    E("    mov  al, [r14+rbx]");
+    E("    mov  [rsp+592], al      ; save separator");
+    E("    mov  byte [r14+rbx], 0  ; terminate at this prefix");
+    E("    mov  rcx, r14");
+    E("    xor  rdx, rdx           ; lpSecurityAttributes = NULL");
+    E("    call CreateDirectoryA   ; ignore result (already-exists is fine)");
+    E("    mov  al, [rsp+592]");
+    E("    mov  [r14+rbx], al      ; restore separator");
+    E("    inc  rbx");
+    E("    jmp  .fmake_mkloop");
+    E(".fmake_mkdone:");
+    E("");
+    E("    ; --- create the file (OPEN_ALWAYS: leaves an existing file as-is) ---");
+    E("    mov  rcx, r14");
+    E("    mov  rdx, 0x40000000    ; GENERIC_WRITE");
+    E("    xor  r8,  r8            ; dwShareMode = 0");
+    E("    xor  r9,  r9            ; lpSecurityAttributes = NULL");
+    E("    sub  rsp, 64");
+    E("    mov  qword [rsp+32], 4  ; OPEN_ALWAYS");
+    E("    mov  qword [rsp+40], 0x80 ; FILE_ATTRIBUTE_NORMAL");
+    E("    mov  qword [rsp+48], 0  ; hTemplateFile = NULL");
+    E("    call CreateFileA");
+    E("    add  rsp, 64");
+    E("    cmp  rax, -1            ; INVALID_HANDLE_VALUE");
+    E("    je   .fmake_fail");
+    E("    mov  rcx, rax           ; close the handle we just opened");
+    E("    sub  rsp, 32");
+    E("    call CloseHandle");
+    E("    add  rsp, 32");
+    E("    mov  rax, 1");
+    E("    jmp  .fmake_done");
+    E(".fmake_fail:");
+    E("    xor  rax, rax");
+    E(".fmake_done:");
+    E("    add  rsp, 616");
+    E("    pop  rbx");
+    E("    pop  r15");
+    E("    pop  r14");
+    E("    pop  r13");
+    E("    pop  r12");
     E("    pop  rbp");
     E("    ret");
     E("");

@@ -54,7 +54,6 @@ int main(int argc, char **argv) {
     size_t len;
     char *src = read_file(src_path, &len);
 
-    fprintf(stderr, "--- parsing %s (%zu bytes) ---\n", src_path, len);
     Program prog = parse_program(src, len);
 
     if (prog.functions.count == 0) {
@@ -62,9 +61,6 @@ int main(int argc, char **argv) {
         free(src);
         return 1;
     }
-
-    fprintf(stderr, "--- AST ---\n");
-    ast_print_program(&prog);
 
     char *asm_path = make_asm_path(src_path);
     FILE *asm_out = fopen(asm_path, "w");
@@ -75,11 +71,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    fprintf(stderr, "--- generating %s ---\n", asm_path);
     codegen_program(&prog, asm_out);
     fclose(asm_out);
 
-    fprintf(stderr, "--- done ---\n");
+    printf("%s compiled successfully\n", src_path);
 
     free(src);
     free(asm_path);

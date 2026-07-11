@@ -589,9 +589,17 @@ static void emit_wndproc(Codegen *cg) {
     E("    jmp  .wndproc_ret");
     E("");
 
-    // WM_KEYDOWN
+    // WM_KEYDOWN -- translate the raw virtual key to its character (honoring
+    // shift/caps via ToAscii); non-character keys come back as VK+256.
     E(".wndproc_keydown:");
-    E("    mov  rcx, r14              ; keycode = wParam");
+    E("    mov  rcx, r14              ; vk = wParam");
+    E("    mov  rdx, r15             ; lParam");
+    E("    shr  rdx, 16");
+    E("    and  rdx, 0xff            ; scancode");
+    E("    sub  rsp, 32");
+    E("    call _slag_translate_vk");
+    E("    add  rsp, 32");
+    E("    mov  rcx, rax             ; translated key code");
     E("    sub  rsp, 32");
     E("    call _slag_on_key_down");
     E("    add  rsp, 32");
@@ -599,9 +607,16 @@ static void emit_wndproc(Codegen *cg) {
     E("    jmp  .wndproc_ret");
     E("");
 
-    // WM_KEYUP
+    // WM_KEYUP -- same translation as key down
     E(".wndproc_keyup:");
-    E("    mov  rcx, r14");
+    E("    mov  rcx, r14             ; vk = wParam");
+    E("    mov  rdx, r15             ; lParam");
+    E("    shr  rdx, 16");
+    E("    and  rdx, 0xff            ; scancode");
+    E("    sub  rsp, 32");
+    E("    call _slag_translate_vk");
+    E("    add  rsp, 32");
+    E("    mov  rcx, rax");
     E("    sub  rsp, 32");
     E("    call _slag_on_key_up");
     E("    add  rsp, 32");
@@ -849,6 +864,46 @@ static void emit_wndproc(Codegen *cg) {
     E("    pop  r14");
     E("    pop  r13");
     E("    pop  r12");
+    E("    pop  rbx");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // _slag_translate_vk(rcx=vk, rdx=scancode) -> rax = canonical key code.
+    // Placed AFTER _slag_wndproc so it starts its own local-label (.tv_*)
+    // scope and does not split the wndproc's .wndproc_* locals.
+    // Uses ToAscii (with the live keyboard state, so shift/caps/layout are
+    // applied) to turn a printable virtual key into its character. Keys with
+    // no character (arrows, F-keys, modifiers, ...) return VK+256 so they
+    // never collide with a real character code.
+    E("_slag_translate_vk:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    push rsi");
+    E("    sub  rsp, 304            ; keystate[32..287] + outbuf[288..291]");
+    E("    mov  rbx, rcx            ; vk");
+    E("    mov  rsi, rdx            ; scancode");
+    E("    lea  rcx, [rsp+32]       ; lpKeyState");
+    E("    call GetKeyboardState");
+    E("    sub  rsp, 48             ; shadow(32) + 5th arg + pad");
+    E("    mov  rcx, rbx            ; vk");
+    E("    mov  rdx, rsi            ; scancode");
+    E("    lea  r8,  [rsp+48+32]    ; lpKeyState");
+    E("    lea  r9,  [rsp+48+288]   ; lpChar out");
+    E("    mov  qword [rsp+32], 0   ; uFlags = 0");
+    E("    call ToAscii");
+    E("    add  rsp, 48");
+    E("    cmp  eax, 1              ; 1 = one char translated");
+    E("    jne  .tv_nonprint");
+    E("    movzx rax, byte [rsp+288]");
+    E("    jmp  .tv_done");
+    E(".tv_nonprint:");
+    E("    mov  rax, rbx");
+    E("    add  rax, 256            ; non-character key -> VK+256");
+    E(".tv_done:");
+    E("    add  rsp, 304");
+    E("    pop  rsi");
     E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
@@ -7047,6 +7102,8 @@ void emit_window_imports(Codegen *cg) {
     E("extern GetMessageA");
     E("extern TranslateMessage");
     E("extern DispatchMessageA");
+    E("extern GetKeyboardState");
+    E("extern ToAscii");
     E("extern DefWindowProcA");
     E("extern PostQuitMessage");
     E("extern PostMessageA");

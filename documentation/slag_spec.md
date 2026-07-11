@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.13**
+**Version 0.13.5**
 
 ---
 
@@ -658,16 +658,40 @@ sleep(ms)        // busy-wait ~ms milliseconds (QueryPerformanceCounter spin)
 ### 12.7 Keyboard Events
 
 ```
-on key_down(int keycode) {
+on key_down(int key) {
     // fires on WM_KEYDOWN
 }
 
-on key_up(int keycode) {
+on key_up(int key) {
     // fires on WM_KEYUP
 }
 ```
 
-Keycodes are Win32 virtual key codes. Handlers not declared by the program default to no-op stubs.
+Before a handler runs, the runtime translates the raw Win32 virtual key into
+its **character** using the live keyboard state (`GetKeyboardState` + `ToAscii`),
+so shift, caps lock, and the active keyboard layout are already applied. A
+printable key arrives as its ASCII value — pressing A gives `a`, Shift+A gives
+`A`. Keys with no character (arrows, function keys, modifiers, etc.) arrive as
+`virtual_key + 256` so they never collide with a real character.
+
+Because of this, handlers compare the parameter against **character or
+named-key string literals** rather than raw numbers. The compiler lowers a
+one-character literal to its byte (case-sensitive), and a named key to the code
+the runtime delivers:
+
+```
+on key_down(int key) {
+    if (key == "a")   { }   // lower-case a
+    if (key == "A")   { }   // Shift+A
+    if (key == "esc") { window.close(); }
+    if (key == "left"){ }   // arrow key
+}
+```
+
+Recognized non-character names: `esc` (or `escape`), `enter` (or `return`),
+`backspace`, `tab`, `space`, `left`, `right`, `up`, `down`, `home`, `end`,
+`pageup`, `pagedown`, `insert`, `delete`, `shift`, `ctrl`, `alt`, and
+`f1`–`f12`. Handlers not declared by the program default to no-op stubs.
 
 ### 12.8 Mouse Events
 
@@ -723,6 +747,16 @@ window.text(x, y, value, r, g, b);
 ```
 
 Draws `value` (a `str` or `int`) as text at `(x, y)` using GDI `TextOutA` against the window's memory DC, with `SetBkMode(TRANSPARENT)` and the given RGB color via `SetTextColor`. Renders into the same DIB surface that `window.flush()` blits, so text composites with pixel/triangle output drawn earlier in the frame.
+
+```
+window.textbuf(x, y, ptr, len, r, g, b);
+```
+
+Draws `len` bytes from the runtime byte buffer at `ptr` as text, using the same
+GDI path as `window.text`. Where `window.text` takes a compile-time `str`/`int`,
+`window.textbuf` takes a pointer + length, so strings assembled at run time
+(keyboard input, composed file paths, formatted output built with `mem.poke8`)
+can be rendered directly without a string literal.
 
 ---
 
@@ -973,6 +1007,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `window.is_open()`              | Returns 1 if window is open                        |
 | `window.clear(r,g,b)`           | Fill framebuffer with a solid color                |
 | `window.text(x,y,val,r,g,b)`    | Draw str/int text at (x,y); drains pending fill_triangle* first, so it composites on top |
+| `window.textbuf(x,y,ptr,len,r,g,b)` | Draw `len` bytes from a runtime byte buffer as text (for dynamically built strings) |
 | `window.flush()`                | Drain deferred fill_triangle* queue, blit to window (uncapped) |
 | `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
 | `window.release_mouse()`        | Release capture, show cursor                       |
@@ -1016,7 +1051,9 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `file.size(handle)`             | File size in bytes (-1 fail)                       |
 | `file.exists(path)`             | 1/0: does path exist                               |
 | `file.delete(path)`             | Delete a file -> 1/0 success                       |
-| `file.mkdir(path)`              | Create a directory -> 1/0 success                  |
+| `file.mkdir(path)`              | Create one directory -> 1/0 (fails if it exists or a parent is missing) |
+| `file.rmdir(path)`              | Remove an empty directory -> 1/0 success           |
+| `file.make(dir,filename)`       | Join dir+"/"+filename, mkdir -p parents, create the file (existing left untouched) -> 1/0 |
 | `file.list_open(pattern)`       | Open a directory listing (glob e.g. "dir/*.ext") -> handle (-1 fail) |
 | `file.list_next(handle)`        | Advance to next entry -> 1/0 (0 = no more)         |
 | `file.list_name(handle)`        | Current entry's filename -> str                    |
@@ -1204,6 +1241,7 @@ function main() {
 | 0.13.2  | Near-plane cull safety net for `fill_triangle_persp`/`fill_triangle_pcolor` (degenerate z<=0 reject + adaptive window-bounds reject); `mem.poke8` register-clobber fix for nested inlined builtin calls | ✅ Complete |
 | 0.13.3  | Full audio runtime (`audio.init/close/load/free/play/loop/stop/volume/pan/master_volume/is_playing/position`): 32-slot software mixer over waveOut, RIFF/WAVE parsing with automatic `smpl`-chunk loop-point support | ✅ Complete |
 | 0.13.4  | Bilinear texture filtering (4-tap weighted average) for `fill_triangle_persp`/`fill_triangle_pcolor` | ✅ Complete |
+| 0.13.5  | `file.make`/`file.rmdir`; file.* path args + `audio.load` accept runtime byte-buffer pointers (not just str literals); `window.textbuf` (draw a runtime byte buffer as text); keyboard handlers deliver translated characters (compare against char/named-key literals like `"a"`/`"esc"`/`"left"`); compiler emits a single `compiled successfully` line. **Bug fix:** `emit_user_call` 16-byte stack-alignment fix for odd-argument-count (1 or 3) user calls that reach a Win32 API | ✅ Complete |
 | 0.14    | Full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net) | 🔲 Planned  |
 | 0.15    | Distance fog                                                | 🔲 Planned  |
 | 0.16    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
@@ -1234,4 +1272,4 @@ PS2-era software rendering at 60fps. Current pipeline status:
 
 ---
 
-*Slag Language Specification v0.13 — Subject to revision*
+*Slag Language Specification v0.13.5 — Subject to revision*
