@@ -13,21 +13,18 @@ global int tex_w = 64;
 global int tex_h = 64;
 
 function make_texture() {
-    tex = mem.alloc(8192);
+    tex = mem.alloc(16384);
     local int y = 0;
     while (y < tex_h) {
         local int x = 0;
         while (x < tex_w) {
             local int c = tex.checker(x, y, 8);
-            local int rgb565 = 0;
-            if (c == 255) {
-                rgb565 = 65535;
-            }
             local int off = y * tex_w + x;
-            local int byteoff = off * 2;
-            local int hi = bit.shr(rgb565, 8);
-            mem.poke8(tex, byteoff, rgb565);
-            mem.poke8(tex, byteoff + 1, hi);
+            local int byteoff = off * 4;
+            mem.poke8(tex, byteoff, c);
+            mem.poke8(tex, byteoff + 1, c);
+            mem.poke8(tex, byteoff + 2, c);
+            mem.poke8(tex, byteoff + 3, 255);
             x = x + 1;
         }
         y = y + 1;

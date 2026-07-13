@@ -97,18 +97,21 @@ void emit_mat_runtime(Codegen *cg) {
     // mat.identity() — reset current matrix to identity
     E("; --- _slag_mat_identity ---");
     E("_slag_mat_identity:");
+    E("    push rsi");
     E("    push rdi");
     E("    lea  rsi, [rel _mat_identity_const]");
     E("    lea  rdi, [rel _mat_current]");
     E("    mov  rcx, %d", MAT_SIZE);
     E("    rep  movsq");
     E("    pop  rdi");
+    E("    pop  rsi");
     E("    ret");
     E("");
 
     // mat.push() — push current matrix onto stack
     E("; --- _slag_mat_push ---");
     E("_slag_mat_push:");
+    E("    push rsi");
     E("    push rdi");
     E("    push rbx");
     E("    ; check stack overflow");
@@ -131,12 +134,14 @@ void emit_mat_runtime(Codegen *cg) {
     E(".push_done:");
     E("    pop  rbx");
     E("    pop  rdi");
+    E("    pop  rsi");
     E("    ret");
     E("");
 
     // mat.pop() — pop matrix from stack into current
     E("; --- _slag_mat_pop ---");
     E("_slag_mat_pop:");
+    E("    push rsi");
     E("    push rdi");
     E("    push rbx");
     E("    ; check stack underflow");
@@ -157,6 +162,7 @@ void emit_mat_runtime(Codegen *cg) {
     E(".pop_done:");
     E("    pop  rbx");
     E("    pop  rdi");
+    E("    pop  rsi");
     E("    ret");
     E("");
 
@@ -598,6 +604,7 @@ void emit_mat_runtime(Codegen *cg) {
     E("    push rbx");
     E("    push r12");
     E("    lea  rbx, [rel _mat_current]");
+    E("    mov  r9, rdx                   ; preserve y (imul rcx/r8 clobbers rdx)");
     E("    ; rax = m0*x");
     E("    mov  rax, [rbx + 0*8]");
     E("    imul rcx");
@@ -605,7 +612,7 @@ void emit_mat_runtime(Codegen *cg) {
     E("    mov  r12, rax");
     E("    ; r12 += m1*y");
     E("    mov  rax, [rbx + 1*8]");
-    E("    imul rdx");
+    E("    imul r9");
     E("    sar  rax, %d", FIXED_SHIFT);
     E("    add  r12, rax");
     E("    ; r12 += m2*z");
@@ -627,6 +634,7 @@ void emit_mat_runtime(Codegen *cg) {
     E("    push rbx");
     E("    push r12");
     E("    lea  rbx, [rel _mat_current]");
+    E("    mov  r9, rdx                   ; preserve y (imul rcx/r8 clobbers rdx)");
     E("    ; rax = m4*x");
     E("    mov  rax, [rbx + 4*8]");
     E("    imul rcx");
@@ -634,7 +642,7 @@ void emit_mat_runtime(Codegen *cg) {
     E("    mov  r12, rax");
     E("    ; r12 += m5*y");
     E("    mov  rax, [rbx + 5*8]");
-    E("    imul rdx");
+    E("    imul r9");
     E("    sar  rax, %d", FIXED_SHIFT);
     E("    add  r12, rax");
     E("    ; r12 += m6*z");
@@ -656,6 +664,7 @@ void emit_mat_runtime(Codegen *cg) {
     E("    push rbx");
     E("    push r12");
     E("    lea  rbx, [rel _mat_current]");
+    E("    mov  r9, rdx                   ; preserve y (imul rcx/r8 clobbers rdx)");
     E("    ; rax = m8*x");
     E("    mov  rax, [rbx + 8*8]");
     E("    imul rcx");
@@ -663,7 +672,7 @@ void emit_mat_runtime(Codegen *cg) {
     E("    mov  r12, rax");
     E("    ; r12 += m9*y");
     E("    mov  rax, [rbx + 9*8]");
-    E("    imul rdx");
+    E("    imul r9");
     E("    sar  rax, %d", FIXED_SHIFT);
     E("    add  r12, rax");
     E("    ; r12 += m10*z");
