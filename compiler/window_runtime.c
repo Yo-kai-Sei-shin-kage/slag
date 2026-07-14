@@ -872,41 +872,130 @@ static void emit_wndproc(Codegen *cg) {
     // _slag_translate_vk(rcx=vk, rdx=scancode) -> rax = canonical key code.
     // Placed AFTER _slag_wndproc so it starts its own local-label (.tv_*)
     // scope and does not split the wndproc's .wndproc_* locals.
-    // Uses ToAscii (with the live keyboard state, so shift/caps/layout are
-    // applied) to turn a printable virtual key into its character. Keys with
-    // no character (arrows, F-keys, modifiers, ...) return VK+256 so they
-    // never collide with a real character code.
+    //
+    // Machine-independent by construction: it does NOT call ToAscii /
+    // GetKeyboardState. Those map the virtual key through the thread's active
+    // keyboard layout / input locale, so the same physical key yields a
+    // different code on any machine whose active HKL differs (e.g. an OEM
+    // Windows image preloading US-International) -- that is what broke the same
+    // binary across two US machines. Instead a constant US-QWERTY VK->ASCII
+    // table is baked into the runtime and only the Shift/Caps *state* is
+    // queried (VK_SHIFT / VK_CAPITAL are identical on every install). Printable
+    // keys -> their ASCII byte with shift/caps applied; keys with no character
+    // (arrows, F-keys, modifiers, ...) -> VK+256. Output is identical on every
+    // Windows install regardless of layout, matching keylit_code exactly.
     E("_slag_translate_vk:");
     E("    push rbp");
     E("    mov  rbp, rsp");
     E("    push rbx");
     E("    push rsi");
-    E("    sub  rsp, 304            ; keystate[32..287] + outbuf[288..291]");
-    E("    mov  rbx, rcx            ; vk");
-    E("    mov  rsi, rdx            ; scancode");
-    E("    lea  rcx, [rsp+32]       ; lpKeyState");
-    E("    call GetKeyboardState");
-    E("    sub  rsp, 48             ; shadow(32) + 5th arg + pad");
-    E("    mov  rcx, rbx            ; vk");
-    E("    mov  rdx, rsi            ; scancode");
-    E("    lea  r8,  [rsp+48+32]    ; lpKeyState");
-    E("    lea  r9,  [rsp+48+288]   ; lpChar out");
-    E("    mov  qword [rsp+32], 0   ; uFlags = 0");
-    E("    call ToAscii");
-    E("    add  rsp, 48");
-    E("    cmp  eax, 1              ; 1 = one char translated");
-    E("    jne  .tv_nonprint");
-    E("    movzx rax, byte [rsp+288]");
-    E("    jmp  .tv_done");
-    E(".tv_nonprint:");
-    E("    mov  rax, rbx");
-    E("    add  rax, 256            ; non-character key -> VK+256");
+    E("    sub  rsp, 32             ; shadow space for the GetKeyState calls");
+    E("    movzx ebx, cl            ; bl = vk (0..255)");
+    E("    mov  ecx, 0x10           ; VK_SHIFT");
+    E("    call GetKeyState");
+    E("    test ax, ax              ; high bit (0x8000) set => key held down");
+    E("    sets sil                 ; sil = 1 if shift is down");
+    E("    movzx esi, sil           ; esi = shift (0/1)");
+    E("    mov  ecx, 0x14           ; VK_CAPITAL");
+    E("    call GetKeyState");
+    E("    and  eax, 1              ; eax = caps-lock toggle (0/1)");
+    E("    mov  ecx, esi            ; effective shift = shift ...");
+    E("    cmp  ebx, 0x41           ; ... but letters A..Z honor Caps Lock");
+    E("    jb   .tv_noalpha");
+    E("    cmp  ebx, 0x5A");
+    E("    ja   .tv_noalpha");
+    E("    xor  ecx, eax            ; letter: eff shift = shift XOR caps");
+    E(".tv_noalpha:");
+    E("    test ecx, ecx");
+    E("    jnz  .tv_shift");
+    E("    lea  rdx, [us_vk_unshift]");
+    E("    jmp  .tv_pick");
+    E(".tv_shift:");
+    E("    lea  rdx, [us_vk_shift]");
+    E(".tv_pick:");
+    E("    movzx eax, byte [rdx + rbx]   ; ASCII for this vk (0 = non-char)");
+    E("    test al, al");
+    E("    jnz  .tv_done");
+    E("    lea  eax, [ebx + 256]    ; non-character key -> VK+256");
     E(".tv_done:");
-    E("    add  rsp, 304");
+    E("    add  rsp, 32");
     E("    pop  rsi");
     E("    pop  rbx");
     E("    pop  rbp");
     E("    ret");
+    E("");
+    // Constant US-QWERTY VK->ASCII tables (256 bytes each). Read-only, placed
+    // between procs in .text; never executed (the proc rets first) and indexed
+    // RIP-relative. Index = virtual-key code; value = ASCII byte, 0 = the key
+    // has no character (caller returns VK+256). Layout/locale independent.
+    E("us_vk_unshift:");
+    E("    times 8   db 0           ; 00-07");
+    E("    db 8                     ; 08 BACK");
+    E("    db 9                     ; 09 TAB");
+    E("    times 3   db 0           ; 0A-0C");
+    E("    db 13                    ; 0D RETURN");
+    E("    times 13  db 0           ; 0E-1A");
+    E("    db 27                    ; 1B ESCAPE");
+    E("    times 4   db 0           ; 1C-1F");
+    E("    db 32                    ; 20 SPACE");
+    E("    times 15  db 0           ; 21-2F (PgUp..Delete -> VK+256)");
+    E("    db '0','1','2','3','4','5','6','7','8','9'   ; 30-39");
+    E("    times 7   db 0           ; 3A-40");
+    E("    db 'a','b','c','d','e','f','g','h','i','j','k','l','m'");
+    E("    db 'n','o','p','q','r','s','t','u','v','w','x','y','z'   ; 41-5A");
+    E("    times 5   db 0           ; 5B-5F");
+    E("    db '0','1','2','3','4','5','6','7','8','9'   ; 60-69 NUMPAD");
+    E("    db '*','+'               ; 6A MULTIPLY, 6B ADD");
+    E("    db 0                     ; 6C SEPARATOR");
+    E("    db '-','.','/'           ; 6D SUB, 6E DECIMAL, 6F DIV");
+    E("    times 74  db 0           ; 70-B9 (F-keys etc. -> VK+256)");
+    E("    db ';'                   ; BA OEM_1");
+    E("    db '='                   ; BB OEM_PLUS");
+    E("    db ','                   ; BC OEM_COMMA");
+    E("    db '-'                   ; BD OEM_MINUS");
+    E("    db '.'                   ; BE OEM_PERIOD");
+    E("    db '/'                   ; BF OEM_2");
+    E("    db 0x60                  ; C0 OEM_3 backtick");
+    E("    times 26  db 0           ; C1-DA");
+    E("    db '['                   ; DB OEM_4");
+    E("    db 0x5C                  ; DC OEM_5 backslash");
+    E("    db ']'                   ; DD OEM_6");
+    E("    db 0x27                  ; DE OEM_7 apostrophe");
+    E("    times 33  db 0           ; DF-FF");
+    E("us_vk_shift:");
+    E("    times 8   db 0           ; 00-07");
+    E("    db 8                     ; 08 BACK");
+    E("    db 9                     ; 09 TAB");
+    E("    times 3   db 0           ; 0A-0C");
+    E("    db 13                    ; 0D RETURN");
+    E("    times 13  db 0           ; 0E-1A");
+    E("    db 27                    ; 1B ESCAPE");
+    E("    times 4   db 0           ; 1C-1F");
+    E("    db 32                    ; 20 SPACE");
+    E("    times 15  db 0           ; 21-2F");
+    E("    db ')','!','@','#','$','%','^','&','*','('   ; 30-39 shifted");
+    E("    times 7   db 0           ; 3A-40");
+    E("    db 'A','B','C','D','E','F','G','H','I','J','K','L','M'");
+    E("    db 'N','O','P','Q','R','S','T','U','V','W','X','Y','Z'   ; 41-5A");
+    E("    times 5   db 0           ; 5B-5F");
+    E("    db '0','1','2','3','4','5','6','7','8','9'   ; 60-69 NUMPAD");
+    E("    db '*','+'               ; 6A, 6B");
+    E("    db 0                     ; 6C");
+    E("    db '-','.','/'           ; 6D, 6E, 6F");
+    E("    times 74  db 0           ; 70-B9");
+    E("    db ':'                   ; BA OEM_1");
+    E("    db '+'                   ; BB OEM_PLUS");
+    E("    db '<'                   ; BC OEM_COMMA");
+    E("    db '_'                   ; BD OEM_MINUS");
+    E("    db '>'                   ; BE OEM_PERIOD");
+    E("    db '?'                   ; BF OEM_2");
+    E("    db '~'                   ; C0 OEM_3");
+    E("    times 26  db 0           ; C1-DA");
+    E("    db '{'                   ; DB OEM_4");
+    E("    db '|'                   ; DC OEM_5");
+    E("    db '}'                   ; DD OEM_6");
+    E("    db 0x22                  ; DE OEM_7 double-quote");
+    E("    times 33  db 0           ; DF-FF");
     E("");
 }
 
@@ -7103,6 +7192,7 @@ void emit_window_imports(Codegen *cg) {
     E("extern TranslateMessage");
     E("extern DispatchMessageA");
     E("extern GetKeyboardState");
+    E("extern GetKeyState");
     E("extern ToAscii");
     E("extern DefWindowProcA");
     E("extern PostQuitMessage");
