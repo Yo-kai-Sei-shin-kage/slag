@@ -28,28 +28,28 @@ global int mouse_captured = 0;
 // Font data (5x7 bitmap font, 5 bytes per character, ASCII 32-95)
 function main() {
     window.open(1024, 768, "3D Pyramid - WASD + Mouse");
-    grid_verts = mem.alloc(3624040);
+    grid_verts = mem.alloc(64000);
 
     on key_down(int keycode) {
-        if (keycode == 87) { move_fwd = 1; }
-        if (keycode == 83) { move_back = 1; }
-        if (keycode == 65) { move_left = 1; }
-        if (keycode == 68) { move_right = 1; }
-        if (keycode == 81) { move_up = 1; }
-        if (keycode == 69) { move_down = 1; }
-        if (keycode == 27) {
+        if (keycode == "w") { move_fwd = 1; }
+        if (keycode == "s") { move_back = 1; }
+        if (keycode == "a") { move_left = 1; }
+        if (keycode == "d") { move_right = 1; }
+        if (keycode == "q") { move_up = 1; }
+        if (keycode == "e") { move_down = 1; }
+        if (keycode == "esc") {
             window.release_mouse();
             mouse_captured = 0;
         }
     }
 
     on key_up(int keycode) {
-        if (keycode == 87) { move_fwd = 0; }
-        if (keycode == 83) { move_back = 0; }
-        if (keycode == 65) { move_left = 0; }
-        if (keycode == 68) { move_right = 0; }
-        if (keycode == 81) { move_up = 0; }
-        if (keycode == 69) { move_down = 0; }
+        if (keycode == "w") { move_fwd = 0; }
+        if (keycode == "s") { move_back = 0; }
+        if (keycode == "a") { move_left = 0; }
+        if (keycode == "d") { move_right = 0; }
+        if (keycode == "q") { move_up = 0; }
+        if (keycode == "e") { move_down = 0; }
     }
 
     on mouse_down(int button) {
