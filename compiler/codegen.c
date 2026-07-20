@@ -1409,6 +1409,26 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit_call_epilogue(cg, 0);
             }
         }
+        // window.clip(x0, y0, x1, y1) - set raster clip rect for pcolor
+        else if (strcmp(member, "clip") == 0 && strcmp(base, "window") == 0) {
+            emit(cg, "    ; window.clip");
+            if (args->count >= 4) {
+            emit_int_expr(cg, args->items[0]);  // x0
+            emit(cg, "    mov  r12, rax");
+            emit_int_expr(cg, args->items[1]);  // y0
+            emit(cg, "    mov  r13, rax");
+            emit_int_expr(cg, args->items[2]);  // x1
+            emit(cg, "    mov  r14, rax");
+            emit_int_expr(cg, args->items[3]);  // y1
+            emit(cg, "    mov  r9,  rax");
+            emit(cg, "    mov  rcx, r12");
+            emit(cg, "    mov  rdx, r13");
+            emit(cg, "    mov  r8,  r14");
+            emit_call_prologue(cg);
+            emit(cg, "    call _slag_window_clip");
+            emit_call_epilogue(cg, 0);
+            }
+        }
         // window.text(x, y, str|int, r, g, b) - draw text at x,y with color
         else if (strcmp(member, "text") == 0 && args->count >= 6) {
             emit(cg, "    ; window.text");
@@ -2066,7 +2086,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             if (args->count >= 2) {
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  r12, rax        ; ptr");
+                emit(cg, "    push r12");
                 emit_int_expr(cg, args->items[1]);
+                emit(cg, "    pop  r12");
                 emit(cg, "    movzx rax, byte [r12 + rax]");
             }
         }
@@ -2078,7 +2100,11 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
                 emit(cg, "    mov  r13, rax        ; byteoff");
+                emit(cg, "    push r12");
+                emit(cg, "    push r13");
                 emit_int_expr(cg, args->items[2]);
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
                 emit(cg, "    mov  [r12 + r13], rax");
             }
         }
@@ -2088,7 +2114,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             if (args->count >= 2) {
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  r12, rax        ; ptr");
+                emit(cg, "    push r12");
                 emit_int_expr(cg, args->items[1]);
+                emit(cg, "    pop  r12");
                 emit(cg, "    mov  rax, [r12 + rax]");
             }
         }
@@ -2103,7 +2131,11 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  r12, rax        ; ptr");
                 emit_int_expr(cg, args->items[1]);
                 emit(cg, "    mov  r13, rax        ; byteoff");
+                emit(cg, "    push r12");
+                emit(cg, "    push r13");
                 emit_float_expr(cg, args->items[2]);   // value -> xmm0 (double)
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
                 emit(cg, "    cvtsd2ss xmm0, xmm0  ; narrow to 32-bit float");
                 emit(cg, "    movss [r12 + r13], xmm0");
             }
@@ -3225,6 +3257,26 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  r9, r15");
                 emit_call_prologue(cg);
                 emit(cg, "    call _slag_tex_brick");
+                emit_call_epilogue(cg, 0);
+            }
+        }
+        // tex.perlin2d(x, y, freq, seed) -> int (0-255), coherent value noise
+        else if (strcmp(member, "perlin2d") == 0) {
+            emit(cg, "    ; tex.perlin2d");
+            if (args->count >= 4) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax");
+                emit_int_expr(cg, args->items[3]);
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  r8, r14");
+                emit(cg, "    mov  r9, rax");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_tex_perlin2d");
                 emit_call_epilogue(cg, 0);
             }
         }

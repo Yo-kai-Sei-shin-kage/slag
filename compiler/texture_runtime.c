@@ -195,7 +195,168 @@ void emit_tex_runtime(Codegen *cg) {
     E("    ret");
     E("");
 
-    // TODO: tex.perlin2d - requires floating point interpolation
+    // tex.perlin2d(x=rcx, y=rdx, freq=r8, seed=r9) -> rax (0-255).
+    // Coherent value noise: hash the 4 lattice corners of the cell, bilerp with
+    // a smoothstep (3t^2-2t^3) weight, 16.16 fixed point, no FPU. freq = cell
+    // size in x,y units (larger freq = lower spatial frequency).
+    E("; --- _slag_tex_perlin2d (rcx=x, rdx=y, r8=freq, r9=seed) -> rax ---");
+    E("_slag_tex_perlin2d:");
+    E("    push rbx");
+    E("    push rbp");
+    E("    push rsi");
+    E("    push rdi");
+    E("    push r12");
+    E("    push r13");
+    E("    push r14");
+    E("    push r15");
+    E("    mov  rbx, r9          ; rbx = seed");
+    E("    mov  rsi, rcx         ; rsi = x");
+    E("    mov  rdi, rdx         ; rdi = y");
+    E("    mov  rbp, r8          ; rbp = freq");
+    E("    cmp  rbp, 1");
+    E("    jge  .pn_freq_ok");
+    E("    mov  rbp, 1");
+    E(".pn_freq_ok:");
+
+    // --- X: xi = floor(x/freq), xf = x - xi*freq (0..freq-1) ---
+    E("    mov  rax, rsi");
+    E("    cqo");
+    E("    idiv rbp              ; rax=quot, rdx=rem");
+    E("    test rdx, rdx");
+    E("    jns  .pn_xok");
+    E("    dec  rax");
+    E("    add  rdx, rbp");
+    E(".pn_xok:");
+    E("    mov  r12, rax         ; xi");
+    E("    mov  r10, rdx         ; xf");
+    // fx (16.16) = xf * 65536 / freq
+    E("    mov  rax, r10");
+    E("    shl  rax, 16");
+    E("    cqo");
+    E("    idiv rbp");
+    E("    mov  r14, rax         ; fx = frac in 16.16");
+    // smoothstep sx = fx*fx*(3<<16 - 2*fx) >> 32
+    E("    mov  r11, 196608      ; 3.0 in 16.16");
+    E("    mov  rax, r14");
+    E("    add  rax, rax");
+    E("    sub  r11, rax         ; (3 - 2fx) in 16.16");
+    E("    mov  rax, r14");
+    E("    imul rax, r14");
+    E("    sar  rax, 16          ; fx^2 (16.16)");
+    E("    imul rax, r11");
+    E("    sar  rax, 16          ; sx = 3fx^2-2fx^3 (16.16)");
+    E("    mov  r14, rax         ; r14 = sx");
+
+    // --- Y: yi = floor(y/freq), yf ---
+    E("    mov  rax, rdi");
+    E("    cqo");
+    E("    idiv rbp");
+    E("    test rdx, rdx");
+    E("    jns  .pn_yok");
+    E("    dec  rax");
+    E("    add  rdx, rbp");
+    E(".pn_yok:");
+    E("    mov  r13, rax         ; yi");
+    E("    mov  r10, rdx         ; yf");
+    E("    mov  rax, r10");
+    E("    shl  rax, 16");
+    E("    cqo");
+    E("    idiv rbp");
+    E("    mov  r15, rax         ; fy 16.16");
+    E("    mov  r11, 196608");
+    E("    mov  rax, r15");
+    E("    add  rax, rax");
+    E("    sub  r11, rax");
+    E("    mov  rax, r15");
+    E("    imul rax, r15");
+    E("    sar  rax, 16");
+    E("    imul rax, r11");
+    E("    sar  rax, 16");
+    E("    mov  r15, rax         ; r15 = sy");
+
+    // --- hash the 4 corners into r8..r11 (h00,h10,h01,h11) ---
+    // corner value h(a,b) = perm[(perm[(a+seed)&255] + b)&255]
+    // a = xi (+0/+1), b = yi (+0/+1). lea perm base once.
+    E("    lea  rbp, [_tex_perm]");
+    // h00: a=xi, b=yi
+    E("    mov  rax, r12");
+    E("    add  rax, rbx");
+    E("    and  rax, 255");
+    E("    movzx rax, byte [rbp+rax]");
+    E("    add  rax, r13");
+    E("    and  rax, 255");
+    E("    movzx r8, byte [rbp+rax]     ; h00");
+    // h10: a=xi+1, b=yi
+    E("    mov  rax, r12");
+    E("    add  rax, 1");
+    E("    add  rax, rbx");
+    E("    and  rax, 255");
+    E("    movzx rax, byte [rbp+rax]");
+    E("    add  rax, r13");
+    E("    and  rax, 255");
+    E("    movzx r9, byte [rbp+rax]     ; h10");
+    // h01: a=xi, b=yi+1
+    E("    mov  rax, r12");
+    E("    add  rax, rbx");
+    E("    and  rax, 255");
+    E("    movzx rax, byte [rbp+rax]");
+    E("    add  rax, r13");
+    E("    add  rax, 1");
+    E("    and  rax, 255");
+    E("    movzx r10, byte [rbp+rax]    ; h01");
+    // h11: a=xi+1, b=yi+1
+    E("    mov  rax, r12");
+    E("    add  rax, 1");
+    E("    add  rax, rbx");
+    E("    and  rax, 255");
+    E("    movzx rax, byte [rbp+rax]");
+    E("    add  rax, r13");
+    E("    add  rax, 1");
+    E("    and  rax, 255");
+    E("    movzx r11, byte [rbp+rax]    ; h11");
+
+    // --- bilinear interp in 16.16. lerp(a,b,t) = a + ((b-a)*t >> 16) ---
+    // top = lerp(h00,h10,sx)
+    E("    mov  rax, r9");
+    E("    sub  rax, r8          ; h10-h00");
+    E("    imul rax, r14         ; * sx");
+    E("    sar  rax, 16");
+    E("    add  rax, r8          ; top (int-ish, scaled by nothing)");
+    E("    mov  r12, rax         ; r12 = top");
+    // bot = lerp(h01,h11,sx)
+    E("    mov  rax, r11");
+    E("    sub  rax, r10         ; h11-h01");
+    E("    imul rax, r14");
+    E("    sar  rax, 16");
+    E("    add  rax, r10         ; bot");
+    E("    mov  r13, rax         ; r13 = bot");
+    // val = lerp(top,bot,sy)
+    E("    mov  rax, r13");
+    E("    sub  rax, r12         ; bot-top");
+    E("    imul rax, r15         ; * sy");
+    E("    sar  rax, 16");
+    E("    add  rax, r12         ; val (0..255)");
+    // clamp to 0..255
+    E("    cmp  rax, 0");
+    E("    jge  .pn_lo");
+    E("    xor  rax, rax");
+    E(".pn_lo:");
+    E("    cmp  rax, 255");
+    E("    jle  .pn_done");
+    E("    mov  rax, 255");
+    E(".pn_done:");
+
+    E("    pop  r15");
+    E("    pop  r14");
+    E("    pop  r13");
+    E("    pop  r12");
+    E("    pop  rdi");
+    E("    pop  rsi");
+    E("    pop  rbp");
+    E("    pop  rbx");
+    E("    ret");
+    E("");
+
     // TODO: tex.wood - requires sin approximation
     // TODO: tex.marble - requires perlin + sin
 }
