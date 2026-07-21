@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.13.5**
+**Version 0.15.1**
 
 ---
 
@@ -714,6 +714,11 @@ sleep(ms)        // busy-wait ~ms milliseconds (QueryPerformanceCounter spin)
 
 ### 12.7 Keyboard Events
 
+Event handlers are introduced with the `on` keyword. A handler may be declared
+either at **file scope** (alongside functions and globals) or as a top-level
+statement inside a function body; both forms compile to the same standalone
+dispatch proc.
+
 ```
 on key_down(int key) {
     // fires on WM_KEYDOWN
@@ -744,6 +749,22 @@ on key_down(int key) {
     if (key == "left"){ }   // arrow key
 }
 ```
+
+The key operand may also be an element of a global `str` array at a
+**compile-time constant index**, which folds to the same key code as the
+equivalent literal:
+
+```
+global str[] keys = {"a", "esc", "left"};
+on key_down(int key) {
+    if (key == keys[0]) { }   // same as key == "a"
+    if (key == keys[1]) { window.close(); }
+}
+```
+
+A named key that is not recognized — whether written directly as a literal or
+supplied through such a constant-index array element — is a **compile-time
+error** and stops compilation.
 
 Recognized non-character names: `esc` (or `escape`), `enter` (or `return`),
 `backspace`, `tab`, `space`, `left`, `right`, `up`, `down`, `home`, `end`,
@@ -1315,6 +1336,7 @@ function main() {
 | 0.13.5  | `file.make`/`file.rmdir`; file.* path args + `audio.load` accept runtime byte-buffer pointers (not just str literals); `window.textbuf` (draw a runtime byte buffer as text); keyboard handlers deliver translated characters (compare against char/named-key literals like `"a"`/`"esc"`/`"left"`); compiler emits a single `compiled successfully` line. **Bug fix:** `emit_user_call` 16-byte stack-alignment fix for odd-argument-count (1 or 3) user calls that reach a Win32 API | ✅ Complete |
 | 0.14    | Full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net) | 🔲 Planned  |
 | 0.15    | Encrypted P2P: ECDH P-256 key exchange + AES-256-CBC via CNG (`crypto.*`); non-blocking exact-length message reassembly (`net.recv_buf_exact`/`net.server_recv_buf_exact`) for framed/encrypted payloads. **Bug fix:** unescaped `%` in the window runtime's shifted-key table that broke `cg_emit`'s `vfprintf` | ✅ Complete |
+| 0.15.1  | File-scope `on` handlers (declarable at top level, not only inside a function body); key comparison against a global `str[]` element at a compile-time constant index (`key == keys[0]`) folds to the key code, with an unrecognized name now a compile-time error | ✅ Complete |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ### PS2-Era Graphics Target (60fps)

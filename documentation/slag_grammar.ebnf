@@ -55,7 +55,7 @@ block_comment = "/*" { ? any character ? } "*/" ;
 (* Program structure                                                  *)
 (* ------------------------------------------------------------------ *)
 
-program       = { function | global_decl } ;             (* top level: functions and globals only *)
+program       = { function | global_decl | on_handler } ; (* top level: functions, globals, and file-scope event handlers *)
 
 function      = "function" identifier "(" [ param_list ] ")" block ;
 param_list    = param { "," param } ;

@@ -904,8 +904,8 @@ so a message is only decrypted once complete.
 .SS Input event handlers
 Event handlers are declared with the
 .B on
-keyword inside a function body and are dispatched directly from the
-window procedure:
+keyword, either at file scope or as a top-level statement inside a function
+body, and are dispatched directly from the window procedure:
 .PP
 .RS
 .nf
@@ -947,6 +947,25 @@ on key_down(int key) {
 Recognized names: esc/escape, enter/return, backspace, tab, space, left,
 right, up, down, home, end, pageup, pagedown, insert, delete, shift, ctrl,
 alt, and f1\-f12. Handlers not declared by the program default to no-op stubs.
+.PP
+The key operand may also be an element of a global
+.B str
+array at a constant index, which folds to the same key code at compile time
+as the equivalent literal:
+.PP
+.RS
+.nf
+global str[] keys = {"a", "esc", "left"};
+on key_down(int key) {
+    if (key == keys[0]) { }   // same as key == "a"
+    if (key == keys[1]) { window.close(); }
+}
+.fi
+.RE
+.PP
+The index must be a compile-time constant. A named key that is not recognized
+(whether written as a literal or supplied via such an array element) is a
+compile-time error and stops compilation.
 .SS Per-window input state
 Because event handlers execute in their own stack frames, separate
 from the main loop, a small set of accessor builtins is provided so
