@@ -356,4 +356,5 @@ void ast_print_program(const Program *prog) {
         print_stmtlist(&f->body, 1);
         printf("\n");
     }
+    print_stmtlist(&prog->handlers, 0);
 }

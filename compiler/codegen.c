@@ -525,27 +525,51 @@ static void emit_path_expr(Codegen *cg, const Expr *e) {
 // literal is just its byte, case-sensitive); non-character keys (arrows,
 // F-keys, modifiers, etc.) are encoded as VK+256 so they never collide
 // with a real character. Returns 1 and sets *out on a match, else 0.
+static const struct { const char *name; int code; } g_keytbl[] = {
+    {"esc",27},{"escape",27},{"enter",13},{"return",13},
+    {"backspace",8},{"bksp",8},{"tab",9},{"space",32},
+    {"left",256+37},{"up",256+38},{"right",256+39},{"down",256+40},
+    {"home",256+36},{"end",256+35},{"pageup",256+33},{"pagedown",256+34},
+    {"insert",256+45},{"delete",256+46},{"del",256+46},
+    {"shift",256+16},{"ctrl",256+17},{"control",256+17},{"alt",256+18},
+    {"f1",256+112},{"f2",256+113},{"f3",256+114},{"f4",256+115},
+    {"f5",256+116},{"f6",256+117},{"f7",256+118},{"f8",256+119},
+    {"f9",256+120},{"f10",256+121},{"f11",256+122},{"f12",256+123},
+};
+#define KEYTBL_COUNT (sizeof(g_keytbl)/sizeof(g_keytbl[0]))
+
 static int keylit_code(const char *s, int *out) {
     if (s == NULL) return 0;
     if (s[0] != '\0' && s[1] == '\0') {      // single character -> its byte
         *out = (unsigned char)s[0];
         return 1;
     }
-    static const struct { const char *name; int code; } tbl[] = {
-        {"esc",27},{"escape",27},{"enter",13},{"return",13},
-        {"backspace",8},{"bksp",8},{"tab",9},{"space",32},
-        {"left",256+37},{"up",256+38},{"right",256+39},{"down",256+40},
-        {"home",256+36},{"end",256+35},{"pageup",256+33},{"pagedown",256+34},
-        {"insert",256+45},{"delete",256+46},{"del",256+46},
-        {"shift",256+16},{"ctrl",256+17},{"control",256+17},{"alt",256+18},
-        {"f1",256+112},{"f2",256+113},{"f3",256+114},{"f4",256+115},
-        {"f5",256+116},{"f6",256+117},{"f7",256+118},{"f8",256+119},
-        {"f9",256+120},{"f10",256+121},{"f11",256+122},{"f12",256+123},
-    };
-    for (size_t i = 0; i < sizeof(tbl)/sizeof(tbl[0]); i++) {
-        if (strcmp(s, tbl[i].name) == 0) { *out = tbl[i].code; return 1; }
+    for (size_t i = 0; i < KEYTBL_COUNT; i++) {
+        if (strcmp(s, g_keytbl[i].name) == 0) { *out = g_keytbl[i].code; return 1; }
     }
     return 0;
+}
+
+// If `e` names a compile-time-known string in a key comparison — either a
+// bare string literal, or a constant index into a global str[] whose
+// initializers are string literals — return that string. Otherwise NULL.
+// This lets `key == ARR[0]` fold to a key code exactly like `key == "a"`,
+// pulling the element's literal straight out of the array initializer.
+static const char *const_key_str(Codegen *cg, const Expr *e) {
+    if (e->kind == EXPR_STR_LIT) return e->as.str.value;
+    if (e->kind == EXPR_INDEX &&
+        e->as.index.base->kind == EXPR_IDENT &&
+        e->as.index.index->kind == EXPR_INT_LIT) {
+        Global *g = find_global(cg, e->as.index.base->as.str.value);
+        if (g && g->is_array && g->elem_type == TYPE_STR) {
+            long idx = e->as.index.index->as.int_val;
+            if (idx >= 0 && idx < g->arr_init.count) {
+                const Expr *el = g->arr_init.items[idx];
+                if (el->kind == EXPR_STR_LIT) return el->as.str.value;
+            }
+        }
+    }
+    return NULL;
 }
 
 // ---------------------------------------------------------------------
@@ -608,22 +632,52 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
             if (e->as.binary.op == TOK_EQ || e->as.binary.op == TOK_NEQ) {
                 const Expr *L = e->as.binary.left;
                 const Expr *R = e->as.binary.right;
-                const Expr *lit = NULL; const Expr *other = NULL;
-                if (L->kind == EXPR_STR_LIT && rt != TYPE_STR) { lit = L; other = R; }
-                else if (R->kind == EXPR_STR_LIT && lt != TYPE_STR) { lit = R; other = L; }
-                if (lit) {
-                    int code = 0;
-                    if (keylit_code(lit->as.str.value, &code)) {
+                // Identify the str side (key literal, const str[] element, or
+                // runtime str) and the non-str "other" side (the int key expr).
+                const Expr *sexpr = NULL; const Expr *other = NULL;
+                if (lt == TYPE_STR && rt != TYPE_STR) { sexpr = L; other = R; }
+                else if (rt == TYPE_STR && lt != TYPE_STR) { sexpr = R; other = L; }
+                if (sexpr) {
+                    // Compile-time-known string (bare literal or ARR[const]):
+                    // fold to its key code, or hard-error if it names no key.
+                    const char *cs = const_key_str(cg, sexpr);
+                    if (cs) {
+                        int code = 0;
+                        if (!keylit_code(cs, &code)) {
+                            fprintf(stderr, "codegen error: \"%s\" is not a recognized key\n", cs);
+                            exit(1);
+                        }
                         emit_int_expr(cg, other);
                         emit(cg, "    cmp  rax, %d", code);
-                        if (e->as.binary.op == TOK_EQ) {
-                            emit(cg, "    sete al");
-                        } else {
-                            emit(cg, "    setne al");
-                        }
+                        emit(cg, "    %s al", e->as.binary.op == TOK_EQ ? "sete" : "setne");
                         emit(cg, "    movzx rax, al");
                         break;
                     }
+                    // Runtime str: only a plain str variable is supported.
+                    // A runtime-indexed str[] element (ARR[i], non-constant i)
+                    // would need global str[] element storage, which is not
+                    // implemented; reject it rather than emit broken loads.
+                    // Constant ARR[0] is already handled by const_key_str above.
+                    if (sexpr->kind == EXPR_INDEX) {
+                        fprintf(stderr, "codegen error: key comparison against a str array element requires a constant index\n");
+                        exit(1);
+                    }
+                    // Resolve the key code at runtime, then compare. Unknown ->
+                    // code -1, which never matches a valid key. The key expr
+                    // value is held in r13 across the call (same scratch
+                    // convention as the _slag_str_eq path below; no push, so
+                    // rsp alignment matches that proven pattern exactly).
+                    emit_int_expr(cg, other);
+                    emit(cg, "    mov  r13, rax");
+                    emit_str_expr(cg, sexpr);          // rax=ptr, rdx=len
+                    emit(cg, "    mov  rcx, rax");
+                    emit(cg, "    sub  rsp, 32");
+                    emit(cg, "    call _slag_str_to_keycode");
+                    emit(cg, "    add  rsp, 32");
+                    emit(cg, "    cmp  r13, rax");
+                    emit(cg, "    %s al", e->as.binary.op == TOK_EQ ? "sete" : "setne");
+                    emit(cg, "    movzx rax, al");
+                    break;
                 }
             }
             if (lt == TYPE_STR || rt == TYPE_STR) {
@@ -4321,6 +4375,51 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    pop  rbp");
     emit(cg, "    ret");
     emit(cg, "");
+    // _slag_str_to_keycode: rcx=ptr, rdx=len -> rax = key code, or -1 if the
+    // string is not a recognized key. A single-byte string resolves to its
+    // byte value; multi-byte strings are matched against the named-key table.
+    // Used when a key comparison's str operand is not a compile-time literal
+    // (a str variable or a runtime-indexed str[] element).
+    emit(cg, "; --- _slag_str_to_keycode ---");
+    emit(cg, "_slag_str_to_keycode:");
+    emit(cg, "    cmp  rdx, 1");
+    emit(cg, "    jne  .k_multi");
+    emit(cg, "    movzx rax, byte [rcx]      ; single char -> its byte");
+    emit(cg, "    ret");
+    emit(cg, ".k_multi:");
+    for (size_t i = 0; i < KEYTBL_COUNT; i++) {
+        int nlen = (int)strlen(g_keytbl[i].name);
+        emit(cg, "    cmp  rdx, %d", nlen);
+        emit(cg, "    jne  .k_next%zu", i);
+        // Byte-compare against the name bytes at _keyname%zu.
+        emit(cg, "    lea  r10, [rel _keyname%zu]", i);
+        emit(cg, "    mov  r11, rcx");
+        emit(cg, "    mov  r8, %d", nlen);
+        emit(cg, ".k_cmp%zu:", i);
+        emit(cg, "    mov  al, [r11]");
+        emit(cg, "    cmp  al, [r10]");
+        emit(cg, "    jne  .k_next%zu", i);
+        emit(cg, "    inc  r11");
+        emit(cg, "    inc  r10");
+        emit(cg, "    dec  r8");
+        emit(cg, "    jnz  .k_cmp%zu", i);
+        emit(cg, "    mov  rax, %d", g_keytbl[i].code);
+        emit(cg, "    ret");
+        emit(cg, ".k_next%zu:", i);
+    }
+    emit(cg, "    mov  rax, -1               ; no match");
+    emit(cg, "    ret");
+    // Name-byte constants for the table above.
+    for (size_t i = 0; i < KEYTBL_COUNT; i++) {
+        emit_raw(cg, "_keyname%zu: db ", i);
+        const char *n = g_keytbl[i].name;
+        for (const char *p = n; *p; p++) {
+            emit_raw(cg, "%d%s", (unsigned char)*p, p[1] ? ", " : "");
+        }
+        emit_raw(cg, "\n");
+    }
+    emit(cg, "");
+
     // _slag_str_eq: rcx=ptr1, rdx=len1, r8=ptr2, r9=len2 -> rax = 1 if equal, else 0.
     // Used by the == and != operators when either operand is a str.
     emit(cg, "; --- _slag_str_eq ---");
@@ -5010,6 +5109,18 @@ void codegen_program(const Program *prog, FILE *out) {
             else if (strcmp(ev, "mouse_wheel") == 0) ev_flags.has_mouse_wheel = 1;
         }
     }
+    // File-scope `on` handlers.
+    for (int j = 0; j < prog->handlers.count; j++) {
+        Stmt *s = prog->handlers.items[j];
+        if (s->kind != STMT_ON_HANDLER) continue;
+        const char *ev = s->as.on_handler.event_name;
+        if (strcmp(ev, "key_down") == 0)    ev_flags.has_key_down = 1;
+        else if (strcmp(ev, "key_up") == 0)    ev_flags.has_key_up = 1;
+        else if (strcmp(ev, "mouse_move") == 0) ev_flags.has_mouse_move = 1;
+        else if (strcmp(ev, "mouse_down") == 0) ev_flags.has_mouse_down = 1;
+        else if (strcmp(ev, "mouse_up") == 0)   ev_flags.has_mouse_up = 1;
+        else if (strcmp(ev, "mouse_wheel") == 0) ev_flags.has_mouse_wheel = 1;
+    }
 
     // Runtime helpers.
     emit_runtime_helpers(&cg);
@@ -5026,6 +5137,14 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_simd_runtime(&cg);
     emit_mesh_runtime(&cg);
     emit_tex_runtime(&cg);
+
+    // File-scope `on` handlers.
+    for (int i = 0; i < prog->handlers.count; i++) {
+        Stmt *s = prog->handlers.items[i];
+        if (s->kind == STMT_ON_HANDLER) {
+            emit_on_handler(&cg, s);
+        }
+    }
 
     // User functions.
     for (int i = 0; i < prog->functions.count; i++) {

@@ -237,6 +237,7 @@ typedef struct {
 typedef struct {
     FunctionList functions;
     StmtList globals;
+    StmtList handlers;   // file-scope `on` handlers
 } Program;
 
 // ---------------------------------------------------------------------

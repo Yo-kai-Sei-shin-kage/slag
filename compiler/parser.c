@@ -967,6 +967,7 @@ Program parse_program(const char *src, size_t len) {
     Program prog;
     functionlist_init(&prog.functions);
     stmtlist_init(&prog.globals);
+    stmtlist_init(&prog.handlers);
 
     while (!check(&p, TOK_EOF)) {
         if (check(&p, TOK_KW_FUNCTION)) {
@@ -979,8 +980,13 @@ Program parse_program(const char *src, size_t len) {
             if (glob) {
                 stmtlist_push(&prog.globals, glob);
             }
+        } else if (check(&p, TOK_KW_ON)) {
+            Stmt *h = parse_on_handler(&p);
+            if (h) {
+                stmtlist_push(&prog.handlers, h);
+            }
         } else {
-            error_at(&p, "expected 'function' or 'global' at top level");
+            error_at(&p, "expected 'function', 'global', or 'on' at top level");
             advance(&p); // recover
         }
     }
