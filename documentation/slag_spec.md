@@ -848,7 +848,14 @@ A float depth buffer equal in size to the pixel buffer. Cleared each frame via `
 
 ### 13.5 Texture Mapping
 
-> **Not yet implemented.** Planned for a future version.
+Three textured-triangle fills are available, all reading an RGB565 texture buffer:
+`fill_triangle_affine` (PS1-style affine mapping), `fill_triangle_persp`
+(PS2-style perspective-correct, 1/z interpolation with 8px UV subdivision), and
+`fill_triangle_pcolor` (perspective-correct texturing combined with per-vertex
+color modulation). `fill_triangle_persp`/`fill_triangle_pcolor` additionally do
+4-tap bilinear filtering, and `fill_triangle_pcolor` has a runtime-dispatched
+AVX2 fast path (see section 18). Procedural textures can be generated with the
+`tex.*` builtins, and BMP images loaded via `mesh.bmp_*`.
 
 ### 13.6 Lighting
 
@@ -1323,15 +1330,15 @@ PS2-era software rendering at 60fps. Current pipeline status:
 
 **Performance (complete):**
 - Multi-threaded rasterization is fully implemented: `fill_triangle*` calls enqueue into a deferred queue and are drained at `window.flush()` across a persistent worker pool, split into horizontal bands (one per worker thread; worker count scales with CPU cores). Batches below `FT_POOL_THRESHOLD` draw sequentially to avoid wake/wait overhead.
+- SIMD auto-dispatch (AVX2): `fill_triangle_pcolor` — the primary workhorse fill (perspective-correct texturing + per-vertex color, used for fog/lighting/shadows) — has an AVX2 SoA fast path selected at runtime via `cpu.simd_detect`/`cpu.has_avx2`, falling back to scalar when unavailable. This is deliberately scoped to `pcolor` only; the other `fill_triangle*` variants remain scalar by design and are not planned to get SIMD paths.
 - Uncapped presentation (no frame-rate limiting; `sleep(ms)` available for pacing).
 
 **Performance target:**
-- 1,000,000 polygons per frame at 1920x1080 (native 1080p), sub-16ms (60fps). The multi-threaded rasterizer already surpasses earlier 10K-class counts with no SIMD dispatch; SIMD auto-dispatch is the remaining lever toward the 1M-polygon target.
+- 1,000,000 polygons per frame at 1920x1080 (native 1080p), sub-16ms (60fps), via the multi-threaded rasterizer plus the AVX2 `fill_triangle_pcolor` fast path.
 
 **Planned:**
 - Near-plane triangle clipping (Sutherland-Hodgman) — 0.14
 - Fog, lighting, and shadows are handled per-vertex in Slag script via `fill_triangle_pcolor` color modulation (e.g. the terrain demo); no built-in fog stage planned — keeps the rasterizer's hot loop free of per-pixel special-casing
-- SIMD-vectorized rasterizer inner loops with auto-dispatch on detected CPU features
 
 ---
 
