@@ -20,6 +20,13 @@
 // relink) to scale up to 64 -- every table size below derives from it.
 #define SERVER_MAX_CLIENTS 4
 
+// Per-client reassembly buffer for net.server_recv_buf_exact. Bytes trickle
+// in across ticks (non-blocking); a complete message of the caller-requested
+// length is only copied out once fully arrived. Sized for typical game
+// input/delta packets (+ AES IV/padding). A single message must not exceed
+// this. Cost = SERVER_ACC_BUF_SIZE * SERVER_MAX_CLIENTS bytes of bss.
+#define SERVER_ACC_BUF_SIZE 4096
+
 // Max servers tracked in a client's discovered-server list.
 #define DISCOVER_MAX 8
 
@@ -67,6 +74,8 @@ void emit_server_bss(Codegen *cg) {
     E("_srv_bytebuf:     resb 8     ; one-byte send/recv scratch");
     E("_srv_clients:     resq %d    ; client socket handles, 0 = empty slot", SERVER_MAX_CLIENTS);
     E("_srv_last_ok:     resq 1     ; 1 if last net.server_* op succeeded");
+    E("_srv_acc_buf:     resb %d    ; per-slot reassembly buffers for recv_buf_exact", SERVER_ACC_BUF_SIZE * SERVER_MAX_CLIENTS);
+    E("_srv_acc_fill:    resq %d    ; per-slot count of bytes currently accumulated", SERVER_MAX_CLIENTS);
 
     E("_srv_tcp_port:    resq 1     ; TCP game port, echoed back in discovery replies");
     E("_srv_name:        resb %d    ; server name, set by net.server_start", SERVER_NAME_MAX);
@@ -591,6 +600,121 @@ void emit_server_runtime(Codegen *cg) {
     E("    mov  rax, -1");
     E(".svrb_done:");
     E("    add  rsp, 40");
+    E("    pop  rbx");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // _slag_server_recv_buf_exact(idx=rcx, ptr=rdx, n=r8) -> rax:
+    //   n   = a complete n-byte message is now in ptr (accumulator reset)
+    //   -2  = not all n bytes have arrived yet (still connected) -- caller
+    //         should just move on this tick and poll again next tick. This
+    //         NEVER blocks: it does at most one non-blocking recv per call,
+    //         so it cannot stall a lockstep server loop.
+    //   -1  = disconnect/error (slot closed + cleared) or n too large.
+    // Bytes accumulate in the per-slot _srv_acc_buf across calls; only a
+    // fully-arrived message is copied out.
+    E("; --- _slag_server_recv_buf_exact (rcx=idx, rdx=ptr, r8=n) -> rax ---");
+    E("_slag_server_recv_buf_exact:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    push rsi");
+    E("    push rdi");
+    E("    push r12");
+    E("    push r13");
+    E("    push r14");
+    E("    sub  rsp, 32               ; 7 pushes (odd) -> need subamount = 0 (mod 16); calls take <=4 args");
+    E("    mov  rbx, rcx              ; idx");
+    E("    mov  rsi, rdx              ; dest ptr");
+    E("    mov  rdi, r8               ; n (requested length)");
+    E("    cmp  rbx, 0");
+    E("    jl   .svre_fail");
+    E("    cmp  rbx, %d", SERVER_MAX_CLIENTS);
+    E("    jge  .svre_fail");
+    E("    cmp  rdi, %d", SERVER_ACC_BUF_SIZE);
+    E("    jg   .svre_fail           ; message larger than the reassembly buffer");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  r9, [r9 + rbx*8]");
+    E("    test r9, r9");
+    E("    jz   .svre_fail           ; empty slot");
+    E("    ; r12 = &acc_buf[idx] = _srv_acc_buf + idx*ACC_BUF_SIZE");
+    E("    mov  rax, rbx");
+    E("    imul rax, rax, %d", SERVER_ACC_BUF_SIZE);
+    E("    lea  r12, [_srv_acc_buf]");
+    E("    add  r12, rax");
+    E("    ; r13 = current fill for this slot");
+    E("    lea  r14, [_srv_acc_fill]");
+    E("    mov  r13, [r14 + rbx*8]");
+    E("    ; if already have >= n buffered (shouldn't exceed, but be safe), skip recv");
+    E("    cmp  r13, rdi");
+    E("    jge  .svre_complete");
+    E("    ; one non-blocking recv of up to (n - fill) bytes into acc_buf+fill");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  rcx, [r9 + rbx*8]     ; socket");
+    E("    lea  rdx, [r12 + r13]      ; acc_buf + fill");
+    E("    mov  r8, rdi");
+    E("    sub  r8, r13               ; want = n - fill");
+    E("    xor  r9, r9               ; flags = 0");
+    E("    call recv");
+    E("    movsxd rax, eax            ; sign-extend 32-bit recv() result");
+    E("    cmp  rax, 0");
+    E("    jg   .svre_advance");
+    E("    je   .svre_closed          ; recv()==0 -> peer gracefully closed");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- no data yet, still connected");
+    E("    je   .svre_pending");
+    E("    jmp  .svre_closed          ; any other error -> disconnect");
+    E(".svre_advance:");
+    E("    add  r13, rax              ; fill += received");
+    E("    lea  r14, [_srv_acc_fill]");
+    E("    mov  [r14 + rbx*8], r13    ; persist new fill");
+    E("    cmp  r13, rdi");
+    E("    jge  .svre_complete");
+    E("    ; got some but not all -> still pending this tick");
+    E(".svre_pending:");
+    E("    mov  qword [_srv_last_ok], 1");
+    E("    mov  rax, -2");
+    E("    jmp  .svre_done");
+    E(".svre_complete:");
+    E("    ; copy n bytes from acc_buf to dest, reset fill to 0");
+    E("    xor  rax, rax");
+    E(".svre_cpy:");
+    E("    cmp  rax, rdi");
+    E("    jge  .svre_cpydone");
+    E("    mov  cl, [r12 + rax]");
+    E("    mov  [rsi + rax], cl");
+    E("    inc  rax");
+    E("    jmp  .svre_cpy");
+    E(".svre_cpydone:");
+    E("    lea  r14, [_srv_acc_fill]");
+    E("    mov  qword [r14 + rbx*8], 0");
+    E("    mov  qword [_srv_last_ok], 1");
+    E("    mov  rax, rdi              ; return n");
+    E("    ; note: rdi holds n across the copy loop (rax is the loop counter)");
+    E("    jmp  .svre_done");
+    E(".svre_closed:");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  rcx, [r9 + rbx*8]");
+    E("    call closesocket");
+    E("    lea  r9, [_srv_clients]");
+    E("    mov  qword [r9 + rbx*8], 0");
+    E("    lea  r14, [_srv_acc_fill]");
+    E("    mov  qword [r14 + rbx*8], 0   ; clear stale partial on disconnect");
+    E("    mov  qword [_srv_last_ok], 0");
+    E("    mov  rax, -1");
+    E("    jmp  .svre_done");
+    E(".svre_fail:");
+    E("    mov  qword [_srv_last_ok], 0");
+    E("    mov  rax, -1");
+    E(".svre_done:");
+    E("    add  rsp, 32");
+    E("    pop  r14");
+    E("    pop  r13");
+    E("    pop  r12");
+    E("    pop  rdi");
+    E("    pop  rsi");
     E("    pop  rbx");
     E("    mov  rsp, rbp");
     E("    pop  rbp");

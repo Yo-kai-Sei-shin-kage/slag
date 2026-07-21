@@ -22,7 +22,7 @@ base="${1%.slag}"
 nasm -f win64 "$base.asm" -o "$base.obj"
 
 # Build link flags
-LDFLAGS="-nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm"
+LDFLAGS="-nostdlib -e _start -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt"
 if [[ $gui -eq 1 ]]; then
     LDFLAGS="$LDFLAGS -mwindows"
 fi

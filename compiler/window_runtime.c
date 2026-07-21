@@ -984,7 +984,7 @@ static void emit_wndproc(Codegen *cg) {
     E("    times 4   db 0           ; 1C-1F");
     E("    db 32                    ; 20 SPACE");
     E("    times 15  db 0           ; 21-2F");
-    E("    db ')','!','@','#','$','%','^','&','*','('   ; 30-39 shifted");
+    E("    db ')','!','@','#','$','%%','^','&','*','('   ; 30-39 shifted");
     E("    times 7   db 0           ; 3A-40");
     E("    db 'A','B','C','D','E','F','G','H','I','J','K','L','M'");
     E("    db 'N','O','P','Q','R','S','T','U','V','W','X','Y','Z'   ; 41-5A");

@@ -40,6 +40,7 @@
 #include "mem_runtime.h"
 #include "file_runtime.h"
 #include "audio_runtime.h"
+#include "crypto_runtime.h"
 #include "matrix_runtime.h"
 #include "simd_runtime.h"
 #include "mesh_runtime.h"
@@ -1807,6 +1808,20 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit_call_epilogue(cg, 0);
             }
         }
+        // net.recv_buf_exact(ptr, n) -> int: n=complete, -2=pending, -1=err
+        else if (strcmp(member, "recv_buf_exact") == 0) {
+            emit(cg, "    ; net.recv_buf_exact");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_net_recv_buf_exact");
+                emit_call_epilogue(cg, 0);
+            }
+        }
         else if (strcmp(member, "ack") == 0) {
             emit(cg, "    ; net.ack");
             emit(cg, "    mov  rax, [_net_last_ok]");
@@ -1938,6 +1953,27 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  rcx, r12");
                 emit_call_prologue(cg);
                 emit(cg, "    call _slag_server_recv_buf");
+                emit_call_epilogue(cg, 0);
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
+            }
+        }
+        // net.server_recv_buf_exact(idx, ptr, n) -> int: n=complete, -2=pending, -1=err
+        else if (strcmp(member, "server_recv_buf_exact") == 0) {
+            emit(cg, "    ; net.server_recv_buf_exact");
+            if (args->count >= 3) {
+                emit(cg, "    push r12");
+                emit(cg, "    push r13");
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8, rax");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    mov  rcx, r12");
+                emit_call_prologue(cg);
+                emit(cg, "    call _slag_server_recv_buf_exact");
                 emit_call_epilogue(cg, 0);
                 emit(cg, "    pop  r13");
                 emit(cg, "    pop  r12");
@@ -2508,6 +2544,72 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  rcx, rax        ; handle");
                 emit(cg, "    sub  rsp, 32");
                 emit(cg, "    call _slag_audio_position");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // crypto.dh_keygen() -> (void)
+        else if (strcmp(member, "dh_keygen") == 0 && strcmp(base, "crypto") == 0) {
+            emit(cg, "    ; crypto.dh_keygen");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call _slag_crypto_dh_keygen");
+            emit(cg, "    add  rsp, 32");
+        }
+        // crypto.dh_pubkey(out_ptr) -> int len
+        else if (strcmp(member, "dh_pubkey") == 0 && strcmp(base, "crypto") == 0) {
+            emit(cg, "    ; crypto.dh_pubkey");
+            if (args->count >= 1) {
+                emit_path_expr(cg, args->items[0]);
+                emit(cg, "    mov  rcx, rax        ; out_ptr");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_crypto_dh_pubkey");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // crypto.dh_derive(peer_pub_ptr, peer_pub_len) -> (void)
+        else if (strcmp(member, "dh_derive") == 0 && strcmp(base, "crypto") == 0) {
+            emit(cg, "    ; crypto.dh_derive");
+            if (args->count >= 2) {
+                emit_path_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; peer_pub_ptr");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  rdx, rax        ; peer_pub_len");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_crypto_dh_derive");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // crypto.aes_encrypt(in_ptr, in_len, out_ptr) -> int len
+        else if (strcmp(member, "aes_encrypt") == 0 && strcmp(base, "crypto") == 0) {
+            emit(cg, "    ; crypto.aes_encrypt");
+            if (args->count >= 3) {
+                emit_path_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; in_ptr");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; in_len");
+                emit_path_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8,  rax        ; out_ptr");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_crypto_aes_encrypt");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // crypto.aes_decrypt(in_ptr, in_len, out_ptr) -> int len (-1 fail)
+        else if (strcmp(member, "aes_decrypt") == 0 && strcmp(base, "crypto") == 0) {
+            emit(cg, "    ; crypto.aes_decrypt");
+            if (args->count >= 3) {
+                emit_path_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; in_ptr");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax        ; in_len");
+                emit_path_expr(cg, args->items[2]);
+                emit(cg, "    mov  r8,  rax        ; out_ptr");
+                emit(cg, "    mov  rcx, r12");
+                emit(cg, "    mov  rdx, r13");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_crypto_aes_decrypt");
                 emit(cg, "    add  rsp, 32");
             }
         }
@@ -4838,6 +4940,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_mem_imports(&cg);
     emit_file_imports(&cg);
     emit_audio_imports(&cg);
+    emit_crypto_imports(&cg);
     emit_simd_imports(&cg);
 
     // .text section.
@@ -4918,6 +5021,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_mem_runtime(&cg);
     emit_file_runtime(&cg);
     emit_audio_runtime(&cg);
+    emit_crypto_runtime(&cg);
     emit_mat_runtime(&cg);
     emit_simd_runtime(&cg);
     emit_mesh_runtime(&cg);
@@ -4943,6 +5047,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_mem_bss(&cg);
     emit_file_bss(&cg);
     emit_audio_bss(&cg);
+    emit_crypto_bss(&cg);
     emit_mat_bss(&cg);
     emit_simd_bss(&cg);
     emit_mesh_bss(&cg);

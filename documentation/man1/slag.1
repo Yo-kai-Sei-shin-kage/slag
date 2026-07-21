@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-07-11" "slag 0.13.5" "Slag Programming Language"
+.TH SLAG 1 "2026-07-21" "slag 0.15" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -14,8 +14,10 @@ source files directly into NASM x86-64 assembly for the
 object format. Compiled programs link against no C runtime; only
 .BR kernel32.dll ,
 .BR user32.dll ,
-.BR gdi32.dll ", and"
-.BR ws2_32.dll " (networking)"
+.BR gdi32.dll ,
+.BR ws2_32.dll " (networking),"
+.BR winmm.dll " (audio), and"
+.BR bcrypt.dll " (cryptography)"
 are imported, and only as needed by the features a given program uses.
 .PP
 Running
@@ -741,6 +743,24 @@ alive \(em not an error). A connection made via
 .BR net.bind()/net.accept()/net.listen()
 keeps its original blocking behavior and never returns \-2.
 .TP
+.B net.recv_buf_exact(ptr, n)
+Reassemble an exact
+.I n\c
+\-byte message. Bytes accumulate in an internal 4 KB buffer across calls;
+returns
+.I n
+only once the full message has arrived (copied to ptr, accumulator reset),
+.B \-2
+while still partial (call again next tick), or
+.B \-1
+on disconnect/error or when
+.I n
+exceeds the buffer. Does at most one non-blocking recv per call, so it never
+blocks a loop. Intended for framed/encrypted payloads whose exact length is
+known (e.g. a fixed-size length prefix, or a 72-byte
+.B crypto.dh_pubkey
+blob) that must be decrypted as a whole unit.
+.TP
 .B net.ack()
 Returns 1/0: did the last network operation succeed.
 .TP
@@ -775,6 +795,18 @@ disconnected, slot freed).
 .TP
 .BR net.server_send_buf(idx,\ ptr,\ len) ", " net.server_recv_buf(idx,\ ptr,\ maxlen)
 Host: per-client buffered send/receive, same \-2/\-1 contract as above.
+.TP
+.B net.server_recv_buf_exact(idx, ptr, n)
+Host: the per-client analogue of
+.BR net.recv_buf_exact ,
+with a separate 4 KB reassembly buffer per client slot. Returns
+.I n
+when a complete message has arrived,
+.B \-2
+while partial, or
+.B \-1
+on disconnect (slot freed, partial cleared). Non-blocking; safe to poll every
+tick from a lockstep server loop.
 .TP
 .B net.server_connected(idx)
 Host: returns 1/0, an active non-blocking check for one client slot.
@@ -815,6 +847,60 @@ typically using the ip/port from
 itself is host-only. Discovered servers are not removed just because
 they become full or gain a client; only a server that stops answering
 entirely is pruned, after about 6 seconds with no fresh reply.
+.SS Cryptography (ECDH + AES)
+Encrypted-P2P primitives backed by Windows CNG
+.RB ( bcrypt.dll ,
+linked with \-lbcrypt): ECDH P-256 key exchange and AES-256-CBC. These are
+pure primitives with no automatic dispatch \(em the script performs the
+handshake and wraps each payload manually, over either the single-peer
+.RB ( net.* )
+or multi-client
+.RB ( net.server_* )
+transport. Only one keypair and one derived session key are held at a time
+(one endpoint per process, matching the separate client/host model).
+.TP
+.B crypto.dh_keygen()
+Generate a fresh ephemeral ECDH P-256 keypair into the module slot (rotates
+out any prior keypair).
+.TP
+.B crypto.dh_pubkey(out_ptr)
+Export our public key (a 72-byte BCRYPT_ECCPUBLIC_BLOB) to out_ptr; returns
+the length (72). Send these raw bytes to the peer.
+.TP
+.B crypto.dh_derive(peer_pub_ptr, peer_pub_len)
+Import the peer's raw public-key bytes, run ECDH secret agreement against our
+keypair, and derive a 32-byte AES-256 session key (HASH KDF, SHA-256) into
+the module slot.
+.TP
+.B crypto.aes_encrypt(in_ptr, in_len, out_ptr)
+AES-256-CBC encrypt with PKCS7 padding. A fresh random 16-byte IV is
+generated per call and prepended to out_ptr; returns the total output length
+(16 + padded ciphertext). out_ptr must hold 16 + in_len rounded up to the
+next 16-byte block.
+.TP
+.B crypto.aes_decrypt(in_ptr, in_len, out_ptr)
+Decrypt a buffer produced by
+.BR crypto.aes_encrypt
+(16-byte IV prefix expected); returns the recovered plaintext length, or
+.B \-1
+on padding/decrypt failure.
+.PP
+Typical handshake over either transport:
+.PP
+.RS
+.nf
+crypto.dh_keygen();
+crypto.dh_pubkey(buf);            // send buf to peer
+crypto.dh_derive(peer_buf, 72);  // peer_buf received from wire
+// both sides now share the same AES-256 key
+n = crypto.aes_encrypt(msg, len, out);   // send out
+crypto.aes_decrypt(in, in_len, plain);   // from wire
+.fi
+.RE
+.PP
+Because TCP may fragment a send, receive framed ciphertext with
+.BR net.recv_buf_exact / net.server_recv_buf_exact
+so a message is only decrypted once complete.
 .SS Input event handlers
 Event handlers are declared with the
 .B on
@@ -887,17 +973,13 @@ currently functional:
 .IP \(bu 2
 Dynamic arrays
 .IP \(bu 2
-Encrypted peer-to-peer via Windows CNG (bcrypt) Diffie\-Hellman key
-exchange and AES (planned; the networking and memory primitives it
-depends on are in place)
-.IP \(bu 2
 A self-hosting compiler
 .RS
 .nf
 cd compiler
 gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
     window_runtime.c net_runtime.c server_runtime.c mem_runtime.c file_runtime.c audio_runtime.c \e
-    matrix_runtime.c simd_runtime.c mesh_runtime.c texture_runtime.c
+    matrix_runtime.c simd_runtime.c mesh_runtime.c texture_runtime.c crypto_runtime.c
 .fi
 .RE
 .SS Compiling and running a Slag program
@@ -906,9 +988,33 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe \e
-    -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -e _start
+    -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt -e _start
 .fi
 .RE
+.PP
+Each link flag maps to the runtime feature that requires it
+.RB ( \-nostdlib
+and
+.B \-e _start
+are mandatory; the rest are only needed if the program uses that feature):
+.TP
+.B \-lkernel32
+core process/memory/threads (always)
+.TP
+.B \-luser32
+window and input (window.*)
+.TP
+.B \-lgdi32
+pixel/text rendering (window.*, fill_triangle*)
+.TP
+.B \-lws2_32
+networking (net.*, net.server_*, net.discover_*)
+.TP
+.B \-lwinmm
+audio mixer (audio.*)
+.TP
+.B \-lbcrypt
+cryptography (crypto.*)
 .PP
 Add
 .B \-mwindows

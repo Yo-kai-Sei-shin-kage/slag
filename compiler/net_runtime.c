@@ -42,6 +42,8 @@ void emit_net_bss(Codegen *cg) {
     E("_net_keepalive:   resb 12    ; tcp_keepalive{onoff,time,interval} for the client connection");
     E("_net_keepalive_ret: resd 1  ; WSAIoctl's required (unused) bytes-returned out-param");
     E("_net_ioctl_arg:   resd 1     ; FIONBIO mode scratch (1 = non-blocking)");
+    E("_net_acc_buf:     resb 4096   ; reassembly buffer for net.recv_buf_exact (NET_ACC_BUF_SIZE)");
+    E("_net_acc_fill:    resq 1      ; bytes currently accumulated in _net_acc_buf");
 }
 
 // ----- runtime procs ----------------------------------------------------
@@ -418,6 +420,89 @@ void emit_net_runtime(Codegen *cg) {
     E("    mov  qword [_net_connected], 0");
     E("    mov  rax, -1");
     E(".nrcb_done:");
+    E("    mov  rsp, rbp");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
+    // _slag_net_recv_buf_exact(ptr=rcx, n=rdx) -> rax:
+    //   n   = a complete n-byte message is now in ptr (accumulator reset)
+    //   -2  = not all n bytes have arrived yet (still connected) -- poll
+    //         again next tick. NEVER blocks: at most one non-blocking recv
+    //         per call, so it cannot stall a client loop.
+    //   -1  = disconnect/error or n too large.
+    // Client analogue of _slag_server_recv_buf_exact: single connection
+    // socket, single accumulator (_net_acc_buf / _net_acc_fill).
+    E("; --- _slag_net_recv_buf_exact (rcx=ptr, rdx=n) -> rax ---");
+    E("_slag_net_recv_buf_exact:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    push rsi");
+    E("    push rdi");
+    E("    sub  rsp, 40               ; 4 pushes (even) -> need subamount = 8 (mod 16)");
+    E("    mov  rsi, rcx              ; dest ptr");
+    E("    mov  rdi, rdx              ; n (requested length)");
+    E("    cmp  rdi, 4096             ; NET_ACC_BUF_SIZE");
+    E("    jg   .nre_fail            ; message larger than the reassembly buffer");
+    E("    mov  rbx, [_net_acc_fill]  ; current fill");
+    E("    cmp  rbx, rdi");
+    E("    jge  .nre_complete");
+    E("    ; one non-blocking recv of up to (n - fill) bytes into acc_buf+fill");
+    E("    mov  rcx, [_net_conn_sock]");
+    E("    lea  rdx, [_net_acc_buf]");
+    E("    add  rdx, rbx              ; acc_buf + fill");
+    E("    mov  r8, rdi");
+    E("    sub  r8, rbx               ; want = n - fill");
+    E("    xor  r9, r9               ; flags = 0");
+    E("    call recv");
+    E("    movsxd rax, eax            ; sign-extend 32-bit recv() result");
+    E("    cmp  rax, 0");
+    E("    jg   .nre_advance");
+    E("    je   .nre_closed           ; recv()==0 -> peer gracefully closed");
+    E("    call WSAGetLastError");
+    E("    cmp  eax, 10035            ; WSAEWOULDBLOCK -- no data yet, still connected");
+    E("    je   .nre_pending");
+    E("    jmp  .nre_closed          ; any other error -> disconnect");
+    E(".nre_advance:");
+    E("    add  rbx, rax              ; fill += received");
+    E("    mov  [_net_acc_fill], rbx");
+    E("    cmp  rbx, rdi");
+    E("    jge  .nre_complete");
+    E(".nre_pending:");
+    E("    mov  qword [_net_last_ok], 1");
+    E("    mov  rax, -2");
+    E("    jmp  .nre_done");
+    E(".nre_complete:");
+    E("    ; copy n bytes from acc_buf to dest, reset fill");
+    E("    lea  r8, [_net_acc_buf]");
+    E("    xor  rax, rax");
+    E(".nre_cpy:");
+    E("    cmp  rax, rdi");
+    E("    jge  .nre_cpydone");
+    E("    mov  cl, [r8 + rax]");
+    E("    mov  [rsi + rax], cl");
+    E("    inc  rax");
+    E("    jmp  .nre_cpy");
+    E(".nre_cpydone:");
+    E("    mov  qword [_net_acc_fill], 0");
+    E("    mov  qword [_net_last_ok], 1");
+    E("    mov  rax, rdi              ; return n");
+    E("    jmp  .nre_done");
+    E(".nre_closed:");
+    E("    mov  qword [_net_last_ok], 0");
+    E("    mov  qword [_net_connected], 0");
+    E("    mov  qword [_net_acc_fill], 0   ; clear stale partial on disconnect");
+    E("    mov  rax, -1");
+    E("    jmp  .nre_done");
+    E(".nre_fail:");
+    E("    mov  qword [_net_last_ok], 0");
+    E("    mov  rax, -1");
+    E(".nre_done:");
+    E("    add  rsp, 40");
+    E("    pop  rdi");
+    E("    pop  rsi");
+    E("    pop  rbx");
     E("    mov  rsp, rbp");
     E("    pop  rbp");
     E("    ret");

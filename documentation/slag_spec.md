@@ -449,6 +449,8 @@ net.send(byte)           // send one byte
 net.recv()               // receive one byte -> int; see return contract below
 net.send_buf(ptr, len)   // send len bytes from a buffer, looping until done
 net.recv_buf(ptr, max)   // receive up to max bytes into a buffer -> count
+net.recv_buf_exact(ptr, n) // reassemble exactly n bytes across ticks ->
+                         // n (complete), -2 (partial, poll again), -1 (err)
 net.ack()                // -> 1/0: did the last network op succeed
 net.connected()          // -> 1/0: is the active connection still alive
 net.end()                // close sockets + WSACleanup
@@ -463,7 +465,16 @@ Multi-byte transfer pairs with the `mem.*` primitives: build a message with
 
 > **Note:** `net.recv_buf` performs a single `recv`, which over TCP may return
 > fewer bytes than requested. For length-delimited protocols, loop until the
-> expected byte count has been collected.
+> expected byte count has been collected, or use `net.recv_buf_exact`.
+
+**`net.recv_buf_exact(ptr, n)`** does the reassembly for you: bytes accumulate
+in an internal 4 KB buffer across calls, and it returns `n` only once the full
+message has arrived (copied to `ptr`, accumulator reset), `-2` while still
+partial (call again next tick), or `-1` on disconnect/error or when `n` exceeds
+the buffer. It performs at most one non-blocking `recv` per call, so it never
+blocks the loop. This is the intended way to receive a framed payload that must
+be processed as a whole unit — e.g. a fixed-size length prefix, or an encrypted
+message (see section 11C) that has to arrive complete before it can be decrypted.
 
 **Return contract for `net.recv()` / `net.recv_buf()`:** a connection
 established via `net.connect()` is non-blocking, so these can return three
@@ -508,6 +519,9 @@ net.server_recv(idx)          // -> byte, -2 (no data yet, still connected),
                               // or -1 (peer disconnected -- slot freed)
 net.server_send_buf(idx, ptr, len)
 net.server_recv_buf(idx, ptr, maxlen)  // same -2 / -1 contract as above
+net.server_recv_buf_exact(idx, ptr, n) // per-slot exact-n reassembly ->
+                              // n (complete), -2 (partial), -1 (err);
+                              // non-blocking, safe in a lockstep loop
 net.server_connected(idx)     // -> 1/0: active non-blocking check for one
                               // client slot (same semantics as net.connected())
 net.server_stop()             // close every client socket, the listener,
@@ -540,6 +554,49 @@ server becomes full or a client connects to it — only a server that stops
 answering queries entirely (fully offline) is pruned, after roughly 6 seconds
 with no fresh reply. A server merely at capacity keeps responding to queries
 normally and stays listed.
+
+---
+
+## 11C. Cryptography (ECDH + AES)
+
+Encrypted-P2P primitives backed by Windows CNG (`bcrypt.dll`, linked with
+`-lbcrypt`): ECDH P-256 key exchange and AES-256-CBC. They are pure primitives
+with **no** automatic dispatch — the script performs the handshake and wraps
+each payload itself, over either the single-peer (`net.*`) or multi-client
+(`net.server_*`) transport. Only one keypair and one derived session key are
+held at a time (one endpoint per process, matching the separate client/host
+model).
+
+```
+crypto.dh_keygen()                     // generate an ephemeral ECDH P-256
+                                       // keypair into the module slot
+crypto.dh_pubkey(out_ptr)              // export our public key (72-byte
+                                       // BCRYPT_ECCPUBLIC_BLOB) -> len (72)
+crypto.dh_derive(peer_ptr, peer_len)   // import peer pubkey, ECDH agreement,
+                                       // derive 32-byte AES-256 key (HASH
+                                       // KDF, SHA-256) into the module slot
+crypto.aes_encrypt(in, in_len, out)    // AES-256-CBC + PKCS7; fresh 16-byte
+                                       // IV prepended to out -> total len
+                                       // (16 + padded ciphertext)
+crypto.aes_decrypt(in, in_len, out)    // expects the 16-byte IV prefix ->
+                                       // plaintext len, or -1 on failure
+```
+
+`out_ptr` for `crypto.aes_encrypt` must hold `16 + in_len` rounded up to the
+next 16-byte block. A typical handshake, identical on either transport:
+
+```
+crypto.dh_keygen();
+crypto.dh_pubkey(buf);            // send buf (72 bytes) to the peer
+crypto.dh_derive(peer_buf, 72);  // peer_buf received from the wire
+// both sides now hold the same AES-256 key
+n = crypto.aes_encrypt(msg, len, out);   // send out over the wire
+crypto.aes_decrypt(in, in_len, plain);   // decrypt what arrives
+```
+
+Because TCP may fragment a send, receive framed ciphertext with
+`net.recv_buf_exact` / `net.server_recv_buf_exact` (section 11A/11B) so a
+message is only decrypted once it has fully arrived.
 
 ---
 
@@ -1114,17 +1171,24 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `net.send(byte)` / `net.recv()` | Send / receive a single byte                       |
 | `net.send_buf(ptr,len)`         | Send len bytes from a buffer (loops until done)    |
 | `net.recv_buf(ptr,max)`         | Receive up to max bytes -> count                   |
+| `net.recv_buf_exact(ptr,n)`     | Reassemble exactly n bytes -> n / -2 partial / -1 err (non-blocking) |
 | `net.ack()`                     | 1/0: did the last network op succeed               |
 | `net.connected()`               | 1/0: is the active connection alive (active check) |
 | `net.server_start(port,name)`   | Host: TCP listen + UDP discovery listener          |
 | `net.server_accept()`           | Host: -> client slot idx or -1 (non-blocking)      |
 | `net.server_send/recv(idx,...)` | Host: per-client byte send/recv                    |
 | `net.server_send/recv_buf(idx,...)` | Host: per-client buffered send/recv            |
+| `net.server_recv_buf_exact(idx,ptr,n)` | Host: per-slot exact-n reassembly -> n / -2 / -1 (non-blocking) |
 | `net.server_connected(idx)`     | Host: 1/0 active check for one client slot         |
 | `net.server_stop()`             | Host: close all client sockets + listener + UDP    |
 | `net.discover_send()`          | Client: fire a UDP LAN discovery broadcast          |
 | `net.discover_poll()`           | Client: -> discovered slot idx or -1               |
 | `net.discover_count/ip/port/name/max/clients(idx)` | Client: read the discovered-server list |
+| `crypto.dh_keygen()`            | Generate an ephemeral ECDH P-256 keypair (bcrypt)  |
+| `crypto.dh_pubkey(out)`         | Export our public key (72-byte blob) -> len        |
+| `crypto.dh_derive(peer,len)`    | ECDH agreement + derive AES-256 key (HASH/SHA-256) |
+| `crypto.aes_encrypt(in,len,out)` | AES-256-CBC encrypt, IV prepended -> total len    |
+| `crypto.aes_decrypt(in,len,out)` | AES-256-CBC decrypt -> plaintext len (-1 fail)    |
 
 **Audio known limitations:** no pause/resume (`audio.stop` always resets position to 0), each loaded sound has exactly one playback slot (overlapping the same sound with itself requires separate handles), no pitch/rate variation, and `audio.load` reads the entire file into memory (no streaming).
 
@@ -1243,8 +1307,7 @@ function main() {
 | 0.13.4  | Bilinear texture filtering (4-tap weighted average) for `fill_triangle_persp`/`fill_triangle_pcolor` | ✅ Complete |
 | 0.13.5  | `file.make`/`file.rmdir`; file.* path args + `audio.load` accept runtime byte-buffer pointers (not just str literals); `window.textbuf` (draw a runtime byte buffer as text); keyboard handlers deliver translated characters (compare against char/named-key literals like `"a"`/`"esc"`/`"left"`); compiler emits a single `compiled successfully` line. **Bug fix:** `emit_user_call` 16-byte stack-alignment fix for odd-argument-count (1 or 3) user calls that reach a Win32 API | ✅ Complete |
 | 0.14    | Full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net) | 🔲 Planned  |
-| 0.15    | Distance fog                                                | 🔲 Planned  |
-| 0.16    | Encrypted P2P: bcrypt (CNG) Diffie-Hellman key exchange + AES | 🔲 Planned  |
+| 0.15    | Encrypted P2P: ECDH P-256 key exchange + AES-256-CBC via CNG (`crypto.*`); non-blocking exact-length message reassembly (`net.recv_buf_exact`/`net.server_recv_buf_exact`) for framed/encrypted payloads. **Bug fix:** unescaped `%` in the window runtime's shifted-key table that broke `cg_emit`'s `vfprintf` | ✅ Complete |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ### PS2-Era Graphics Target (60fps)
@@ -1267,9 +1330,9 @@ PS2-era software rendering at 60fps. Current pipeline status:
 
 **Planned:**
 - Near-plane triangle clipping (Sutherland-Hodgman) — 0.14
-- Distance fog as a built-in (z-depth blend to fog color; currently done in Slag script, e.g. the terrain demo) — 0.15
+- Fog, lighting, and shadows are handled per-vertex in Slag script via `fill_triangle_pcolor` color modulation (e.g. the terrain demo); no built-in fog stage planned — keeps the rasterizer's hot loop free of per-pixel special-casing
 - SIMD-vectorized rasterizer inner loops with auto-dispatch on detected CPU features
 
 ---
 
-*Slag Language Specification v0.13.5 — Subject to revision*
+*Slag Language Specification v0.15 — Subject to revision*
