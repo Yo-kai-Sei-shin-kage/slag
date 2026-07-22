@@ -627,16 +627,19 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    test eax, eax");
     E("    jnz  .pl_fail");
 
-    // Rasterizer state: solid fill, no culling (geometry is authored for the
-    // CPU rasterizer winding, so disable D3D's default back-face cull).
-    // RASTERIZER_DESC(40) at [rsp+0x150]: FillMode@0=SOLID(3), CullMode@4=NONE(1),
-    // FrontCCW@8=0, DepthClipEnable@24=1, rest 0.
+    // Rasterizer state: solid fill, back-face cull matching the CPU rasterizer.
+    // The CPU pcolor cull keeps CCW-in-screen (y-down) triangles; the VS flips Y
+    // for NDC, reversing winding to CW in clip space, so front=CW here
+    // (FrontCounterClockwise=TRUE + CULL_BACK culls the same faces the CPU does).
+    // RASTERIZER_DESC(40) at [rsp+0x150]: FillMode@0=SOLID(3), CullMode@4=BACK(3),
+    // FrontCCW@8=1, DepthClipEnable@24=1, rest 0.
     E("    lea  rdi, [rsp+0x150]");
     E("    xor  eax, eax");
     E("    mov  ecx, 10");                   // 40 bytes / 4
     E("    rep  stosd");
     E("    mov  dword [rsp+0x150+0], 3");    // FILL_SOLID
-    E("    mov  dword [rsp+0x150+4], 1");    // CULL_NONE
+    E("    mov  dword [rsp+0x150+4], 3");    // CULL_BACK
+    E("    mov  dword [rsp+0x150+8], 1");    // FrontCounterClockwise = TRUE
     E("    mov  dword [rsp+0x150+24], 1");   // DepthClipEnable
     E("    mov  rcx, rbx");
     E("    mov  rax, [rbx]");
