@@ -38,6 +38,7 @@ void emit_gpu_bss(Codegen *cg) {
     E("_gpu_raster:    resq 1");   // ID3D11RasterizerState* (CULL_NONE)
     E("_gpu_pipeline:  resq 1");   // 1 once all pipeline objects created
     E("_gpu_stage:     resq 1");   // heap buffer of staged raw pcolor verts
+    E("_gpu_convbuf:   resq 1");   // cached scratch for converted float verts (bulk-copied to WC vbuf)
     E("_gpu_stage_cnt: resq 1");   // number of triangles staged this frame
     E("_gpu_stage_tex: resq 1");   // tex_ptr of last staged triangle (FTEX pixels)
     E("_gpu_stage_texw: resq 1");  // tex_w of staged triangles
@@ -49,17 +50,14 @@ void emit_gpu_bss(Codegen *cg) {
 
 // _slag_gpu_detect() -> rax = _gpu_vendor (1 Intel / 2 AMD / 0 none).
 // Enumerates adapters, reads DXGI_ADAPTER_DESC1, and selects the first
-// adapter that is (a) a known vendor and (b) integrated -- distinguished
-// from discrete by DedicatedVideoMemory below 256MB (iGPUs use shared
-// system memory). Discrete cards are skipped. Mirrors the SIMD-detect
-// pattern: run once, populate read-only globals, dispatch by vendor code.
+// adapter whose VendorId is a known iGPU vendor (Intel 0x8086 / AMD 0x1002).
+// Discrete cards (e.g. NVIDIA 0x10de) fall through as unknown vendor and are
+// skipped. Mirrors the SIMD-detect pattern: run once, populate read-only
+// globals, dispatch by vendor code.
 void emit_gpu_runtime(Codegen *cg) {
-    // DXGI_ADAPTER_DESC1 is 312 (0x138) bytes; VendorId at +256,
-    // DedicatedVideoMemory at +272 (verified against dxgi.h).
+    // DXGI_ADAPTER_DESC1 is 312 (0x138) bytes; VendorId at +256.
     E("; --- DXGI_ADAPTER_DESC1 field offsets ---");
     E("GPU_DESC_VENDORID    equ 256");
-    E("GPU_DESC_DEDVIDMEM   equ 272");   // SIZE_T DedicatedVideoMemory
-    E("GPU_IGPU_VRAM_MAX    equ 0x10000000  ; 256MB: above this => discrete");
     E("");
     // Frame layout (below 4 pushes): [rsp+0x00..0x1F] shadow space,
     // [rsp+0x20..0x2F] IID, [rsp+0x30..0x167] desc buffer (312 bytes).
@@ -103,12 +101,9 @@ void emit_gpu_runtime(Codegen *cg) {
     E("    lea  rdx, [rsp+0x30]");
     E("    call [rax + 0x50]         ; IDXGIAdapter1::GetDesc1");
 
-    // Reject discrete: DedicatedVideoMemory >= 256MB means not an iGPU.
-    E("    mov  rax, [rsp+0x30+GPU_DESC_DEDVIDMEM]");
-    E("    cmp  rax, GPU_IGPU_VRAM_MAX");
-    E("    jae  .gpu_next");
-
-    // Classify vendor.
+    // Classify vendor (Intel/AMD iGPU accepted; all else -> discrete, skip).
+    // No VRAM gate: AMD APUs report a UMA carve-out (e.g. 512MB) as
+    // DedicatedVideoMemory, so a ceiling would wrongly reject the Vega.
     E("    mov  eax, [rsp+0x30+GPU_DESC_VENDORID]");
     E("    cmp  eax, 0x8086          ; Intel");
     E("    je   .gpu_intel");
@@ -326,17 +321,17 @@ void emit_gpu_data(Codegen *cg) {
     E("_gpu_sem_tex:   db 84,69,88,67,79,79,82,68,0   ; \"TEXCOORD\"");
     E("_gpu_sem_col:   db 67,79,76,79,82,0            ; \"COLOR\"");
     E("align 16");
-    E("_gpu_vs_blob:  ; 1040 bytes DXBC");
-    E("    db 68,88,66,67,145,34,12,156,86,190,52,235,51,204,144,248");
-    E("    db 135,216,234,16,1,0,0,0,16,4,0,0,5,0,0,0");
+    E("_gpu_vs_blob:  ; 1016 bytes DXBC (o.pos.z = 0.5 -> in-range clip depth; no DSV bound so depth is CPU-ordered)");
+    E("    db 68,88,66,67,197,155,242,79,103,20,64,116,213,142,196,92");
+    E("    db 136,116,212,244,1,0,0,0,248,3,0,0,5,0,0,0");
     E("    db 52,0,0,0,104,1,0,0,216,1,0,0,76,2,0,0");
-    E("    db 116,3,0,0,82,68,69,70,44,1,0,0,1,0,0,0");
+    E("    db 92,3,0,0,82,68,69,70,44,1,0,0,1,0,0,0");
     E("    db 96,0,0,0,1,0,0,0,60,0,0,0,0,5,254,255");
     E("    db 0,1,0,0,4,1,0,0,82,68,49,49,60,0,0,0");
     E("    db 24,0,0,0,32,0,0,0,40,0,0,0,36,0,0,0");
     E("    db 12,0,0,0,0,0,0,0,92,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 1,0,0,0,1,0,0,0,67,66,0,171,92,0,0,0");
+    E("    db 1,0,0,0,1,0,0,0,67,0,171,171,92,0,0,0");
     E("    db 2,0,0,0,120,0,0,0,16,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,200,0,0,0,0,0,0,0,8,0,0,0");
     E("    db 2,0,0,0,220,0,0,0,0,0,0,0,255,255,255,255");
@@ -351,7 +346,7 @@ void emit_gpu_data(Codegen *cg) {
     E("    db 83,76,32,83,104,97,100,101,114,32,67,111,109,112,105,108");
     E("    db 101,114,32,49,48,46,49,0,73,83,71,78,104,0,0,0");
     E("    db 3,0,0,0,8,0,0,0,80,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,3,0,0,0,0,0,0,0,7,7,0,0");
+    E("    db 0,0,0,0,3,0,0,0,0,0,0,0,7,3,0,0");
     E("    db 89,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0");
     E("    db 1,0,0,0,3,3,0,0,98,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,3,0,0,0,2,0,0,0,7,7,0,0");
@@ -364,35 +359,34 @@ void emit_gpu_data(Codegen *cg) {
     E("    db 0,0,0,0,3,0,0,0,2,0,0,0,7,8,0,0");
     E("    db 83,86,95,80,79,83,73,84,73,79,78,0,84,69,88,67");
     E("    db 79,79,82,68,0,67,79,76,79,82,0,171,83,72,69,88");
-    E("    db 32,1,0,0,80,0,1,0,72,0,0,0,106,8,0,1");
+    E("    db 8,1,0,0,80,0,1,0,66,0,0,0,106,8,0,1");
     E("    db 89,0,0,4,70,142,32,0,0,0,0,0,1,0,0,0");
-    E("    db 95,0,0,3,114,16,16,0,0,0,0,0,95,0,0,3");
+    E("    db 95,0,0,3,50,16,16,0,0,0,0,0,95,0,0,3");
     E("    db 50,16,16,0,1,0,0,0,95,0,0,3,114,16,16,0");
     E("    db 2,0,0,0,103,0,0,4,242,32,16,0,0,0,0,0");
     E("    db 1,0,0,0,101,0,0,3,50,32,16,0,1,0,0,0");
-    E("    db 101,0,0,3,114,32,16,0,2,0,0,0,104,0,0,2");
-    E("    db 1,0,0,0,56,0,0,8,50,0,16,0,0,0,0,0");
-    E("    db 70,16,16,0,0,0,0,0,70,128,32,0,0,0,0,0");
-    E("    db 0,0,0,0,50,0,0,15,50,32,16,0,0,0,0,0");
-    E("    db 70,0,16,0,0,0,0,0,2,64,0,0,0,0,128,63");
-    E("    db 0,0,128,191,0,0,0,0,0,0,0,0,2,64,0,0");
-    E("    db 0,0,128,191,0,0,128,63,0,0,0,0,0,0,0,0");
-    E("    db 54,0,0,5,66,32,16,0,0,0,0,0,42,16,16,0");
-    E("    db 0,0,0,0,54,0,0,5,130,32,16,0,0,0,0,0");
-    E("    db 1,64,0,0,0,0,128,63,54,0,0,5,50,32,16,0");
-    E("    db 1,0,0,0,70,16,16,0,1,0,0,0,54,0,0,5");
-    E("    db 114,32,16,0,2,0,0,0,70,18,16,0,2,0,0,0");
-    E("    db 62,0,0,1,83,84,65,84,148,0,0,0,7,0,0,0");
-    E("    db 1,0,0,0,0,0,0,0,6,0,0,0,2,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0");
+    E("    db 101,0,0,3,114,32,16,0,2,0,0,0,50,0,0,10");
+    E("    db 18,32,16,0,0,0,0,0,10,16,16,0,0,0,0,0");
+    E("    db 10,128,32,0,0,0,0,0,0,0,0,0,1,64,0,0");
+    E("    db 0,0,128,191,50,0,0,11,34,32,16,0,0,0,0,0");
+    E("    db 26,16,16,128,65,0,0,0,0,0,0,0,26,128,32,0");
+    E("    db 0,0,0,0,0,0,0,0,1,64,0,0,0,0,128,63");
+    E("    db 54,0,0,8,194,32,16,0,0,0,0,0,2,64,0,0");
+    E("    db 0,0,0,0,0,0,0,0,0,0,0,63,0,0,128,63");
+    E("    db 54,0,0,5,50,32,16,0,1,0,0,0,70,16,16,0");
+    E("    db 1,0,0,0,54,0,0,5,114,32,16,0,2,0,0,0");
+    E("    db 70,18,16,0,2,0,0,0,62,0,0,1,83,84,65,84");
+    E("    db 148,0,0,0,6,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 6,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("_gpu_vs_blob_len equ 1040");
+    E("    db 0,0,0,0,0,0,0,0");
+    E("_gpu_vs_blob_len equ 1016");
     E("align 16");
     E("_gpu_ps_blob:  ; 744 bytes DXBC");
     E("    db 68,88,66,67,95,133,16,255,50,221,11,173,49,44,13,208");
@@ -546,8 +540,8 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    jnz  .pl_fail");
 
     // Dynamic vertex buffer: sized for the full stage batch
-    // (GPU_STAGE_CAP tris * 3 verts * 32B = 4096*96 = 393216 bytes).
-    E("    mov  dword [rsp+0x100+BUFDESC_BYTEWIDTH], 393216");
+    // (GPU_STAGE_CAP tris * 3 verts * 32B = 131072*96 = 12582912 bytes).
+    E("    mov  dword [rsp+0x100+BUFDESC_BYTEWIDTH], 12582912");
     E("    mov  dword [rsp+0x100+BUFDESC_USAGE], USAGE_DYNAMIC");
     E("    mov  dword [rsp+0x100+BUFDESC_BIND], BIND_VERTEX");
     E("    mov  dword [rsp+0x100+BUFDESC_CPUACCESS], D3DCPU_WRITE");
@@ -666,7 +660,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
 // _slag_gpu_stage_init: HeapAlloc the per-frame vertex stage buffer once.
 static void emit_gpu_stage_init(Codegen *cg) {
     E("GPU_STAGE_TRI    equ 192");        // raw bytes per staged triangle
-    E("GPU_STAGE_CAP    equ 4096");       // max triangles per frame
+    E("GPU_STAGE_CAP    equ 131072");     // max triangles per frame
     E("GPU_VTX_STRIDE   equ 32");         // float vertex: pos3 + uv2 + col3
     E("MAP_WR_DISCARD   equ 4");
     E("TOPOLOGY_TRILIST equ 4");
@@ -682,6 +676,13 @@ static void emit_gpu_stage_init(Codegen *cg) {
     E("    mov  r8, GPU_STAGE_CAP * GPU_STAGE_TRI");
     E("    call HeapAlloc");
     E("    mov  [_gpu_stage], rax");
+    E("    ; cached scratch for converted float verts (cap tris * 3 * 32B)");
+    E("    call GetProcessHeap");
+    E("    mov  rcx, rax");
+    E("    xor  edx, edx");
+    E("    mov  r8, GPU_STAGE_CAP * GPU_VTX_STRIDE * 3");
+    E("    call HeapAlloc");
+    E("    mov  [_gpu_convbuf], rax");
     E("    add  rsp, 40");
     E(".si_done:");
     E("    ret");
@@ -756,16 +757,26 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    test eax, eax");
     E("    jnz  .pf_ret");
 
-    E("    mov  rdi, [rsp+0x40]        ; mapped.pData (write cursor)");
+    E("    mov  rdi, [_gpu_convbuf]    ; convert into CACHED scratch, not WC map");
     E("    mov  rsi, [_gpu_stage]");
     E("    mov  r13, r14");
     E("    imul r13, 3                 ; vertex count = ntri*3");
+    // Precompute reciprocals once: 1/texw, 1/texh, 1/255. The per-vertex
+    // divss (3x/vertex, ~14cy each) becomes mulss (~4cy), ~3x cheaper.
+    E("    mov  eax, 1");
+    E("    cvtsi2ss xmm2, eax          ; 1.0");
     E("    mov  eax, [_gpu_stage_texw]");
-    E("    cvtsi2ss xmm6, eax          ; texw");
+    E("    cvtsi2ss xmm0, eax");
+    E("    movss xmm6, xmm2");
+    E("    divss xmm6, xmm0            ; xmm6 = 1/texw");
     E("    mov  eax, [_gpu_stage_texh]");
-    E("    cvtsi2ss xmm7, eax          ; texh");
+    E("    cvtsi2ss xmm0, eax");
+    E("    movss xmm7, xmm2");
+    E("    divss xmm7, xmm0            ; xmm7 = 1/texh");
     E("    mov  eax, 255");
-    E("    cvtsi2ss xmm4, eax          ; 255.0");
+    E("    cvtsi2ss xmm0, eax");
+    E("    movss xmm4, xmm2");
+    E("    divss xmm4, xmm0            ; xmm4 = 1/255");
     E("    xor  r12, r12               ; vertex index");
     E(".pf_conv:");
     E("    mov  rcx, r12");
@@ -778,24 +789,33 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    cvtsi2ss xmm0, qword [r10+16]");
     E("    movss [rdi+8], xmm0");
     E("    cvtsi2ss xmm0, qword [r10+24]");
-    E("    divss xmm0, xmm6");
+    E("    mulss xmm0, xmm6");
     E("    movss [rdi+12], xmm0");
     E("    cvtsi2ss xmm0, qword [r10+32]");
-    E("    divss xmm0, xmm7");
+    E("    mulss xmm0, xmm7");
     E("    movss [rdi+16], xmm0");
     E("    cvtsi2ss xmm0, qword [r10+40]");
-    E("    divss xmm0, xmm4");
+    E("    mulss xmm0, xmm4");
     E("    movss [rdi+20], xmm0");
     E("    cvtsi2ss xmm0, qword [r10+48]");
-    E("    divss xmm0, xmm4");
+    E("    mulss xmm0, xmm4");
     E("    movss [rdi+24], xmm0");
     E("    cvtsi2ss xmm0, qword [r10+56]");
-    E("    divss xmm0, xmm4");
+    E("    mulss xmm0, xmm4");
     E("    movss [rdi+28], xmm0");
     E("    add  rdi, GPU_VTX_STRIDE");
     E("    inc  r12");
     E("    cmp  r12, r13");
     E("    jl   .pf_conv");
+
+    // Bulk sequential copy of the converted verts into the WC mapped buffer.
+    // (Scattered per-field movss into write-combined memory is pathologically
+    // slow; a single streaming rep movsq is orders of magnitude faster.)
+    E("    mov  rsi, [_gpu_convbuf]");
+    E("    mov  rdi, [rsp+0x40]        ; mapped.pData");
+    E("    mov  rcx, r13");
+    E("    shl  rcx, 2                 ; qwords = verts * 32B / 8 = verts*4");
+    E("    rep  movsq");
 
     // Unmap vertex buffer
     E("    mov  rcx, r15");

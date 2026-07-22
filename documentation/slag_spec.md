@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.15.1**
+**Version 0.15.2**
 
 ---
 
@@ -1063,8 +1063,43 @@ local int m = tex.marble(x, y, freq, seed);    // marble veins
 
 - NASM format: `win64`
 - PE subsystem: `console`
-- Imports: `kernel32.dll`, `user32.dll`, `gdi32.dll`
 - No CRT linkage
+
+#### Link Libraries
+
+Every Slag executable links the following libraries (see `slagrun` / the
+`makefile`'s `LDLIBS`):
+
+```
+-lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt -ldxgi -ld3d11
+```
+
+Each maps to a runtime subsystem:
+
+| Flag(s)              | Runtime / builtins                              | DLL(s)                 |
+|----------------------|-------------------------------------------------|------------------------|
+| `-lkernel32`         | Core: process, heap (`mem.*`), threads, timing  | `kernel32.dll`         |
+| `-luser32 -lgdi32`   | Windowing/graphics: `window.*`, `pixel`, `fill_triangle*`, `zbuffer.*`, input events | `user32.dll`, `gdi32.dll` |
+| `-lws2_32`           | Networking: `net.*`, `server.*`, LAN discovery  | `ws2_32.dll`           |
+| `-lwinmm`            | Audio mixer: `audio.*`                           | `winmm.dll`            |
+| `-lbcrypt`           | Cryptography: `crypto.*` (CNG ECDH/AES)          | `bcrypt.dll`           |
+| `-ldxgi -ld3d11`     | iGPU dispatch: `gpu.*` (Direct3D 11 / DXGI)      | `dxgi.dll`, `d3d11.dll`|
+
+**All of these flags are currently required for every program**, regardless of
+which builtins it uses. The compiler emits every runtime — and its `extern`
+import declarations — into every program's assembly, so omitting any flag
+leaves those imports unresolved and the link fails. The mapping above is a
+reference for what each flag provides; it is not (yet) a list of flags that can
+be trimmed per program. (A future build that emits runtimes on demand would
+make trimming safe; until then, link all eight.)
+
+Note: `dxgi.dll` and `d3d11.dll` ship with Windows, so no runtime install is
+needed by end users. The GPU runtime's vertex/pixel shaders are pre-compiled to
+DXBC bytecode and embedded directly in `gpu_runtime.c` as byte arrays, then
+emitted into every program's assembly and handed to D3D11 as raw bytecode — so
+neither building the compiler nor running a compiled program needs `fxc.exe`.
+`fxc.exe` (from the Windows SDK) is required only if a developer edits the HLSL
+shader source and regenerates those embedded DXBC blobs.
 
 ### 15.3 Self-Hosting Target
 
@@ -1337,6 +1372,7 @@ function main() {
 | 0.14    | Full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net) | 🔲 Planned  |
 | 0.15    | Encrypted P2P: ECDH P-256 key exchange + AES-256-CBC via CNG (`crypto.*`); non-blocking exact-length message reassembly (`net.recv_buf_exact`/`net.server_recv_buf_exact`) for framed/encrypted payloads. **Bug fix:** unescaped `%` in the window runtime's shifted-key table that broke `cg_emit`'s `vfprintf` | ✅ Complete |
 | 0.15.1  | File-scope `on` handlers (declarable at top level, not only inside a function body); key comparison against a global `str[]` element at a compile-time constant index (`key == keys[0]`) folds to the key code, with an unrecognized name now a compile-time error | ✅ Complete |
+| 0.15.2  | iGPU auto-dispatch for `fill_triangle_pcolor` (D3D11/DXGI, Intel/AMD auto-detect via `gpu.*`); `window.set_title` for live title-bar updates. **PS2-era triangle throughput reached**: ~9.1M tris/sec on an AMD Vega 8 iGPU (100k `pcolor` tris/frame @ ~91 FPS). **Bug fix:** GPU vertex convert wrote scattered stores into write-combined mapped memory (pathologically slow); now converts into a cached scratch buffer and bulk-copies via `rep movsq` | ✅ Complete |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ### PS2-Era Graphics Target (60fps)
@@ -1353,15 +1389,22 @@ PS2-era software rendering at 60fps. Current pipeline status:
 **Performance (complete):**
 - Multi-threaded rasterization is fully implemented: `fill_triangle*` calls enqueue into a deferred queue and are drained at `window.flush()` across a persistent worker pool, split into horizontal bands (one per worker thread; worker count scales with CPU cores). Batches below `FT_POOL_THRESHOLD` draw sequentially to avoid wake/wait overhead.
 - SIMD auto-dispatch (AVX2): `fill_triangle_pcolor` — the primary workhorse fill (perspective-correct texturing + per-vertex color, used for fog/lighting/shadows) — has an AVX2 SoA fast path selected at runtime via `cpu.simd_detect`/`cpu.has_avx2`, falling back to scalar when unavailable. This is deliberately scoped to `pcolor` only; the other `fill_triangle*` variants remain scalar by design and are not planned to get SIMD paths.
+- iGPU auto-dispatch (D3D11): `fill_triangle_pcolor` transparently offloads to an integrated GPU (Intel/AMD, auto-detected via DXGI) when `gpu.init()` has created a device/pipeline. Triangles stage each frame into a batch, convert to the pipeline vertex format, and draw in one call; when no iGPU device is live it falls through to the CPU rasterizer unchanged. Scoped to `pcolor` only. Note: the GPU present replaces the window surface, so this path suits programs that render entirely through `pcolor`, not GDI-composited UIs (`window.text`/`fill_quad`).
 - Uncapped presentation (no frame-rate limiting; `sleep(ms)` available for pacing).
 
-**Performance target:**
-- 1,000,000 polygons per frame at 1920x1080 (native 1080p), sub-16ms (60fps), via the multi-threaded rasterizer plus the AVX2 `fill_triangle_pcolor` fast path.
+**Measured throughput (PS2-era target reached):**
+- iGPU path (AMD Vega 8): 100,000 `fill_triangle_pcolor` triangles/frame at ~91 FPS (~9.1M tris/sec) in an 800x640 window; 50,000/frame at ~126 FPS.
+- CPU path (multi-threaded + AVX2): 100,000/frame at ~35 FPS (~3.5M tris/sec).
+- This places the iGPU path in PS2's real-world in-game triangle range (~3-15M tris/sec) and the pure-CPU path at Dreamcast-class throughput. Both sit below PS2's ~20M rated peak.
+
+**Remaining performance target:**
+- 1,000,000 polygons per frame at 1920x1080 (native 1080p), sub-16ms (60fps). Not yet reached; the current iGPU submission path (stage + convert) is single-threaded and is the next optimization lever (thread the convert across the worker pool; the CPU rasterizer is already multi-threaded).
 
 **Planned:**
 - Near-plane triangle clipping (Sutherland-Hodgman) — 0.14
+- Multi-threaded iGPU submission: thread the per-frame stage + vertex convert across the worker pool (the CPU rasterizer already is; the GPU feed is not), to lift the single-threaded submission ceiling toward the 1M-poly target
 - Fog, lighting, and shadows are handled per-vertex in Slag script via `fill_triangle_pcolor` color modulation (e.g. the terrain demo); no built-in fog stage planned — keeps the rasterizer's hot loop free of per-pixel special-casing
 
 ---
 
-*Slag Language Specification v0.15 — Subject to revision*
+*Slag Language Specification v0.15.2 — Subject to revision*

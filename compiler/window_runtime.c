@@ -5042,6 +5042,31 @@ static void emit_window_utils(Codegen *cg) {
     E("    ret");
     E("");
 
+    // _slag_window_set_title(rcx=str ptr) - SetWindowTextA on the live HWND
+    E("; --- _slag_window_set_title(rcx=str ptr) ---");
+    E("_slag_window_set_title:");
+    E("    push rbp");
+    E("    mov  rbp, rsp");
+    E("    push rbx");
+    E("    push rsi");
+    E("    sub  rsp, 32");
+    E("    mov  rsi, rcx           ; save str ptr");
+    E("    mov  rcx, [_window_tls_index]");
+    E("    call TlsGetValue");
+    E("    mov  rbx, rax");
+    E("    test rbx, rbx");
+    E("    jz   .st_done");
+    E("    mov  rcx, [rbx + WSTATE_HWND]");
+    E("    mov  rdx, rsi           ; lpString (null-terminated)");
+    E("    call SetWindowTextA");
+    E(".st_done:");
+    E("    add  rsp, 32");
+    E("    pop  rsi");
+    E("    pop  rbx");
+    E("    pop  rbp");
+    E("    ret");
+    E("");
+
     // _slag_window_clear(r, g, b) - clear DIB buffer to solid color
     E("; --- _slag_window_clear(rcx=r, rdx=g, r8=b) ---");
     E("_slag_window_clear:");
@@ -7331,6 +7356,7 @@ void emit_window_imports(Codegen *cg) {
     E("extern PostQuitMessage");
     E("extern PostMessageA");
     E("extern SendMessageA");
+    E("extern SetWindowTextA");
     E("extern LoadCursorA");
     E("extern DestroyWindow");
     E("extern Sleep");

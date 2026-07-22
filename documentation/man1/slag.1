@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-07-21" "slag 0.15" "Slag Programming Language"
+.TH SLAG 1 "2026-07-22" "slag 0.15.2" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -242,6 +242,20 @@ Returns the current window client height in pixels as an
 .BR int .
 It tracks the live size, so it reflects user resizes.
 .TP
+.BI window.set_title( ptr )
+Update the window's title-bar text at run time via
+.BR SetWindowTextA .
+.I ptr
+is an integer pointer to a null-terminated byte buffer (built with
+.BR mem.alloc / mem.poke8 ,
+or a
+.B str
+global whose first field is its pointer). Because the title bar is OS
+non-client area, it updates even while an iGPU swapchain owns the client
+surface (unlike
+.BR window.text ,
+which draws into the DIB).
+.TP
 .BI window.clear( r , " g" , " b" )
 Fill the entire DIB framebuffer with a solid color via a single
 .B rep stosd
@@ -357,6 +371,50 @@ On CPUs reporting AVX2 (see cpu.has_avx2()) the inner loop automatically
 dispatches to an 8-pixel-wide SoA kernel for roughly 2x throughput;
 otherwise it uses a single-pixel SSE2 path. The dispatch is transparent
 to callers.
+.PP
+.B fill_triangle_pcolor
+additionally supports optional integrated-GPU offload (Direct3D 11). After
+.B gpu.init()
+brings up a device+pipeline on a detected iGPU, each
+.B fill_triangle_pcolor
+call stages its triangle for a batched GPU draw at
+.BR window.flush() ;
+with no live device it falls through to the CPU rasterizer unchanged. The
+GPU present replaces the window's client surface, so this path suits programs
+that render entirely through
+.BR fill_triangle_pcolor ,
+not GDI-composited UIs
+.RB ( window.text / window.clear -drawn
+overlays are not shown while the GPU path is active).
+.SS Integrated-GPU dispatch
+Optional Direct3D 11 offload for
+.BR fill_triangle_pcolor ,
+auto-detecting an Intel or AMD integrated GPU via DXGI. Requires linking
+.B \-ldxgi
+and
+.BR \-ld3d11 .
+All four return an
+.BR int .
+.TP
+.B gpu.detect()
+Enumerate DXGI adapters and classify the integrated GPU: returns 2 (AMD),
+1 (Intel), or 0 (none found). Does not create a device.
+.TP
+.B gpu.init()
+Create the D3D11 device, swapchain, and pcolor pipeline bound to the open
+window. Returns 1 on success (device live), 0 on failure. Must be called
+after
+.BR window.open() .
+On failure,
+.B fill_triangle_pcolor
+transparently uses the CPU path.
+.TP
+.B gpu.ready()
+Returns 1 if the D3D11 device+swapchain are live, else 0.
+.TP
+.B gpu.pipeline()
+Returns 1 if the pcolor pipeline (shaders, buffers, texture, sampler) is
+created, else 0. Both ready() and pipeline() must be 1 for GPU dispatch.
 .TP
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.
@@ -1007,7 +1065,8 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
 ./slag program.slag
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe \e
-    -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt -e _start
+    -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt \e
+    -ldxgi -ld3d11 -e _start
 .fi
 .RE
 .PP
@@ -1034,6 +1093,9 @@ audio mixer (audio.*)
 .TP
 .B \-lbcrypt
 cryptography (crypto.*)
+.TP
+.B \-ldxgi \-ld3d11
+integrated-GPU dispatch (gpu.*, Direct3D 11 / DXGI)
 .PP
 Add
 .B \-mwindows

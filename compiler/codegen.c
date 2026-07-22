@@ -1413,6 +1413,17 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_window_close");
             emit_call_epilogue(cg, 0);
         }
+        // window.set_title(ptr) - update the live title bar via SetWindowTextA.
+        // Arg is an int pointer to a null-terminated byte buffer (like textbuf).
+        else if (strcmp(member, "set_title") == 0 && strcmp(base, "window") == 0) {
+            emit(cg, "    ; window.set_title");
+            emit_int_expr(cg, args->items[0]);   // rax = ptr (null-terminated)
+            emit(cg, "    mov  rbx, rax");        // stash ptr across prologue
+            emit_call_prologue(cg);
+            emit(cg, "    mov  rcx, rbx");
+            emit(cg, "    call _slag_window_set_title");
+            emit_call_epilogue(cg, 0);
+        }
         // window.capture_mouse() - trap cursor in window
         else if (strcmp(member, "capture_mouse") == 0) {
             emit(cg, "    ; window.capture_mouse");
