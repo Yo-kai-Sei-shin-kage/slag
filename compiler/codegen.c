@@ -41,6 +41,7 @@
 #include "file_runtime.h"
 #include "audio_runtime.h"
 #include "crypto_runtime.h"
+#include "gpu_runtime.h"
 #include "matrix_runtime.h"
 #include "simd_runtime.h"
 #include "mesh_runtime.h"
@@ -2743,6 +2744,37 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    ; cpu.has_avx512f");
             emit(cg, "    movzx rax, byte [_simd_f_avx512f]");
         }
+        // gpu.detect() -> int vendor code (0 none / 1 Intel / 2 AMD)
+        else if (strcmp(member, "detect") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.detect");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call _slag_gpu_detect");
+            emit(cg, "    add  rsp, 32");
+        }
+        // gpu.vendor() -> int (0 none / 1 Intel / 2 AMD); cached, no re-probe
+        else if (strcmp(member, "vendor") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.vendor");
+            emit(cg, "    mov  rax, [_gpu_vendor]");
+        }
+        // gpu.ready() -> int (1 once D3D11 device+swapchain+RTV are live)
+        else if (strcmp(member, "ready") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.ready");
+            emit(cg, "    mov  rax, [_gpu_ready]");
+        }
+        // gpu.init() -> int: create D3D11 device+swapchain+RTV (call after
+        // window.open + gpu.detect). Returns _gpu_ready (1 success / 0 fail).
+        else if (strcmp(member, "init") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.init");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call _slag_gpu_init_dispatch");
+            emit(cg, "    add  rsp, 32");
+            emit(cg, "    mov  rax, [_gpu_ready]");
+        }
+        // gpu.pipeline() -> int (1 once shaders/layout/buffers/tex/sampler exist)
+        else if (strcmp(member, "pipeline") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.pipeline");
+            emit(cg, "    mov  rax, [_gpu_pipeline]");
+        }
         // bit.shl(value, count) -> int (left shift)
         else if (strcmp(member, "shl") == 0) {
             emit(cg, "    ; bit.shl (inlined)");
@@ -5040,6 +5072,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_file_imports(&cg);
     emit_audio_imports(&cg);
     emit_crypto_imports(&cg);
+    emit_gpu_imports(&cg);
     emit_simd_imports(&cg);
 
     // .text section.
@@ -5133,6 +5166,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_file_runtime(&cg);
     emit_audio_runtime(&cg);
     emit_crypto_runtime(&cg);
+    emit_gpu_runtime(&cg);
     emit_mat_runtime(&cg);
     emit_simd_runtime(&cg);
     emit_mesh_runtime(&cg);
@@ -5156,6 +5190,7 @@ void codegen_program(const Program *prog, FILE *out) {
     // populated by the time we write them).
     emit_data_section(&cg);
     emit_window_data(&cg);
+    emit_gpu_data(&cg);
     emit_mat_data(&cg);
     emit_mesh_data(&cg);
     emit_tex_data(&cg);
@@ -5167,6 +5202,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_file_bss(&cg);
     emit_audio_bss(&cg);
     emit_crypto_bss(&cg);
+    emit_gpu_bss(&cg);
     emit_mat_bss(&cg);
     emit_simd_bss(&cg);
     emit_mesh_bss(&cg);

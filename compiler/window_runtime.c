@@ -4893,6 +4893,21 @@ static void emit_window_utils(Codegen *cg) {
     E("    call TlsGetValue");
     E("    mov  rbx, rax");
     E("");
+    E("    ; GPU auto-dispatch: if triangles were staged for the GPU this frame,");
+    E("    ; draw + Present through the swapchain and return -- the swapchain owns");
+    E("    ; the window surface, so the CPU drain + DIB BitBlt path is skipped.");
+    E("    cmp  qword [_gpu_stage_cnt], 0");
+    E("    je   .wf_cpu_path");
+    E("    call _slag_gpu_present_frame");
+    E("    add  rsp, 64");
+    E("    pop  r14");
+    E("    pop  r13");
+    E("    pop  r12");
+    E("    pop  rbx");
+    E("    pop  rbp");
+    E("    ret");
+    E(".wf_cpu_path:");
+    E("");
     E("    ; rasterize + clear the deferred triangle queue (shared with window.text)");
     E("    call _slag_ftqueue_drain");
     E("");
@@ -6799,6 +6814,20 @@ static void emit_fill_triangle_pcolor(Codegen *cg) {
     E("    mov  [rbp-16], rdx");   // tex_ptr
     E("    mov  [rbp-24], r8");    // tex_w
     E("    mov  [rbp-32], r9");    // tex_h
+
+    // GPU auto-dispatch: when a device+pipeline is live, stage the raw verts
+    // for a batched GPU draw at flush() and skip the CPU enqueue entirely.
+    E("    mov  rax, [_gpu_ready]");
+    E("    test rax, rax");
+    E("    jz   .ftpc_no_gpu");
+    E("    mov  rax, [_gpu_pipeline]");
+    E("    test rax, rax");
+    E("    jz   .ftpc_no_gpu");
+    E("    sub  rsp, 32");
+    E("    call _slag_gpu_stage_pcolor       ; rcx/rdx/r8/r9 still hold args");
+    E("    add  rsp, 32");
+    E("    jmp  .ftpc_done");
+    E(".ftpc_no_gpu:");
 
     // Load 1.0 constant
     E("    mov  rax, 0x3FF0000000000000");
