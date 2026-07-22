@@ -35,6 +35,7 @@ void emit_gpu_bss(Codegen *cg) {
     E("_gpu_tex:       resq 1");   // ID3D11Texture2D* (512x512 BGRA)
     E("_gpu_srv:       resq 1");   // ID3D11ShaderResourceView*
     E("_gpu_sampler:   resq 1");   // ID3D11SamplerState*
+    E("_gpu_raster:    resq 1");   // ID3D11RasterizerState* (CULL_NONE)
     E("_gpu_pipeline:  resq 1");   // 1 once all pipeline objects created
     E("_gpu_stage:     resq 1");   // heap buffer of staged raw pcolor verts
     E("_gpu_stage_cnt: resq 1");   // number of triangles staged this frame
@@ -626,6 +627,25 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    test eax, eax");
     E("    jnz  .pl_fail");
 
+    // Rasterizer state: solid fill, no culling (geometry is authored for the
+    // CPU rasterizer winding, so disable D3D's default back-face cull).
+    // RASTERIZER_DESC(40) at [rsp+0x150]: FillMode@0=SOLID(3), CullMode@4=NONE(1),
+    // FrontCCW@8=0, DepthClipEnable@24=1, rest 0.
+    E("    lea  rdi, [rsp+0x150]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 10");                   // 40 bytes / 4
+    E("    rep  stosd");
+    E("    mov  dword [rsp+0x150+0], 3");    // FILL_SOLID
+    E("    mov  dword [rsp+0x150+4], 1");    // CULL_NONE
+    E("    mov  dword [rsp+0x150+24], 1");   // DepthClipEnable
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x150]");
+    E("    lea  r8,  [_gpu_raster]");
+    E("    call [rax + 0xb0]                 ; CreateRasterizerState");
+    E("    test eax, eax");
+    E("    jnz  .pl_fail");
+
     E("    call _slag_gpu_stage_init         ; alloc per-frame vertex stage");
     E("    mov  qword [_gpu_pipeline], 1");
     E("    jmp  .pl_ret");
@@ -895,6 +915,11 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    lea  r9, [rsp+0x88]");
     E("    mov  rax, [r15]");
     E("    call [rax + 0x50]");
+    // RSSetState(_gpu_raster) -- bind the no-cull rasterizer state
+    E("    mov  rcx, r15");
+    E("    mov  rdx, [_gpu_raster]");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x158]");
     // RSSetViewports(1, &vp) -- vp at rsp+0x40
     E("    mov  dword [rsp+0x40], 0");
     E("    mov  dword [rsp+0x44], 0");
