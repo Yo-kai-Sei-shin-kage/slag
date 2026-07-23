@@ -1360,6 +1360,13 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // verts: ptr to 24 int64s (3 vertices x 8 values: x,y,z,u,v,r,g,b)
             emit(cg, "    ; fill_triangle_pcolor()");
             emit_user_call(cg, "slag_fill_triangle_pcolor", args);
+        } else if (strcmp(name, "fill_triangle_gpu") == 0) {
+            // fill_triangle_gpu(verts, count, tex_ptr, tex_w, tex_h)
+            // Bulk GPU path: stage `count` triangles (contiguous 192B/tri int64
+            // verts) in one call, converting to float32 directly into the GPU
+            // stage buffer. No-op when no GPU device is live. pcolor untouched.
+            emit(cg, "    ; fill_triangle_gpu()");
+            emit_user_call(cg, "slag_fill_triangle_gpu", args);
         } else if (strcmp(name, "zbuffer") == 0) {
             emit(cg, "    ; zbuffer stub");
         } else {
@@ -2755,14 +2762,14 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    ; cpu.has_avx512f");
             emit(cg, "    movzx rax, byte [_simd_f_avx512f]");
         }
-        // gpu.detect() -> int vendor code (0 none / 1 Intel / 2 AMD)
+        // gpu.detect() -> int vendor code (0 none / 1 Intel / 2 AMD / 3 NVIDIA)
         else if (strcmp(member, "detect") == 0 && strcmp(base, "gpu") == 0) {
             emit(cg, "    ; gpu.detect");
             emit(cg, "    sub  rsp, 32");
             emit(cg, "    call _slag_gpu_detect");
             emit(cg, "    add  rsp, 32");
         }
-        // gpu.vendor() -> int (0 none / 1 Intel / 2 AMD); cached, no re-probe
+        // gpu.vendor() -> int (0 none / 1 Intel / 2 AMD / 3 NVIDIA); cached, no re-probe
         else if (strcmp(member, "vendor") == 0 && strcmp(base, "gpu") == 0) {
             emit(cg, "    ; gpu.vendor");
             emit(cg, "    mov  rax, [_gpu_vendor]");
@@ -2785,6 +2792,21 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         else if (strcmp(member, "pipeline") == 0 && strcmp(base, "gpu") == 0) {
             emit(cg, "    ; gpu.pipeline");
             emit(cg, "    mov  rax, [_gpu_pipeline]");
+        }
+        // gpu.discrete() -> int (1 if the live device is a discrete GPU, 0 if
+        // integrated; valid only after gpu.init() creates the device)
+        else if (strcmp(member, "discrete") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.discrete");
+            emit(cg, "    mov  rax, [_gpu_discrete]");
+        }
+        // gpu.set_viewproj(ptr) -> set the camera view-projection matrix (ptr to
+        // 16 float32) uploaded to the vertex shader's cbuf each frame.
+        else if (strcmp(member, "set_viewproj") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.set_viewproj");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_gpu_viewproj], rax");
+            }
         }
         // bit.shl(value, count) -> int (left shift)
         else if (strcmp(member, "shl") == 0) {

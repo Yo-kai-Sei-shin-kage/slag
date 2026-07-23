@@ -386,24 +386,32 @@ that render entirely through
 not GDI-composited UIs
 .RB ( window.text / window.clear -drawn
 overlays are not shown while the GPU path is active).
-.SS Integrated-GPU dispatch
-Optional Direct3D 11 offload for
-.BR fill_triangle_pcolor ,
-auto-detecting an Intel or AMD integrated GPU via DXGI. Requires linking
+.SS GPU dispatch (auto-selected discrete or integrated)
+Optional Direct3D 11 offload, auto-detecting a GPU via DXGI. The detector scans
+all adapters and prefers a discrete GPU over an integrated one automatically,
+distinguishing the two by
+.B DedicatedVideoMemory
+in
+.B DXGI_ADAPTER_DESC1
+(nonzero on a discrete card whose VRAM is not shared with the CPU; zero on an
+integrated GPU drawing from shared system memory). Intel, AMD, and NVIDIA
+adapters are accepted. The swapchain is a flip-model, tearing-capable,
+frame-latency-waitable chain (max latency 1) so windowed presentation does not
+stall; borderless fullscreen bypasses the compositor entirely for uncapped
+throughput. Requires linking
 .B \-ldxgi
 and
 .BR \-ld3d11 .
-All four return an
-.BR int .
 .TP
 .B gpu.detect()
-Enumerate DXGI adapters and classify the integrated GPU: returns 2 (AMD),
-1 (Intel), or 0 (none found). Does not create a device.
+Enumerate all DXGI adapters and select the best (discrete preferred over
+integrated). Returns the selected adapter's vendor: 1 (Intel), 2 (AMD),
+3 (NVIDIA), or 0 (none found). Does not create a device.
 .TP
 .B gpu.init()
-Create the D3D11 device, swapchain, and pcolor pipeline bound to the open
-window. Returns 1 on success (device live), 0 on failure. Must be called
-after
+Create the D3D11 device, swapchain, depth buffer, and pipeline bound to the open
+window on the selected adapter. Returns 1 on success (device live), 0 on
+failure. Must be called after
 .BR window.open() .
 On failure,
 .B fill_triangle_pcolor
@@ -413,8 +421,46 @@ transparently uses the CPU path.
 Returns 1 if the D3D11 device+swapchain are live, else 0.
 .TP
 .B gpu.pipeline()
-Returns 1 if the pcolor pipeline (shaders, buffers, texture, sampler) is
-created, else 0. Both ready() and pipeline() must be 1 for GPU dispatch.
+Returns 1 if the pipeline (shaders, buffers, texture, sampler, depth-stencil
+state) is created, else 0. Both ready() and pipeline() must be 1 for GPU
+dispatch.
+.TP
+.B gpu.discrete()
+Returns 1 if the live device is a discrete GPU, 0 if integrated. The verdict is
+confirmed from the device's
+.B UMA
+.RB ( UnifiedMemoryArchitecture )
+flag at
+.B gpu.init()
+time (integrated GPUs report UMA=1; discrete report UMA=0). Valid only after
+.BR gpu.init() .
+.TP
+.BI gpu.set_viewproj( ptr )
+Set the camera view-projection matrix uploaded to the vertex shader each frame:
+.I ptr
+points to 16 32-bit floats, a row-major 4x4 matrix (HLSL
+.BR "mul(float4(pos,1), M)" ,
+row-vector convention). Used by
+.B fill_triangle_gpu
+to transform world-space vertices with perspective and real clip-space depth.
+.TP
+.BI fill_triangle_gpu( verts , " count" , " tex_ptr" , " tex_w" , " tex_h" )
+Bulk GPU draw path (separate from the CPU-optimized
+.BR fill_triangle_pcolor ,
+which is unchanged). Stages
+.I count
+triangles from one contiguous buffer
+.RI ( verts :
+3 verts/tri, 8 int64 each \(em x,y,z,u,v,r,g,b, 64-byte stride) in a single
+pass, converting to float32 directly into the GPU vertex buffer. Positions are
+world-space and transformed by the
+.B gpu.set_viewproj
+matrix in the vertex shader; the depth buffer resolves occlusion for any
+submission order; backface culling is done on the GPU. The
+.I u
+texcoord doubles as a per-vertex fog/effect flag for shader use. Re-uploads
+every call, so callers may rebuild the buffer each frame (scrolling terrain,
+animated meshes). No-op when no GPU device is live.
 .TP
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.

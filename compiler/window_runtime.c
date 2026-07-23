@@ -7402,6 +7402,94 @@ void emit_window_imports(Codegen *cg) {
 
 // ---------------------------------------------------------------------
 // Top-level emitter
+// _slag_fill_triangle_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h)
+// Bulk GPU path: convert `count` triangles (contiguous int64 verts, 64B/vertex,
+// x,y,z,u,v,r,g,b) to float32 directly into _gpu_convbuf (32B/vertex: pos3 uv2
+// col3, uv scaled by 1/texw,1/texh, color by 1/255) in one pass, then flag the
+// frame prebuilt so present skips its own convert. No CPU culling -- the D3D11
+// rasterizer state culls backfaces on the GPU. No-op when no device is live.
+static void emit_fill_triangle_gpu(Codegen *cg) {
+    E("; --- _slag_fill_triangle_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h) ---");
+    E("_slag_fill_triangle_gpu:");
+    E("    mov  rax, [_gpu_ready]");
+    E("    test rax, rax");
+    E("    jz   .ftg_ret               ; no device -> no-op");
+    E("    mov  rax, [_gpu_pipeline]");
+    E("    test rax, rax");
+    E("    jz   .ftg_ret");
+    E("    test rdx, rdx");
+    E("    jz   .ftg_ret               ; count==0");
+    // Cap count to GPU_STAGE_CAP.
+    E("    mov  rax, rdx");
+    E("    cmp  rax, GPU_STAGE_CAP");
+    E("    jbe  .ftg_capok");
+    E("    mov  rax, GPU_STAGE_CAP");
+    E(".ftg_capok:");
+    // Record texture + count; mark prebuilt so present skips the convert.
+    E("    mov  r10d, [rsp+40]         ; tex_h (5th stack arg)");
+    E("    mov  [_gpu_stage_tex], r8");
+    E("    mov  [_gpu_stage_texw], r9");
+    E("    mov  [_gpu_stage_texh], r10");
+    E("    mov  [_gpu_stage_cnt], rax");
+    E("    mov  qword [_gpu_prebuilt], 1");
+    // Always convert + re-upload: the caller may rebuild the buffer contents
+    // every frame (scrolling terrain, animated meshes) while reusing the same
+    // pointer/count. A ptr/count-based skip would freeze such geometry, so this
+    // path unconditionally marks the frame dirty and re-uploads.
+    E("    mov  qword [_gpu_vbuf_dirty], 1");
+    // total vertices = count*3
+    E("    mov  r11, rax");
+    E("    imul r11, 3                 ; vertex count");
+    // Reciprocals: xmm6=1/texw, xmm7=1/texh, xmm4=1/255.
+    E("    mov  eax, 1");
+    E("    cvtsi2ss xmm2, eax");
+    E("    mov  eax, r9d");
+    E("    cvtsi2ss xmm0, eax");
+    E("    movss xmm6, xmm2");
+    E("    divss xmm6, xmm0");
+    E("    mov  eax, r10d");
+    E("    cvtsi2ss xmm0, eax");
+    E("    movss xmm7, xmm2");
+    E("    divss xmm7, xmm0");
+    E("    mov  eax, 255");
+    E("    cvtsi2ss xmm0, eax");
+    E("    movss xmm4, xmm2");
+    E("    divss xmm4, xmm0");
+    // rsi = src int64 verts (64B/vertex), rdi = dst float convbuf (32B/vertex).
+    E("    mov  rsi, rcx");
+    E("    mov  rdi, [_gpu_convbuf]");
+    E("    xor  r10, r10               ; vertex index");
+    E(".ftg_vloop:");
+    E("    cvtsi2ss xmm0, qword [rsi+0]");
+    E("    movss [rdi+0], xmm0         ; x");
+    E("    cvtsi2ss xmm0, qword [rsi+8]");
+    E("    movss [rdi+4], xmm0         ; y");
+    E("    cvtsi2ss xmm0, qword [rsi+16]");
+    E("    movss [rdi+8], xmm0         ; z");
+    E("    cvtsi2ss xmm0, qword [rsi+24]");
+    E("    mulss xmm0, xmm6");
+    E("    movss [rdi+12], xmm0        ; u/texw");
+    E("    cvtsi2ss xmm0, qword [rsi+32]");
+    E("    mulss xmm0, xmm7");
+    E("    movss [rdi+16], xmm0        ; v/texh");
+    E("    cvtsi2ss xmm0, qword [rsi+40]");
+    E("    mulss xmm0, xmm4");
+    E("    movss [rdi+20], xmm0        ; r/255");
+    E("    cvtsi2ss xmm0, qword [rsi+48]");
+    E("    mulss xmm0, xmm4");
+    E("    movss [rdi+24], xmm0        ; g/255");
+    E("    cvtsi2ss xmm0, qword [rsi+56]");
+    E("    mulss xmm0, xmm4");
+    E("    movss [rdi+28], xmm0        ; b/255");
+    E("    add  rsi, 64                ; next src vertex (64B stride)");
+    E("    add  rdi, GPU_VTX_STRIDE    ; next dst vertex (32B)");
+    E("    inc  r10");
+    E("    cmp  r10, r11");
+    E("    jl   .ftg_vloop");
+    E(".ftg_ret:");
+    E("    ret");
+}
+
 // ---------------------------------------------------------------------
 void emit_window_runtime(Codegen *cg, const EventHandlerFlags *flags) {
     emit_window_constants(cg);
@@ -7420,5 +7508,6 @@ void emit_window_runtime(Codegen *cg, const EventHandlerFlags *flags) {
     emit_pool_ensure_init(cg);
     emit_window_utils(cg);
     emit_fill_triangle_pcolor(cg);
+    emit_fill_triangle_gpu(cg);
     emit_default_event_handlers(cg, flags);
 }

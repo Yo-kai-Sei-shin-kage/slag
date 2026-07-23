@@ -157,8 +157,9 @@ arg_list       = expr { "," expr } ;
      bit.shr, ...) parsed as member_suffix.
    - Builtins are not enumerated in the grammar; every namespace call
      (window.*, gpu.*, mem.*, file.*, net.*, ...) is just a member_suffix on a
-     namespace identifier. New builtins (e.g. gpu.detect/init/ready/pipeline,
-     window.set_title) need no grammar change.
+     namespace identifier. New builtins (e.g. gpu.detect/init/ready/pipeline/
+     discrete/set_viewproj, fill_triangle_gpu, window.set_title) need no grammar
+     change.
    - Assignment is a statement, not an expression - no chained `a = b = c`.
    - Binary operators are left-associative; unary "!" and "-" are right-assoc.
    - Every statement is terminated by ";".
