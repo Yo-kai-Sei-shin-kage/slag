@@ -478,6 +478,9 @@ static SlagType expr_type(Codegen *cg, const Expr *e, SlagType hint) {
             if (strcmp(mcmember, "list_name") == 0 && strcmp(mcbase, "file") == 0) {
                 return TYPE_STR;
             }
+            if (strcmp(mcmember, "peekf32") == 0 && strcmp(mcbase, "mem") == 0) {
+                return TYPE_FLOAT;
+            }
             return TYPE_INT;
         }
         case EXPR_INDEX: {
@@ -1056,6 +1059,13 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
             }
             emit_call_expr(cg, e);
             // Result already in xmm0 for float-returning functions.
+            break;
+        }
+
+        case EXPR_MEMBER_CALL: {
+            // Float-returning member builtins (e.g. mem.peekf32) leave their
+            // result in xmm0 via the builtin emitter.
+            emit_call_expr(cg, e);
             break;
         }
 
@@ -2249,6 +2259,20 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    movss [r12 + r13], xmm0");
             }
         }
+        // mem.peekf32(ptr, byteoff) -> float: load a 32-bit float and widen to
+        // a Slag double. Complement of mem.pokef32; result in xmm0.
+        else if (strcmp(member, "peekf32") == 0) {
+            emit(cg, "    ; mem.peekf32 (inlined)");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax        ; ptr");
+                emit(cg, "    push r12");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    pop  r12");
+                emit(cg, "    movss xmm0, [r12 + rax]");
+                emit(cg, "    cvtss2sd xmm0, xmm0  ; widen to Slag double");
+            }
+        }
         // file.open(path, mode) -> int handle (-1 on fail)
         // mode: 1=read, 2=write(truncate), 3=append
         else if (strcmp(member, "open") == 0 && strcmp(base, "file") == 0) {
@@ -2806,6 +2830,24 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             if (args->count >= 1) {
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  [_gpu_viewproj], rax");
+            }
+        }
+        // gpu.clear(ptr) -> set the GPU clear color; ptr is a buffer of 4 f32
+        // (R,G,B,A) built with mem.alloc + mem.pokef32. Overrides the fog color.
+        else if (strcmp(member, "clear") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.clear");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_gpu_clear_ptr], rax");
+                emit(cg, "    mov  qword [_gpu_clear_set], 1");
+            }
+        }
+        // gpu.set_blend(mode) -> 0 = opaque (overwrite), 1 = straight alpha blend.
+        else if (strcmp(member, "set_blend") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.set_blend");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_gpu_blend_mode], rax");
             }
         }
         // bit.shl(value, count) -> int (left shift)

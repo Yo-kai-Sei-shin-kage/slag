@@ -64,6 +64,10 @@ void emit_gpu_bss(Codegen *cg) {
     E("_gpu_viewproj:  resq 1");     // ptr to 16 float32 (4x4 view-projection matrix) from the Slag camera; copied into the cbuf each frame");
     E("_gpu_stage_texw: resq 1");  // tex_w of staged triangles
     E("_gpu_stage_texh: resq 1");  // tex_h of staged triangles
+    E("_gpu_clear_ptr:  resq 1");  // ptr to 4 x f32 (R,G,B,A) clear color from gpu.clear
+    E("_gpu_clear_set:  resq 1");  // 1 once gpu.clear set a color; else fog fallback
+    E("_gpu_blend:      resq 1");  // ID3D11BlendState* (straight-alpha), created at init
+    E("_gpu_blend_mode: resq 1");  // 0=opaque (NULL state), 1=alpha blend (_gpu_blend)
 }
 // Per triangle: 3 verts x 8 int64 = 192 bytes raw. Cap 4096 tris/frame.
 // GPU_STAGE_CAP triangles * GPU_STAGE_TRI bytes.
@@ -470,11 +474,11 @@ void emit_gpu_data(Codegen *cg) {
     E("_gpu_sem_tex:   db 84,69,88,67,79,79,82,68,0   ; \"TEXCOORD\"");
     E("_gpu_sem_col:   db 67,79,76,79,82,0            ; \"COLOR\"");
     E("align 16");
-    E("_gpu_vs_blob:  ; 1008 bytes DXBC (MVP, /Zpr row-major matrix packing to match row-major cbuf writes)");
-    E("    db 68,88,66,67,145,109,57,254,242,183,104,78,209,79,152,154");
-    E("    db 198,131,234,8,1,0,0,0,180,4,0,0,5,0,0,0");
+    E("_gpu_vs_blob:  ; 1224 bytes DXBC (MVP /Zpr row-major; COLOR=RGBA, alpha passthrough)");
+    E("    db 68,88,66,67,60,236,86,47,72,106,61,222,67,25,189,96");
+    E("    db 120,196,16,5,1,0,0,0,200,4,0,0,5,0,0,0");
     E("    db 52,0,0,0,60,1,0,0,172,1,0,0,32,2,0,0");
-    E("    db 24,4,0,0,82,68,69,70,0,1,0,0,1,0,0,0");
+    E("    db 44,4,0,0,82,68,69,70,0,1,0,0,1,0,0,0");
     E("    db 96,0,0,0,1,0,0,0,60,0,0,0,0,5,254,255");
     E("    db 8,1,0,0,216,0,0,0,82,68,49,49,60,0,0,0");
     E("    db 24,0,0,0,32,0,0,0,40,0,0,0,36,0,0,0");
@@ -496,22 +500,22 @@ void emit_gpu_data(Codegen *cg) {
     E("    db 7,7,0,0,89,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 3,0,0,0,1,0,0,0,3,3,0,0,98,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,3,0,0,0,2,0,0,0");
-    E("    db 7,7,0,0,80,79,83,73,84,73,79,78,0,84,69,88");
+    E("    db 15,15,0,0,80,79,83,73,84,73,79,78,0,84,69,88");
     E("    db 67,79,79,82,68,0,67,79,76,79,82,0,79,83,71,78");
     E("    db 108,0,0,0,3,0,0,0,8,0,0,0,80,0,0,0");
     E("    db 0,0,0,0,1,0,0,0,3,0,0,0,0,0,0,0");
     E("    db 15,0,0,0,92,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 3,0,0,0,1,0,0,0,3,12,0,0,101,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,3,0,0,0,2,0,0,0");
-    E("    db 7,8,0,0,83,86,95,80,79,83,73,84,73,79,78,0");
+    E("    db 15,0,0,0,83,86,95,80,79,83,73,84,73,79,78,0");
     E("    db 84,69,88,67,79,79,82,68,0,67,79,76,79,82,0,171");
-    E("    db 83,72,69,88,240,1,0,0,80,0,1,0,124,0,0,0");
+    E("    db 83,72,69,88,4,2,0,0,80,0,1,0,129,0,0,0");
     E("    db 106,8,0,1,89,0,0,4,70,142,32,0,0,0,0,0");
     E("    db 4,0,0,0,95,0,0,3,114,16,16,0,0,0,0,0");
     E("    db 95,0,0,3,50,16,16,0,1,0,0,0,95,0,0,3");
-    E("    db 114,16,16,0,2,0,0,0,103,0,0,4,242,32,16,0");
+    E("    db 242,16,16,0,2,0,0,0,103,0,0,4,242,32,16,0");
     E("    db 0,0,0,0,1,0,0,0,101,0,0,3,50,32,16,0");
-    E("    db 1,0,0,0,101,0,0,3,114,32,16,0,2,0,0,0");
+    E("    db 1,0,0,0,101,0,0,3,242,32,16,0,2,0,0,0");
     E("    db 104,0,0,2,1,0,0,0,56,0,0,8,242,0,16,0");
     E("    db 0,0,0,0,86,21,16,0,0,0,0,0,70,142,32,0");
     E("    db 0,0,0,0,1,0,0,0,50,0,0,10,242,0,16,0");
@@ -536,22 +540,23 @@ void emit_gpu_data(Codegen *cg) {
     E("    db 0,0,0,0,151,150,22,63,171,170,42,63,196,195,67,63");
     E("    db 50,0,0,9,114,32,16,0,2,0,0,0,6,0,16,0");
     E("    db 0,0,0,0,150,7,16,0,0,0,0,0,70,18,16,0");
-    E("    db 2,0,0,0,62,0,0,1,83,84,65,84,148,0,0,0");
-    E("    db 13,0,0,0,1,0,0,0,0,0,0,0,6,0,0,0");
-    E("    db 10,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0");
+    E("    db 2,0,0,0,54,0,0,5,130,32,16,0,2,0,0,0");
+    E("    db 58,16,16,0,2,0,0,0,62,0,0,1,83,84,65,84");
+    E("    db 148,0,0,0,14,0,0,0,1,0,0,0,0,0,0,0");
+    E("    db 6,0,0,0,10,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0");
+    E("    db 3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0");
-    E("_gpu_vs_blob_len equ 1204");
+    E("    db 0,0,0,0,0,0,0,0");
+    E("_gpu_vs_blob_len equ 1224");
     E("align 16");
-    E("_gpu_ps_blob:  ; 744 bytes DXBC");
-    E("    db 68,88,66,67,95,133,16,255,50,221,11,173,49,44,13,208");
-    E("    db 139,171,110,236,1,0,0,0,232,2,0,0,5,0,0,0");
+    E("_gpu_ps_blob:  ; 744 bytes DXBC (tex*col, out alpha=col.a)");
+    E("    db 68,88,66,67,205,215,69,61,99,155,76,72,35,5,70,101");
+    E("    db 170,63,199,214,1,0,0,0,232,2,0,0,5,0,0,0");
     E("    db 52,0,0,0,232,0,0,0,92,1,0,0,144,1,0,0");
     E("    db 76,2,0,0,82,68,69,70,172,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,2,0,0,0,60,0,0,0,0,5,255,255");
@@ -569,7 +574,7 @@ void emit_gpu_data(Codegen *cg) {
     E("    db 1,0,0,0,3,0,0,0,0,0,0,0,15,0,0,0");
     E("    db 92,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0");
     E("    db 1,0,0,0,3,3,0,0,101,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,3,0,0,0,2,0,0,0,7,7,0,0");
+    E("    db 0,0,0,0,3,0,0,0,2,0,0,0,15,15,0,0");
     E("    db 83,86,95,80,79,83,73,84,73,79,78,0,84,69,88,67");
     E("    db 79,79,82,68,0,67,79,76,79,82,0,171,79,83,71,78");
     E("    db 44,0,0,0,1,0,0,0,8,0,0,0,32,0,0,0");
@@ -579,14 +584,14 @@ void emit_gpu_data(Codegen *cg) {
     E("    db 106,8,0,1,90,0,0,3,0,96,16,0,0,0,0,0");
     E("    db 88,24,0,4,0,112,16,0,0,0,0,0,85,85,0,0");
     E("    db 98,16,0,3,50,16,16,0,1,0,0,0,98,16,0,3");
-    E("    db 114,16,16,0,2,0,0,0,101,0,0,3,242,32,16,0");
+    E("    db 242,16,16,0,2,0,0,0,101,0,0,3,242,32,16,0");
     E("    db 0,0,0,0,104,0,0,2,1,0,0,0,69,0,0,139");
     E("    db 194,0,0,128,67,85,21,0,114,0,16,0,0,0,0,0");
     E("    db 70,16,16,0,1,0,0,0,70,126,16,0,0,0,0,0");
     E("    db 0,96,16,0,0,0,0,0,56,0,0,7,114,32,16,0");
     E("    db 0,0,0,0,70,2,16,0,0,0,0,0,70,18,16,0");
     E("    db 2,0,0,0,54,0,0,5,130,32,16,0,0,0,0,0");
-    E("    db 1,64,0,0,0,0,128,63,62,0,0,1,83,84,65,84");
+    E("    db 58,16,16,0,2,0,0,0,62,0,0,1,83,84,65,84");
     E("    db 148,0,0,0,4,0,0,0,1,0,0,0,0,0,0,0");
     E("    db 3,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
@@ -618,6 +623,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("BIND_CONSTANT      equ 4");
     E("BIND_SRV           equ 8");
     E("D3DCPU_WRITE          equ 0x10000");
+    E("FMT_RGBA32F        equ 2");
     E("FMT_RGB32F         equ 6");
     E("FMT_RG32F          equ 16");
     E("FMT_BGRA8          equ 87");
@@ -630,7 +636,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    push rsi");
     E("    push rdi");
     E("    push r12");
-    E("    sub  rsp, 0x1B8");
+    E("    sub  rsp, 0x228");
 
     E("    mov  rbx, [_gpu_device]");
     E("    test rbx, rbx");
@@ -680,7 +686,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    lea  rax, [_gpu_sem_col]");
     E("    mov  [rsp+0xC0+0], rax");
     E("    mov  dword [rsp+0xC0+8], 0");
-    E("    mov  dword [rsp+0xC0+12], FMT_RGB32F");
+    E("    mov  dword [rsp+0xC0+12], FMT_RGBA32F");
     E("    mov  dword [rsp+0xC0+16], 0");
     E("    mov  dword [rsp+0xC0+20], 20");
     E("    mov  dword [rsp+0xC0+24], 0");
@@ -701,8 +707,8 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    jnz  .pl_fail");
 
     // Dynamic vertex buffer: sized for the full stage batch
-    // (GPU_STAGE_CAP tris * 3 verts * 32B = 131072*96 = 12582912 bytes).
-    E("    mov  dword [rsp+0x100+BUFDESC_BYTEWIDTH], 12582912");
+    // (GPU_STAGE_CAP tris * 3 verts * 36B = 131072*108 = 14155776 bytes).
+    E("    mov  dword [rsp+0x100+BUFDESC_BYTEWIDTH], 14155776");
     E("    mov  dword [rsp+0x100+BUFDESC_USAGE], USAGE_DYNAMIC");
     E("    mov  dword [rsp+0x100+BUFDESC_BIND], BIND_VERTEX");
     E("    mov  dword [rsp+0x100+BUFDESC_CPUACCESS], D3DCPU_WRITE");
@@ -866,13 +872,39 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    test eax, eax");
     E("    jnz  .pl_fail");
 
+    // Blend state (straight alpha): CreateBlendState -> _gpu_blend, slot 0xA0.
+    // D3D11_BLEND_DESC (264 bytes) at rsp+0x100: AlphaToCoverage@0=0,
+    // IndependentBlend@4=0, RenderTarget[0] at +8: BlendEnable@8=1,
+    // SrcBlend@12=SRC_ALPHA(5), DestBlend@16=INV_SRC_ALPHA(6), BlendOp@20=ADD(1),
+    // SrcBlendAlpha@24=ONE(2), DestBlendAlpha@28=INV_SRC_ALPHA(6),
+    // BlendOpAlpha@32=ADD(1), WriteMask@36=0x0F (all channels).
+    E("    lea  rdi, [rsp+0x100]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 66");                   // 264 bytes / 4
+    E("    rep  stosd");
+    E("    mov  dword [rsp+0x100+8], 1");    // BlendEnable
+    E("    mov  dword [rsp+0x100+12], 5");   // SrcBlend = SRC_ALPHA
+    E("    mov  dword [rsp+0x100+16], 6");   // DestBlend = INV_SRC_ALPHA
+    E("    mov  dword [rsp+0x100+20], 1");   // BlendOp = ADD
+    E("    mov  dword [rsp+0x100+24], 2");   // SrcBlendAlpha = ONE
+    E("    mov  dword [rsp+0x100+28], 6");   // DestBlendAlpha = INV_SRC_ALPHA
+    E("    mov  dword [rsp+0x100+32], 1");   // BlendOpAlpha = ADD
+    E("    mov  dword [rsp+0x100+36], 0x0F");// RenderTargetWriteMask = ALL
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x100]");
+    E("    lea  r8,  [_gpu_blend]");
+    E("    call [rax + 0xA0]                 ; CreateBlendState");
+    E("    test eax, eax");
+    E("    jnz  .pl_fail");
+
     E("    call _slag_gpu_stage_init         ; alloc per-frame vertex stage");
     E("    mov  qword [_gpu_pipeline], 1");
     E("    jmp  .pl_ret");
     E(".pl_fail:");
     E("    mov  qword [_gpu_pipeline], 0");
     E(".pl_ret:");
-    E("    add  rsp, 0x1B8");
+    E("    add  rsp, 0x228");
     E("    pop  r12");
     E("    pop  rdi");
     E("    pop  rsi");
@@ -884,7 +916,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
 static void emit_gpu_stage_init(Codegen *cg) {
     E("GPU_STAGE_TRI    equ 192");        // raw bytes per staged triangle
     E("GPU_STAGE_CAP    equ 131072");     // max triangles per frame
-    E("GPU_VTX_STRIDE   equ 32");         // float vertex: pos3 + uv2 + col3
+    E("GPU_VTX_STRIDE   equ 36");         // float vertex: pos3 + uv2 + col4 (rgba)
     E("MAP_WR_DISCARD   equ 4");
     E("TOPOLOGY_TRILIST equ 4");
     E("");
@@ -1063,6 +1095,7 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    cvtsi2ss xmm0, qword [r10+56]");
     E("    mulss xmm0, xmm4");
     E("    movss [rdi+28], xmm0");
+    E("    movss [rdi+32], xmm2        ; a = 1.0 (pcolor has no alpha source)");
     E("    add  rdi, GPU_VTX_STRIDE");
     E("    inc  r12");
     E("    cmp  r12, r13");
@@ -1075,8 +1108,8 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    mov  rsi, [_gpu_convbuf]");
     E("    mov  rdi, [rsp+0x40]        ; mapped.pData");
     E("    mov  rcx, r13");
-    E("    shl  rcx, 2                 ; qwords = verts * 32B / 8 = verts*4");
-    E("    rep  movsq");
+    E("    imul rcx, 9                 ; dwords = verts * 36B / 4 = verts*9");
+    E("    rep  movsd");
 
     // Unmap vertex buffer (the same double-buffered vbuf mapped above)
     E("    mov  rcx, r15");
@@ -1220,6 +1253,18 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    call [rax + 0x158]");
     E("    mov  qword [_gpu_state_set], 1");
     E(".pf_state_done:");
+    // OMSetBlendState(mode? _gpu_blend : NULL, NULL factor, 0xFFFFFFFF) -- bound
+    // every frame (not latched) since gpu.set_blend can change mode at runtime.
+    E("    xor  rdx, rdx                     ; NULL = opaque (default)");
+    E("    cmp  qword [_gpu_blend_mode], 0");
+    E("    je   .pf_blend_go");
+    E("    mov  rdx, [_gpu_blend]");
+    E(".pf_blend_go:");
+    E("    mov  rcx, r15");
+    E("    xor  r8, r8                       ; BlendFactor = NULL");
+    E("    mov  r9d, 0xFFFFFFFF              ; SampleMask");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x118]                ; OMSetBlendState");
     // RSSetViewports(1, &vp) -- vp at rsp+0x40
     E("    mov  dword [rsp+0x40], 0");
     E("    mov  dword [rsp+0x44], 0");
@@ -1254,14 +1299,20 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    call [rax + 0x108]");
     // ClearRenderTargetView(rtv, fog color {0.588,0.667,0.765,1}) so any pixel
     // not covered by geometry matches the fog/sky seam instead of black.
+    E("    cmp  qword [_gpu_clear_set], 0");
+    E("    je   .clr_fog");
+    E("    mov  r8, [_gpu_clear_ptr]");   // gpu.clear color buffer
+    E("    jmp  .clr_go");
+    E(".clr_fog:");
     E("    mov  dword [rsp+0x40], 0x3F168166");   // R 0.588");
     E("    mov  dword [rsp+0x44], 0x3F2AAAAB");   // G 0.667");
     E("    mov  dword [rsp+0x48], 0x3F43D70A");   // B 0.765");
     E("    mov  eax, 0x3F800000");
     E("    mov  [rsp+0x4C], eax");
+    E("    lea  r8, [rsp+0x40]");
+    E(".clr_go:");
     E("    mov  rcx, r15");
     E("    mov  rdx, [_gpu_rtv]");
-    E("    lea  r8, [rsp+0x40]");
     E("    mov  rax, [r15]");
     E("    call [rax + 0x190]");
     // ClearDepthStencilView(this, DSV, ClearFlags, Depth, Stencil) -- 5 params:

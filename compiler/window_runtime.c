@@ -7403,9 +7403,9 @@ void emit_window_imports(Codegen *cg) {
 // ---------------------------------------------------------------------
 // Top-level emitter
 // _slag_fill_triangle_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h)
-// Bulk GPU path: convert `count` triangles (contiguous int64 verts, 64B/vertex,
-// x,y,z,u,v,r,g,b) to float32 directly into _gpu_convbuf (32B/vertex: pos3 uv2
-// col3, uv scaled by 1/texw,1/texh, color by 1/255) in one pass, then flag the
+// Bulk GPU path: convert `count` triangles (contiguous int64 verts, 72B/vertex,
+// x,y,z,u,v,r,g,b,a) to float32 directly into _gpu_convbuf (36B/vertex: pos3 uv2
+// col4, uv scaled by 1/texw,1/texh, color+alpha by 1/255) in one pass, then flag the
 // frame prebuilt so present skips its own convert. No CPU culling -- the D3D11
 // rasterizer state culls backfaces on the GPU. No-op when no device is live.
 static void emit_fill_triangle_gpu(Codegen *cg) {
@@ -7481,8 +7481,11 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    cvtsi2ss xmm0, qword [rsi+56]");
     E("    mulss xmm0, xmm4");
     E("    movss [rdi+28], xmm0        ; b/255");
-    E("    add  rsi, 64                ; next src vertex (64B stride)");
-    E("    add  rdi, GPU_VTX_STRIDE    ; next dst vertex (32B)");
+    E("    cvtsi2ss xmm0, qword [rsi+64]");
+    E("    mulss xmm0, xmm4");
+    E("    movss [rdi+32], xmm0        ; a/255 (9th int64 src slot)");
+    E("    add  rsi, 72                ; next src vertex (72B stride: 9 int64)");
+    E("    add  rdi, GPU_VTX_STRIDE    ; next dst vertex (36B)");
     E("    inc  r10");
     E("    cmp  r10, r11");
     E("    jl   .ftg_vloop");

@@ -1,4 +1,4 @@
-.TH SLAG 1 "2026-07-22" "slag 0.15.2" "Slag Programming Language"
+.TH SLAG 1 "2026-07-29" "slag 0.16.0" "Slag Programming Language"
 .SH NAME
 slag \- compile Slag source files to native Win64 PE executables
 .SH SYNOPSIS
@@ -444,6 +444,27 @@ row-vector convention). Used by
 .B fill_triangle_gpu
 to transform world-space vertices with perspective and real clip-space depth.
 .TP
+.BI gpu.clear( ptr )
+Set the GPU clear color.
+.I ptr
+points to 4 32-bit floats (R,G,B,A, 0.0-1.0) built with
+.BR mem.alloc / mem.pokef32 .
+Replaces the default fog-color clear used when the render target is cleared
+each frame. On the GPU path this is the background color, since the GPU present
+replaces the window client surface (so
+.B window.clear
+does not apply).
+.TP
+.BI gpu.set_blend( mode )
+Set the output-merger blend mode for
+.BR fill_triangle_gpu :
+.B 0
+= opaque (source overwrites, the default),
+.B 1
+= straight alpha (SrcAlpha / InvSrcAlpha), using the per-vertex
+.I a
+component. Applied every frame, so the mode may change at run time.
+.TP
 .BI fill_triangle_gpu( verts , " count" , " tex_ptr" , " tex_w" , " tex_h" )
 Bulk GPU draw path (separate from the CPU-optimized
 .BR fill_triangle_pcolor ,
@@ -451,14 +472,18 @@ which is unchanged). Stages
 .I count
 triangles from one contiguous buffer
 .RI ( verts :
-3 verts/tri, 8 int64 each \(em x,y,z,u,v,r,g,b, 64-byte stride) in a single
+3 verts/tri, 9 int64 each \(em x,y,z,u,v,r,g,b,a, 72-byte stride) in a single
 pass, converting to float32 directly into the GPU vertex buffer. Positions are
 world-space and transformed by the
 .B gpu.set_viewproj
 matrix in the vertex shader; the depth buffer resolves occlusion for any
 submission order; backface culling is done on the GPU. The
 .I u
-texcoord doubles as a per-vertex fog/effect flag for shader use. Re-uploads
+texcoord doubles as a per-vertex fog/effect flag for shader use. The
+.I a
+component is per-vertex alpha (0-255), used by straight-alpha blending when
+.B gpu.set_blend
+is enabled. Re-uploads
 every call, so callers may rebuild the buffer each frame (scrolling terrain,
 animated meshes). No-op when no GPU device is live.
 .TP
