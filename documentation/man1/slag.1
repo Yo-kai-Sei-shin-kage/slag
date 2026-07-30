@@ -181,6 +181,13 @@ Read the entire contents of the file at
 .I path
 into a
 .BR str .
+.SS Floating-point math
+.TP
+.BR sqrt( x ) ", " sin( x ) ", " cos( x )
+Square root, sine, and cosine of a
+.B float
+argument, returning a
+.BR float .
 .SS Windowing and graphics
 .TP
 .BI window.open( width , " height" , " title" )
@@ -227,6 +234,16 @@ cursor. Useful for FPS-style controls.
 .TP
 .B window.release_mouse()
 Release mouse capture and show the cursor.
+.TP
+.B window.center_cursor()
+Move the cursor to the center of the window (via
+.BR SetCursorPos ).
+Useful for re-centering each frame in FPS-style mouse-look.
+.TP
+.BI window.clip( x0 , " y0" , " x1" , " y1" )
+Set a per-window rectangular raster clip region for the CPU
+.B fill_triangle*
+rasterizers; pixels outside the rectangle are not written.
 .TP
 .B window.native()
 Returns the native screen resolution as a string in "WxH" format
@@ -408,6 +425,12 @@ Enumerate all DXGI adapters and select the best (discrete preferred over
 integrated). Returns the selected adapter's vendor: 1 (Intel), 2 (AMD),
 3 (NVIDIA), or 0 (none found). Does not create a device.
 .TP
+.B gpu.vendor()
+Return the vendor code selected by the last
+.B gpu.detect()
+(1 Intel / 2 AMD / 3 NVIDIA / 0 none), cached \(em does not re-probe the
+adapters.
+.TP
 .B gpu.init()
 Create the D3D11 device, swapchain, depth buffer, and pipeline bound to the open
 window on the selected adapter. Returns 1 on success (device live), 0 on
@@ -472,20 +495,46 @@ which is unchanged). Stages
 .I count
 triangles from one contiguous buffer
 .RI ( verts :
-3 verts/tri, 9 int64 each \(em x,y,z,u,v,r,g,b,a, 72-byte stride) in a single
-pass, converting to float32 directly into the GPU vertex buffer. Positions are
-world-space and transformed by the
+3 verts/tri, 10 int64 each \(em x,y,z,u,v,r,g,b,a,slice, 80-byte stride) in a
+single pass, converting to float32 directly into the GPU vertex buffer.
+Positions are world-space and transformed by the
 .B gpu.set_viewproj
 matrix in the vertex shader; the depth buffer resolves occlusion for any
-submission order; backface culling is done on the GPU. The
+submission order; backface culling is done on the GPU (CULL_BACK). The
 .I u
 texcoord doubles as a per-vertex fog/effect flag for shader use. The
 .I a
 component is per-vertex alpha (0-255), used by straight-alpha blending when
 .B gpu.set_blend
-is enabled. Re-uploads
-every call, so callers may rebuild the buffer each frame (scrolling terrain,
-animated meshes). No-op when no GPU device is live.
+is enabled.
+.I slice
+selects which layer of the texture is sampled (see
+.BR tex_ptr / tex_w
+below): a nonnegative
+.I slice
+samples that array layer with normal texturing; a
+.B negative
+.I slice
+switches the fragment to signed-distance-field (SDF) text mode \(em
+.RI abs( slice )
+is the SDF atlas layer, its distance channel is thresholded (linear-sampled,
+smoothstep) to a crisp glyph alpha modulated by the vertex color, for scalable
+custom-font UI. The texture is a
+.B Texture2DArray
+(512x512 BGRA layers, 256 max):
+.I tex_ptr
+points to a contiguous block of layer images (layer k at
+.IR "tex_ptr + k*512*512*4" ),
+and the number of layers to upload is packed into the high 32 bits of
+.IR tex_w
+.RI ( "texw | (nlayers<<32)" ;
+zero high bits means one layer, layer 0). UV coordinates are texel-space
+(0..texw-1, normalized by the runtime). Persistent: a re-submission with the
+same
+.IR verts / count
+skips the convert+re-upload and redraws the resident buffer, so static geometry
+uploads once; changed geometry (fresh pointer or count) re-uploads. No-op when
+no GPU device is live.
 .TP
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.
@@ -699,8 +748,22 @@ region forever (the whole file if no smpl chunk was found).
 .B audio.stop(handle)
 Stop playback and reset position to the start.
 .TP
+.B audio.pause(handle)
+Pause playback, retaining the current position (unlike
+.BR audio.stop ,
+which resets to the start).
+.TP
+.B audio.resume(handle)
+Resume a paused sound from where it was paused.
+.TP
+.B audio.is_paused(handle)
+Return 1 if the sound is currently paused, 0 otherwise.
+.TP
 .BI audio.volume( handle , " vol" )
 Set this sound's volume, 0-255.
+.TP
+.BI audio.pan( handle , " pan" )
+Set this sound's stereo pan: 0 = full left, 128 = center, 255 = full right.
 .TP
 .B audio.master_volume(vol)
 Set the master volume, 0-255, applied to every sound during mixing.
@@ -712,11 +775,10 @@ otherwise.
 .B audio.position(handle)
 Return the current byte offset into the sound's PCM data.
 .PP
-Known limitations: no pause/resume (audio.stop always resets position to
-0); no stereo panning (volume only, no left/right balance); each loaded
-sound has exactly one playback slot, so overlapping the same sound with
-itself requires loading it into separate handles; no pitch/rate
-variation; audio.load reads the entire file into memory (no streaming).
+Known limitations: each loaded sound has exactly one playback slot, so
+overlapping the same sound with itself requires loading it into separate
+handles; no pitch/rate variation; audio.load reads the entire file into
+memory (no streaming).
 .SS Bit manipulation
 .TP
 .B bit.shl(value,count)
@@ -828,9 +890,6 @@ Hash-based noise, returns 0-255.
 .TP
 .B tex.perlin2d(x,y,freq,seed)
 Perlin noise, returns 0-255.
-.TP
-.BR tex.wood(x,y,rings,seed) ", " tex.marble(x,y,freq,seed)
-Organic patterns (wood grain, marble veins).
 .SS Networking
 TCP networking via ws2_32; supports persistent peer-to-peer sessions
 between two machines running the same program. Programs using networking

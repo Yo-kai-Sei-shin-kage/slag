@@ -882,6 +882,41 @@ AVX2 fast path (see section 18). Procedural textures can be generated with the
 
 Per-face Lambertian lighting can be implemented in Slag: compute each face normal as the cross product of two rotated edge vectors, dot with a light direction, remap to a brightness range, and apply to the face color. See the shaded cube demo.
 
+### 13.7 GPU Dispatch Pipeline (Direct3D 11)
+
+`fill_triangle_gpu` drives an optional D3D11 pipeline (see `gpu.*`) built around a
+single general-purpose ("uber") vertex+pixel shader. It is distinct from the CPU
+`fill_triangle_*` rasterizers, which are unchanged.
+
+**Vertex format.** 10 int64 per vertex, 80-byte stride:
+`x, y, z, u, v, r, g, b, a, slice`. Positions are world-space (transformed by the
+`gpu.set_viewproj` row-major 4×4 matrix in the vertex shader). `r,g,b,a` are
+per-vertex color 0-255 (`a` is alpha for `gpu.set_blend(1)` straight-alpha
+blending). `u,v` are texel-space texture coordinates (the runtime normalizes by
+the texture width/height). Backface culling is on the GPU (CULL_BACK,
+front-face = counter-clockwise as seen on screen after the shader's Y-flip).
+
+**Textures.** The bound texture is a `Texture2DArray` of 512×512 BGRA layers (256
+max). `tex_ptr` points to a contiguous block of layer images (layer *k* at
+`tex_ptr + k*512*512*4`); the number of layers to upload is packed into the high
+32 bits of `tex_w` (`texw | (nlayers<<32)`; zero high bits = one layer). The
+per-vertex `slice` selects the layer.
+
+**Fog.** The vertex shader applies linear distance fog whose parameters are
+dynamic, supplied through the `gpu.set_viewproj` buffer: it is a 96-byte block of
+24 float32 — the 16-float matrix followed by `fogColor.rgb`, `fogStart`,
+`fogInvRange`, and padding. The `u` texcoord gates fog per vertex.
+
+**SDF text.** A **negative** `slice` switches the fragment to signed-distance-field
+text mode: `abs(slice)` is the SDF atlas layer, sampled with a linear sampler and
+thresholded (smoothstep) to a crisp, scalable glyph alpha modulated by the vertex
+color. This yields custom-font overlay UI in the same shader and draw call as 3D
+geometry, with no effect on the (nonnegative-`slice`) textured path.
+
+**Persistence.** Re-submitting the same `(verts, count)` skips the convert +
+re-upload and redraws the resident GPU buffer, so static geometry uploads once;
+changing the pointer or count re-uploads (animated/streamed geometry).
+
 ---
 
 ## 14. Memory Model
@@ -1041,8 +1076,6 @@ local int gv = tex.gradient_v(y, 256);         // vertical gradient
 local int b = tex.brick(x, y, 64, 32, 2);      // brick pattern
 local int n = tex.noise2d(x, y, seed);         // hash-based noise
 local int p = tex.perlin2d(x, y, freq, seed);  // Perlin noise
-local int w = tex.wood(x, y, rings, seed);     // wood grain
-local int m = tex.marble(x, y, freq, seed);    // marble veins
 ```
 ---
 
@@ -1115,6 +1148,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `println(expr)`                 | Write int/float/str to stdout with newline         |
 | `readline()`                    | Read line from stdin; returns str                  |
 | `readfile(path)`                | Read file contents; returns str                    |
+| `sqrt(x)` / `sin(x)` / `cos(x)` | Float square root / sine / cosine -> float         |
 | `pixel(x,y,r,g,b)`             | Write pixel to framebuffer                         |
 | `fill_triangle(...)`            | Flat-shaded scanline triangle                      |
 | `fill_triangle_gradient(...)`   | Gouraud-shaded scanline triangle                   |
@@ -1122,8 +1156,9 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `fill_triangle_affine(...)`     | PS1-style affine textured triangle (RGB565)        |
 | `fill_triangle_persp(...)`      | PS2-style perspective-correct textured triangle    |
 | `fill_triangle_pcolor(...)`     | Perspective-correct textured triangle, per-vertex color (CPU-optimized) |
-| `fill_triangle_gpu(verts,count,tex,w,h)` | Bulk GPU draw: world-space verts (9 int64/vertex: x,y,z,u,v,r,g,b,a) transformed by the view-projection matrix in-shader, depth-tested; re-uploads each call (dynamic geometry) |
+| `fill_triangle_gpu(verts,count,tex,w,h)` | Bulk GPU draw: world-space verts (10 int64/vertex: x,y,z,u,v,r,g,b,a,slice; 80-byte stride) transformed by the view-projection matrix in-shader, depth-tested (CULL_BACK). `tex` is a Texture2DArray (512×512 BGRA layers, layer count in high 32 bits of `w`); `slice` picks the layer (negative `slice` = SDF text mode). Persistent: same verts/count redraws without re-upload |
 | `gpu.detect()`                  | Scan all adapters, select best (discrete preferred); returns vendor 1=Intel/2=AMD/3=NVIDIA/0=none |
+| `gpu.vendor()`                  | Cached vendor code from the last `gpu.detect()` (no re-probe) |
 | `gpu.init()`                    | Create device/swapchain/depth/pipeline on the selected adapter; 1 on success |
 | `gpu.ready()` / `gpu.pipeline()` | 1 when device+swapchain / full pipeline are live |
 | `gpu.discrete()`                | 1 if the live device is a discrete GPU (UMA=0), 0 if integrated |
@@ -1138,6 +1173,8 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `window.textbuf(x,y,ptr,len,r,g,b)` | Draw `len` bytes from a runtime byte buffer as text (for dynamically built strings) |
 | `window.flush()`                | Drain deferred fill_triangle* queue, blit to window (uncapped) |
 | `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
+| `window.center_cursor()`        | Move cursor to window center (FPS mouse-look re-center) |
+| `window.clip(x0,y0,x1,y1)`      | Per-window raster clip rect for CPU fill_triangle* |
 | `window.release_mouse()`        | Release capture, show cursor                       |
 | `window.native()`               | Returns native resolution as "WxH" string          |
 | `window.width()` / `window.height()` | Current client size as int (tracks live resize)   |
@@ -1192,7 +1229,10 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `audio.free(handle)`            | Free a loaded sound                                |
 | `audio.play(handle)`            | Play once from the start (ignores loop points)     |
 | `audio.loop(handle)`            | Play from start, then repeat [loop_start,loop_end) forever |
-| `audio.stop(handle)`            | Stop playback                                      |
+| `audio.stop(handle)`            | Stop playback (resets position to 0)               |
+| `audio.pause(handle)`           | Pause, retaining current position                  |
+| `audio.resume(handle)`          | Resume a paused sound from its position            |
+| `audio.is_paused(handle)`       | 1 if the sound is paused, else 0                   |
 | `audio.volume(handle,vol)`      | Per-sound volume 0-255                             |
 | `audio.master_volume(vol)`      | Master volume 0-255                                |
 | `audio.pan(handle,pan)`         | Stereo pan: 0=left, 128=center, 255=right          |
@@ -1233,7 +1273,6 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `tex.brick(x,y,bw,bh,m)`        | Brick pattern (0=mortar, 255=brick)                |
 | `tex.noise2d(x,y,seed)`         | Hash-based noise 0-255                             |
 | `tex.perlin2d(x,y,freq,seed)`   | Perlin noise 0-255                                 |
-| `tex.wood/marble(x,y,...)`      | Organic texture patterns                           |
 | `net.start()` / `net.end()`     | Begin / end a networking session (ws2_32)          |
 | `net.bind(port)`                | Socket + bind + listen (no block)                  |
 | `net.accept()`                  | Block for a peer on the bound socket               |
@@ -1261,7 +1300,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `crypto.aes_encrypt(in,len,out)` | AES-256-CBC encrypt, IV prepended -> total len    |
 | `crypto.aes_decrypt(in,len,out)` | AES-256-CBC decrypt -> plaintext len (-1 fail)    |
 
-**Audio known limitations:** no pause/resume (`audio.stop` always resets position to 0), each loaded sound has exactly one playback slot (overlapping the same sound with itself requires separate handles), no pitch/rate variation, and `audio.load` reads the entire file into memory (no streaming).
+**Audio known limitations:** each loaded sound has exactly one playback slot (overlapping the same sound with itself requires separate handles), no pitch/rate variation, and `audio.load` reads the entire file into memory (no streaming). (`audio.pause`/`audio.resume`/`audio.is_paused` retain position; `audio.stop` resets to 0; `audio.pan` gives stereo balance.)
 
 ---
 

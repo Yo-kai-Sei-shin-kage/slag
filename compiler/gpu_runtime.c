@@ -39,8 +39,9 @@ void emit_gpu_bss(Codegen *cg) {
     E("_gpu_cbuf:      resq 1");   // ID3D11Buffer* constant buffer (viewport)
     E("_gpu_tex:       resq 1");   // ID3D11Texture2D* (512x512 BGRA)
     E("_gpu_srv:       resq 1");   // ID3D11ShaderResourceView*
-    E("_gpu_sampler:   resq 1");   // ID3D11SamplerState*
-    E("_gpu_raster:    resq 1");   // ID3D11RasterizerState* (CULL_NONE)
+    E("_gpu_sampler:   resq 1");   // ID3D11SamplerState* (point+clamp, s0: world textures)
+    E("_gpu_sampler_lin: resq 1"); // ID3D11SamplerState* (linear+clamp, s1: SDF text)
+    E("_gpu_raster:    resq 1");   // ID3D11RasterizerState* (CULL_BACK, FrontCCW)
     E("_gpu_pipeline:  resq 1");   // 1 once all pipeline objects created
     E("_gpu_stage:     resq 1");   // heap buffer of staged raw pcolor verts
     E("_gpu_convbuf:   resq 1");   // cached scratch for converted float verts (bulk-copied to WC vbuf)
@@ -474,135 +475,185 @@ void emit_gpu_data(Codegen *cg) {
     E("_gpu_sem_tex:   db 84,69,88,67,79,79,82,68,0   ; \"TEXCOORD\"");
     E("_gpu_sem_col:   db 67,79,76,79,82,0            ; \"COLOR\"");
     E("align 16");
-    E("_gpu_vs_blob:  ; 1224 bytes DXBC (MVP /Zpr row-major; COLOR=RGBA, alpha passthrough)");
-    E("    db 68,88,66,67,60,236,86,47,72,106,61,222,67,25,189,96");
-    E("    db 120,196,16,5,1,0,0,0,200,4,0,0,5,0,0,0");
-    E("    db 52,0,0,0,60,1,0,0,172,1,0,0,32,2,0,0");
-    E("    db 44,4,0,0,82,68,69,70,0,1,0,0,1,0,0,0");
+    E("_gpu_vs_blob:  ; 1604 bytes DXBC (MVP /Zpr row-major; COLOR=RGBA; fog from cbuf b0; slice TEXCOORD1 passthrough)");
+    E("    db 68,88,66,67,62,112,215,243,141,106,137,114,129,203,222,199");
+    E("    db 239,122,253,94,1,0,0,0,68,6,0,0,5,0,0,0");
+    E("    db 52,0,0,0,88,2,0,0,224,2,0,0,108,3,0,0");
+    E("    db 168,5,0,0,82,68,69,70,28,2,0,0,1,0,0,0");
     E("    db 96,0,0,0,1,0,0,0,60,0,0,0,0,5,254,255");
-    E("    db 8,1,0,0,216,0,0,0,82,68,49,49,60,0,0,0");
+    E("    db 8,1,0,0,241,1,0,0,82,68,49,49,60,0,0,0");
     E("    db 24,0,0,0,32,0,0,0,40,0,0,0,36,0,0,0");
     E("    db 12,0,0,0,0,0,0,0,92,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 1,0,0,0,1,0,0,0,67,0,171,171,92,0,0,0");
-    E("    db 1,0,0,0,120,0,0,0,64,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,160,0,0,0,0,0,0,0,64,0,0,0");
-    E("    db 2,0,0,0,180,0,0,0,0,0,0,0,255,255,255,255");
+    E("    db 5,0,0,0,120,0,0,0,96,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,64,1,0,0,0,0,0,0,64,0,0,0");
+    E("    db 2,0,0,0,84,1,0,0,0,0,0,0,255,255,255,255");
+    E("    db 0,0,0,0,255,255,255,255,0,0,0,0,120,1,0,0");
+    E("    db 64,0,0,0,12,0,0,0,2,0,0,0,136,1,0,0");
+    E("    db 0,0,0,0,255,255,255,255,0,0,0,0,255,255,255,255");
+    E("    db 0,0,0,0,172,1,0,0,76,0,0,0,4,0,0,0");
+    E("    db 2,0,0,0,188,1,0,0,0,0,0,0,255,255,255,255");
+    E("    db 0,0,0,0,255,255,255,255,0,0,0,0,224,1,0,0");
+    E("    db 80,0,0,0,4,0,0,0,2,0,0,0,188,1,0,0");
+    E("    db 0,0,0,0,255,255,255,255,0,0,0,0,255,255,255,255");
+    E("    db 0,0,0,0,236,1,0,0,84,0,0,0,12,0,0,0");
+    E("    db 0,0,0,0,136,1,0,0,0,0,0,0,255,255,255,255");
     E("    db 0,0,0,0,255,255,255,255,0,0,0,0,118,105,101,119");
     E("    db 112,114,111,106,0,102,108,111,97,116,52,120,52,0,171,171");
     E("    db 2,0,3,0,4,0,4,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 169,0,0,0,77,105,99,114,111,115,111,102,116,32,40,82");
-    E("    db 41,32,72,76,83,76,32,83,104,97,100,101,114,32,67,111");
-    E("    db 109,112,105,108,101,114,32,49,48,46,49,0,73,83,71,78");
-    E("    db 104,0,0,0,3,0,0,0,8,0,0,0,80,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0");
-    E("    db 7,7,0,0,89,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 3,0,0,0,1,0,0,0,3,3,0,0,98,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,3,0,0,0,2,0,0,0");
-    E("    db 15,15,0,0,80,79,83,73,84,73,79,78,0,84,69,88");
-    E("    db 67,79,79,82,68,0,67,79,76,79,82,0,79,83,71,78");
-    E("    db 108,0,0,0,3,0,0,0,8,0,0,0,80,0,0,0");
-    E("    db 0,0,0,0,1,0,0,0,3,0,0,0,0,0,0,0");
-    E("    db 15,0,0,0,92,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 3,0,0,0,1,0,0,0,3,12,0,0,101,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,3,0,0,0,2,0,0,0");
-    E("    db 15,0,0,0,83,86,95,80,79,83,73,84,73,79,78,0");
-    E("    db 84,69,88,67,79,79,82,68,0,67,79,76,79,82,0,171");
-    E("    db 83,72,69,88,4,2,0,0,80,0,1,0,129,0,0,0");
-    E("    db 106,8,0,1,89,0,0,4,70,142,32,0,0,0,0,0");
-    E("    db 4,0,0,0,95,0,0,3,114,16,16,0,0,0,0,0");
-    E("    db 95,0,0,3,50,16,16,0,1,0,0,0,95,0,0,3");
-    E("    db 242,16,16,0,2,0,0,0,103,0,0,4,242,32,16,0");
-    E("    db 0,0,0,0,1,0,0,0,101,0,0,3,50,32,16,0");
-    E("    db 1,0,0,0,101,0,0,3,242,32,16,0,2,0,0,0");
-    E("    db 104,0,0,2,1,0,0,0,56,0,0,8,242,0,16,0");
-    E("    db 0,0,0,0,86,21,16,0,0,0,0,0,70,142,32,0");
-    E("    db 0,0,0,0,1,0,0,0,50,0,0,10,242,0,16,0");
-    E("    db 0,0,0,0,6,16,16,0,0,0,0,0,70,142,32,0");
-    E("    db 0,0,0,0,0,0,0,0,70,14,16,0,0,0,0,0");
-    E("    db 50,0,0,10,242,0,16,0,0,0,0,0,166,26,16,0");
-    E("    db 0,0,0,0,70,142,32,0,0,0,0,0,2,0,0,0");
-    E("    db 70,14,16,0,0,0,0,0,0,0,0,8,242,0,16,0");
-    E("    db 0,0,0,0,70,14,16,0,0,0,0,0,70,142,32,0");
-    E("    db 0,0,0,0,3,0,0,0,54,0,0,5,242,32,16,0");
-    E("    db 0,0,0,0,70,14,16,0,0,0,0,0,0,0,0,7");
-    E("    db 18,0,16,0,0,0,0,0,58,0,16,0,0,0,0,0");
-    E("    db 1,64,0,0,0,0,250,196,56,32,0,7,18,0,16,0");
-    E("    db 0,0,0,0,10,0,16,0,0,0,0,0,1,64,0,0");
-    E("    db 62,195,174,57,54,0,0,5,50,32,16,0,1,0,0,0");
-    E("    db 70,16,16,0,1,0,0,0,0,0,0,8,34,0,16,0");
-    E("    db 0,0,0,0,10,16,16,128,65,0,0,0,1,0,0,0");
-    E("    db 1,64,0,0,0,0,128,63,56,0,0,7,18,0,16,0");
-    E("    db 0,0,0,0,26,0,16,0,0,0,0,0,10,0,16,0");
-    E("    db 0,0,0,0,0,0,0,11,226,0,16,0,0,0,0,0");
-    E("    db 6,25,16,128,65,0,0,0,2,0,0,0,2,64,0,0");
-    E("    db 0,0,0,0,151,150,22,63,171,170,42,63,196,195,67,63");
-    E("    db 50,0,0,9,114,32,16,0,2,0,0,0,6,0,16,0");
-    E("    db 0,0,0,0,150,7,16,0,0,0,0,0,70,18,16,0");
-    E("    db 2,0,0,0,54,0,0,5,130,32,16,0,2,0,0,0");
-    E("    db 58,16,16,0,2,0,0,0,62,0,0,1,83,84,65,84");
-    E("    db 148,0,0,0,14,0,0,0,1,0,0,0,0,0,0,0");
-    E("    db 6,0,0,0,10,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 73,1,0,0,102,111,103,67,111,108,111,114,0,102,108,111");
+    E("    db 97,116,51,0,1,0,3,0,1,0,3,0,0,0,0,0");
+    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,129,1,0,0,102,111,103,83,116,97,114,116");
+    E("    db 0,102,108,111,97,116,0,171,0,0,3,0,1,0,1,0");
+    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,0,0,0,0,181,1,0,0,102,111,103,73");
+    E("    db 110,118,82,97,110,103,101,0,95,112,97,100,0,77,105,99");
+    E("    db 114,111,115,111,102,116,32,40,82,41,32,72,76,83,76,32");
+    E("    db 83,104,97,100,101,114,32,67,111,109,112,105,108,101,114,32");
+    E("    db 49,48,46,49,0,171,171,171,73,83,71,78,128,0,0,0");
+    E("    db 4,0,0,0,8,0,0,0,104,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,3,0,0,0,0,0,0,0,7,7,0,0");
+    E("    db 113,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0");
+    E("    db 1,0,0,0,3,3,0,0,122,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,3,0,0,0,2,0,0,0,15,15,0,0");
+    E("    db 113,0,0,0,1,0,0,0,0,0,0,0,3,0,0,0");
+    E("    db 3,0,0,0,1,1,0,0,80,79,83,73,84,73,79,78");
+    E("    db 0,84,69,88,67,79,79,82,68,0,67,79,76,79,82,0");
+    E("    db 79,83,71,78,132,0,0,0,4,0,0,0,8,0,0,0");
+    E("    db 104,0,0,0,0,0,0,0,1,0,0,0,3,0,0,0");
+    E("    db 0,0,0,0,15,0,0,0,116,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,3,0,0,0,1,0,0,0,3,12,0,0");
+    E("    db 116,0,0,0,1,0,0,0,0,0,0,0,3,0,0,0");
+    E("    db 1,0,0,0,4,11,0,0,125,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,3,0,0,0,2,0,0,0,15,0,0,0");
+    E("    db 83,86,95,80,79,83,73,84,73,79,78,0,84,69,88,67");
+    E("    db 79,79,82,68,0,67,79,76,79,82,0,171,83,72,69,88");
+    E("    db 52,2,0,0,80,0,1,0,141,0,0,0,106,8,0,1");
+    E("    db 89,0,0,4,70,142,32,0,0,0,0,0,6,0,0,0");
+    E("    db 95,0,0,3,114,16,16,0,0,0,0,0,95,0,0,3");
+    E("    db 50,16,16,0,1,0,0,0,95,0,0,3,242,16,16,0");
+    E("    db 2,0,0,0,95,0,0,3,18,16,16,0,3,0,0,0");
+    E("    db 103,0,0,4,242,32,16,0,0,0,0,0,1,0,0,0");
+    E("    db 101,0,0,3,50,32,16,0,1,0,0,0,101,0,0,3");
+    E("    db 66,32,16,0,1,0,0,0,101,0,0,3,242,32,16,0");
+    E("    db 2,0,0,0,104,0,0,2,1,0,0,0,56,0,0,8");
+    E("    db 242,0,16,0,0,0,0,0,86,21,16,0,0,0,0,0");
+    E("    db 70,142,32,0,0,0,0,0,1,0,0,0,50,0,0,10");
+    E("    db 242,0,16,0,0,0,0,0,6,16,16,0,0,0,0,0");
+    E("    db 70,142,32,0,0,0,0,0,0,0,0,0,70,14,16,0");
+    E("    db 0,0,0,0,50,0,0,10,242,0,16,0,0,0,0,0");
+    E("    db 166,26,16,0,0,0,0,0,70,142,32,0,0,0,0,0");
+    E("    db 2,0,0,0,70,14,16,0,0,0,0,0,0,0,0,8");
+    E("    db 242,0,16,0,0,0,0,0,70,14,16,0,0,0,0,0");
+    E("    db 70,142,32,0,0,0,0,0,3,0,0,0,54,0,0,5");
+    E("    db 242,32,16,0,0,0,0,0,70,14,16,0,0,0,0,0");
+    E("    db 0,0,0,9,18,0,16,0,0,0,0,0,58,0,16,0");
+    E("    db 0,0,0,0,58,128,32,128,65,0,0,0,0,0,0,0");
+    E("    db 4,0,0,0,56,32,0,8,18,0,16,0,0,0,0,0");
+    E("    db 10,0,16,0,0,0,0,0,10,128,32,0,0,0,0,0");
+    E("    db 5,0,0,0,54,0,0,5,50,32,16,0,1,0,0,0");
+    E("    db 70,16,16,0,1,0,0,0,54,0,0,5,66,32,16,0");
+    E("    db 1,0,0,0,10,16,16,0,3,0,0,0,0,0,0,8");
+    E("    db 34,0,16,0,0,0,0,0,10,16,16,128,65,0,0,0");
+    E("    db 1,0,0,0,1,64,0,0,0,0,128,63,56,0,0,7");
+    E("    db 18,0,16,0,0,0,0,0,26,0,16,0,0,0,0,0");
+    E("    db 10,0,16,0,0,0,0,0,0,0,0,9,226,0,16,0");
+    E("    db 0,0,0,0,6,25,16,128,65,0,0,0,2,0,0,0");
+    E("    db 6,137,32,0,0,0,0,0,4,0,0,0,50,0,0,9");
+    E("    db 114,32,16,0,2,0,0,0,6,0,16,0,0,0,0,0");
+    E("    db 150,7,16,0,0,0,0,0,70,18,16,0,2,0,0,0");
+    E("    db 54,0,0,5,130,32,16,0,2,0,0,0,58,16,16,0");
+    E("    db 2,0,0,0,62,0,0,1,83,84,65,84,148,0,0,0");
+    E("    db 15,0,0,0,1,0,0,0,0,0,0,0,8,0,0,0");
+    E("    db 10,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0");
-    E("_gpu_vs_blob_len equ 1224");
+    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0");
+    E("_gpu_vs_blob_len equ 1604");
     E("align 16");
-    E("_gpu_ps_blob:  ; 744 bytes DXBC (tex*col, out alpha=col.a)");
-    E("    db 68,88,66,67,205,215,69,61,99,155,76,72,35,5,70,101");
-    E("    db 170,63,199,214,1,0,0,0,232,2,0,0,5,0,0,0");
-    E("    db 52,0,0,0,232,0,0,0,92,1,0,0,144,1,0,0");
-    E("    db 76,2,0,0,82,68,69,70,172,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,2,0,0,0,60,0,0,0,0,5,255,255");
-    E("    db 0,1,0,0,132,0,0,0,82,68,49,49,60,0,0,0");
+    E("_gpu_ps_blob:  ; 1340 bytes DXBC (Texture2DArray; slice<0 = SDF text via linear s1; else tex*col)");
+    E("    db 68,88,66,67,173,77,238,92,106,33,165,162,173,202,32,120");
+    E("    db 47,30,164,247,1,0,0,0,136,4,0,0,5,0,0,0");
+    E("    db 52,0,0,0,16,1,0,0,156,1,0,0,208,1,0,0");
+    E("    db 236,3,0,0,82,68,69,70,212,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,3,0,0,0,60,0,0,0,0,5,255,255");
+    E("    db 0,1,0,0,171,0,0,0,82,68,49,49,60,0,0,0");
     E("    db 24,0,0,0,32,0,0,0,40,0,0,0,36,0,0,0");
-    E("    db 12,0,0,0,0,0,0,0,124,0,0,0,3,0,0,0");
+    E("    db 12,0,0,0,0,0,0,0,156,0,0,0,3,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 1,0,0,0,1,0,0,0,128,0,0,0,2,0,0,0");
-    E("    db 5,0,0,0,4,0,0,0,255,255,255,255,0,0,0,0");
-    E("    db 1,0,0,0,13,0,0,0,115,109,112,0,116,101,120,0");
-    E("    db 77,105,99,114,111,115,111,102,116,32,40,82,41,32,72,76");
-    E("    db 83,76,32,83,104,97,100,101,114,32,67,111,109,112,105,108");
-    E("    db 101,114,32,49,48,46,49,0,73,83,71,78,108,0,0,0");
-    E("    db 3,0,0,0,8,0,0,0,80,0,0,0,0,0,0,0");
-    E("    db 1,0,0,0,3,0,0,0,0,0,0,0,15,0,0,0");
-    E("    db 92,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0");
-    E("    db 1,0,0,0,3,3,0,0,101,0,0,0,0,0,0,0");
+    E("    db 1,0,0,0,1,0,0,0,160,0,0,0,3,0,0,0");
+    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0");
+    E("    db 1,0,0,0,1,0,0,0,167,0,0,0,2,0,0,0");
+    E("    db 5,0,0,0,5,0,0,0,255,255,255,255,0,0,0,0");
+    E("    db 1,0,0,0,13,0,0,0,115,109,112,0,115,109,112,76");
+    E("    db 105,110,0,116,101,120,0,77,105,99,114,111,115,111,102,116");
+    E("    db 32,40,82,41,32,72,76,83,76,32,83,104,97,100,101,114");
+    E("    db 32,67,111,109,112,105,108,101,114,32,49,48,46,49,0,171");
+    E("    db 73,83,71,78,132,0,0,0,4,0,0,0,8,0,0,0");
+    E("    db 104,0,0,0,0,0,0,0,1,0,0,0,3,0,0,0");
+    E("    db 0,0,0,0,15,0,0,0,116,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,3,0,0,0,1,0,0,0,3,3,0,0");
+    E("    db 116,0,0,0,1,0,0,0,0,0,0,0,3,0,0,0");
+    E("    db 1,0,0,0,4,4,0,0,125,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,3,0,0,0,2,0,0,0,15,15,0,0");
     E("    db 83,86,95,80,79,83,73,84,73,79,78,0,84,69,88,67");
     E("    db 79,79,82,68,0,67,79,76,79,82,0,171,79,83,71,78");
     E("    db 44,0,0,0,1,0,0,0,8,0,0,0,32,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,3,0,0,0,0,0,0,0");
     E("    db 15,0,0,0,83,86,95,84,65,82,71,69,84,0,171,171");
-    E("    db 83,72,69,88,180,0,0,0,80,0,0,0,45,0,0,0");
+    E("    db 83,72,69,88,20,2,0,0,80,0,0,0,133,0,0,0");
     E("    db 106,8,0,1,90,0,0,3,0,96,16,0,0,0,0,0");
-    E("    db 88,24,0,4,0,112,16,0,0,0,0,0,85,85,0,0");
-    E("    db 98,16,0,3,50,16,16,0,1,0,0,0,98,16,0,3");
-    E("    db 242,16,16,0,2,0,0,0,101,0,0,3,242,32,16,0");
-    E("    db 0,0,0,0,104,0,0,2,1,0,0,0,69,0,0,139");
-    E("    db 194,0,0,128,67,85,21,0,114,0,16,0,0,0,0,0");
-    E("    db 70,16,16,0,1,0,0,0,70,126,16,0,0,0,0,0");
+    E("    db 90,0,0,3,0,96,16,0,1,0,0,0,88,64,0,4");
+    E("    db 0,112,16,0,0,0,0,0,85,85,0,0,98,16,0,3");
+    E("    db 50,16,16,0,1,0,0,0,98,16,0,3,66,16,16,0");
+    E("    db 1,0,0,0,98,16,0,3,242,16,16,0,2,0,0,0");
+    E("    db 101,0,0,3,242,32,16,0,0,0,0,0,104,0,0,2");
+    E("    db 1,0,0,0,49,0,0,7,18,0,16,0,0,0,0,0");
+    E("    db 42,16,16,0,1,0,0,0,1,64,0,0,0,0,0,0");
+    E("    db 31,0,4,3,10,0,16,0,0,0,0,0,56,0,0,10");
+    E("    db 114,0,16,0,0,0,0,0,70,18,16,0,1,0,0,0");
+    E("    db 2,64,0,0,0,0,128,63,0,0,128,63,0,0,128,191");
+    E("    db 0,0,0,0,69,0,0,139,2,2,0,128,67,85,21,0");
+    E("    db 18,0,16,0,0,0,0,0,70,2,16,0,0,0,0,0");
+    E("    db 70,126,16,0,0,0,0,0,0,96,16,0,1,0,0,0");
+    E("    db 0,0,0,7,18,0,16,0,0,0,0,0,10,0,16,0");
+    E("    db 0,0,0,0,1,64,0,0,31,133,235,190,56,32,0,7");
+    E("    db 18,0,16,0,0,0,0,0,10,0,16,0,0,0,0,0");
+    E("    db 1,64,0,0,254,255,71,65,50,0,0,9,34,0,16,0");
+    E("    db 0,0,0,0,10,0,16,0,0,0,0,0,1,64,0,0");
+    E("    db 0,0,0,192,1,64,0,0,0,0,64,64,56,0,0,7");
+    E("    db 18,0,16,0,0,0,0,0,10,0,16,0,0,0,0,0");
+    E("    db 10,0,16,0,0,0,0,0,56,0,0,7,18,0,16,0");
+    E("    db 0,0,0,0,10,0,16,0,0,0,0,0,26,0,16,0");
+    E("    db 0,0,0,0,56,0,0,7,130,32,16,0,0,0,0,0");
+    E("    db 10,0,16,0,0,0,0,0,58,16,16,0,2,0,0,0");
+    E("    db 54,0,0,5,114,32,16,0,0,0,0,0,70,18,16,0");
+    E("    db 2,0,0,0,62,0,0,1,21,0,0,1,69,0,0,139");
+    E("    db 2,2,0,128,67,85,21,0,114,0,16,0,0,0,0,0");
+    E("    db 70,18,16,0,1,0,0,0,70,126,16,0,0,0,0,0");
     E("    db 0,96,16,0,0,0,0,0,56,0,0,7,114,32,16,0");
     E("    db 0,0,0,0,70,2,16,0,0,0,0,0,70,18,16,0");
     E("    db 2,0,0,0,54,0,0,5,130,32,16,0,0,0,0,0");
     E("    db 58,16,16,0,2,0,0,0,62,0,0,1,83,84,65,84");
-    E("    db 148,0,0,0,4,0,0,0,1,0,0,0,0,0,0,0");
-    E("    db 3,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0");
+    E("    db 148,0,0,0,17,0,0,0,1,0,0,0,0,0,0,0");
+    E("    db 4,0,0,0,9,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 2,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
-    E("    db 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
+    E("    db 2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0");
     E("    db 0,0,0,0,0,0,0,0");
-    E("_gpu_ps_blob_len equ 744");
+    E("_gpu_ps_blob_len equ 1160");
 }
 
 // _slag_gpu_create_pipeline: create all pcolor pipeline objects (VS, PS, input
@@ -626,8 +677,11 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("FMT_RGBA32F        equ 2");
     E("FMT_RGB32F         equ 6");
     E("FMT_RG32F          equ 16");
+    E("FMT_R32F           equ 41");
     E("FMT_BGRA8          equ 87");
+    E("GPU_TEX_SLICES     equ 256");       // Texture2DArray slice count (512x512 BGRA each)
     E("FILTER_POINT       equ 0");
+    E("FILTER_LINEAR      equ 21");       // D3D11_FILTER_MIN_MAG_MIP_LINEAR (0x15)
     E("ADDR_CLAMP         equ 3");
     E("");
     E("; --- _slag_gpu_create_pipeline ---");
@@ -666,7 +720,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    test eax, eax");
     E("    jnz  .pl_fail");
 
-    // Build 3 D3D11_INPUT_ELEMENT_DESC at [rsp+0x80] (32 bytes each).
+    // Build 4 D3D11_INPUT_ELEMENT_DESC at [rsp+0x80] (32 bytes each).
     E("    lea  rax, [_gpu_sem_pos]");
     E("    mov  [rsp+0x80+0], rax");
     E("    mov  dword [rsp+0x80+8], 0");
@@ -691,12 +745,20 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    mov  dword [rsp+0xC0+20], 20");
     E("    mov  dword [rsp+0xC0+24], 0");
     E("    mov  dword [rsp+0xC0+28], 0");
+    E("    lea  rax, [_gpu_sem_tex]");
+    E("    mov  [rsp+0xE0+0], rax");
+    E("    mov  dword [rsp+0xE0+8], 1");
+    E("    mov  dword [rsp+0xE0+12], FMT_R32F");
+    E("    mov  dword [rsp+0xE0+16], 0");
+    E("    mov  dword [rsp+0xE0+20], 36");
+    E("    mov  dword [rsp+0xE0+24], 0");
+    E("    mov  dword [rsp+0xE0+28], 0");
 
-    // CreateInputLayout(descs, 3, vs_blob, vs_len, &_gpu_layout) -- 0x58, 6 args
+    // CreateInputLayout(descs, 4, vs_blob, vs_len, &_gpu_layout) -- 0x58, 6 args
     E("    mov  rcx, rbx");
     E("    mov  rax, [rbx]");
     E("    lea  rdx, [rsp+0x80]");
-    E("    mov  r8,  3");
+    E("    mov  r8,  4");
     E("    lea  r9,  [_gpu_vs_blob]");
     E("    mov  qword [rsp+0x20], _gpu_vs_blob_len");
     E("    lea  rax, [_gpu_layout]");
@@ -707,8 +769,8 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    jnz  .pl_fail");
 
     // Dynamic vertex buffer: sized for the full stage batch
-    // (GPU_STAGE_CAP tris * 3 verts * 36B = 131072*108 = 14155776 bytes).
-    E("    mov  dword [rsp+0x100+BUFDESC_BYTEWIDTH], 14155776");
+    // (GPU_STAGE_CAP tris * 3 verts * 40B = 131072*120 = 15728640 bytes).
+    E("    mov  dword [rsp+0x100+BUFDESC_BYTEWIDTH], 15728640");
     E("    mov  dword [rsp+0x100+BUFDESC_USAGE], USAGE_DYNAMIC");
     E("    mov  dword [rsp+0x100+BUFDESC_BIND], BIND_VERTEX");
     E("    mov  dword [rsp+0x100+BUFDESC_CPUACCESS], D3DCPU_WRITE");
@@ -736,7 +798,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    jnz  .pl_fail");
 
     // Constant buffer: 64 bytes (float4x4 viewproj), dynamic.
-    E("    mov  dword [rsp+0x100+BUFDESC_BYTEWIDTH], 64");
+    E("    mov  dword [rsp+0x100+BUFDESC_BYTEWIDTH], 96");
     E("    mov  dword [rsp+0x100+BUFDESC_USAGE], USAGE_DYNAMIC");
     E("    mov  dword [rsp+0x100+BUFDESC_BIND], BIND_CONSTANT");
     E("    mov  dword [rsp+0x100+BUFDESC_CPUACCESS], D3DCPU_WRITE");
@@ -751,11 +813,11 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    test eax, eax");
     E("    jnz  .pl_fail");
 
-    // 512x512 BGRA texture: TEXTURE2D_DESC at [rsp+0x120] (44 bytes).
+    // 512x512 BGRA Texture2DArray (GPU_TEX_SLICES slices): TEXTURE2D_DESC at [rsp+0x120] (44 bytes).
     E("    mov  dword [rsp+0x120+0], 512");
     E("    mov  dword [rsp+0x120+4], 512");
     E("    mov  dword [rsp+0x120+8], 1");
-    E("    mov  dword [rsp+0x120+12], 1");
+    E("    mov  dword [rsp+0x120+12], GPU_TEX_SLICES");
     E("    mov  dword [rsp+0x120+16], FMT_BGRA8");
     E("    mov  dword [rsp+0x120+20], 1");
     E("    mov  dword [rsp+0x120+24], 0");
@@ -796,6 +858,26 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    mov  rax, [rbx]");
     E("    lea  rdx, [rsp+0x150]");
     E("    lea  r8,  [_gpu_sampler]");
+    E("    call [rax + 0xb8]");
+    E("    test eax, eax");
+    E("    jnz  .pl_fail");
+
+    // Second sampler: linear + clamp (s1), for SDF text distance interpolation.
+    // Reuses rsp+0x150 scratch -- the point sampler above already consumed its
+    // desc, and the rasterizer below re-zeros this region before its own use.
+    E("    lea  rdi, [rsp+0x150]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 13");
+    E("    rep  stosd");
+    E("    mov  dword [rsp+0x150+0], FILTER_LINEAR");
+    E("    mov  dword [rsp+0x150+4], ADDR_CLAMP");
+    E("    mov  dword [rsp+0x150+8], ADDR_CLAMP");
+    E("    mov  dword [rsp+0x150+12], ADDR_CLAMP");
+    E("    mov  dword [rsp+0x150+48], 0x7f7fffff");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x150]");
+    E("    lea  r8,  [_gpu_sampler_lin]");
     E("    call [rax + 0xb8]");
     E("    test eax, eax");
     E("    jnz  .pl_fail");
@@ -916,7 +998,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
 static void emit_gpu_stage_init(Codegen *cg) {
     E("GPU_STAGE_TRI    equ 192");        // raw bytes per staged triangle
     E("GPU_STAGE_CAP    equ 131072");     // max triangles per frame
-    E("GPU_VTX_STRIDE   equ 36");         // float vertex: pos3 + uv2 + col4 (rgba)
+    E("GPU_VTX_STRIDE   equ 40");         // float vertex: pos3 + uv2 + col4 (rgba) + slice
     E("MAP_WR_DISCARD   equ 4");
     E("TOPOLOGY_TRILIST equ 4");
     E("");
@@ -1108,7 +1190,7 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    mov  rsi, [_gpu_convbuf]");
     E("    mov  rdi, [rsp+0x40]        ; mapped.pData");
     E("    mov  rcx, r13");
-    E("    imul rcx, 9                 ; dwords = verts * 36B / 4 = verts*9");
+    E("    imul rcx, 10                ; dwords = verts * 40B / 4 = verts*10");
     E("    rep  movsd");
 
     // Unmap vertex buffer (the same double-buffered vbuf mapped above)
@@ -1141,7 +1223,7 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    jnz  .pf_after_cb");
     E("    mov  rdi, [rsp+0x40]        ; mapped.pData");
     E("    mov  rsi, [_gpu_viewproj]");
-    E("    mov  ecx, 8                 ; 8 qwords = 64 bytes (4x4 float)");
+    E("    mov  ecx, 12                ; 12 qwords = 96 bytes (4x4 matrix + fog cbuf tail)");
     E("    rep  movsq");
     E("    mov  rcx, r15");
     E("    mov  rdx, [_gpu_cbuf]");
@@ -1150,25 +1232,47 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    call [rax + 0x78]           ; Unmap cbuf");
     E(".pf_after_cb:");
 
-    // UpdateSubresource: texture from FTEX pixels (512x512 BGRA). Skip the
-    // ~1MB/frame DMA + driver call when the texture pointer is unchanged from
-    // the last upload -- static textures (the common case) upload exactly once.
-    // NOTE: keyed on the tex_ptr, not its contents; a program mutating pixels
-    // in place at the same pointer must change the pointer (or this stays stale).
+    // UpdateSubresource per array slice: tex_ptr is a contiguous block of
+    // GPU_TEX_SLICES images (512x512 BGRA, slice k at tex_ptr + k*1048576),
+    // uploaded into subresource k. One-time: skipped when the base tex_ptr is
+    // unchanged from the last upload (static texture set uploads exactly once).
+    // NOTE: keyed on tex_ptr, not contents; mutating in place at the same ptr
+    // must change the ptr (or this stays stale).
     E("    mov  r11, [_gpu_stage_tex]");
     E("    cmp  r11, [_gpu_tex_uploaded]");
     E("    je   .pf_tex_done           ; same texture as last frame -> no re-upload");
-    E("    mov  [rsp+0x20], r11        ; pSrcData");
     E("    mov  eax, [_gpu_stage_texw]");
-    E("    shl  eax, 2                 ; RowPitch = texw*4");
+    E("    shl  eax, 2                 ; RowPitch = texw*4 (texw = low 32 of stage_texw)");
     E("    mov  [rsp+0x28], eax");
     E("    mov  dword [rsp+0x30], 0    ; DepthPitch");
+    // Slice count = high 32 bits of stage_texw (tex_w packed as texw | (nslices<<32)).
+    // Zero high bits -> 1 slice, so single-texture callers upload only slice 0.
+    E("    mov  rax, [_gpu_stage_texw]");
+    E("    shr  rax, 32                ; nslices");
+    E("    test rax, rax");
+    E("    jnz  .pf_texn");
+    E("    mov  rax, 1                 ; default 1 slice");
+    E(".pf_texn:");
+    E("    cmp  rax, GPU_TEX_SLICES");
+    E("    jbe  .pf_texn_ok");
+    E("    mov  rax, GPU_TEX_SLICES    ; clamp to array capacity");
+    E(".pf_texn_ok:");
+    E("    mov  rsi, rax               ; rsi = slice upload count (callee-saved, preserves r13 vcount)");
+    E("    xor  r12, r12               ; slice index k");
+    E(".pf_texloop:");
+    E("    mov  rax, r12");
+    E("    imul rax, 1048576           ; k * (512*512*4)");
+    E("    add  rax, [_gpu_stage_tex]  ; pSrcData = base + k*sliceBytes");
+    E("    mov  [rsp+0x20], rax");
     E("    mov  rcx, r15");
     E("    mov  rdx, [_gpu_tex]");
-    E("    xor  r8d, r8d");
-    E("    xor  r9, r9");
+    E("    mov  r8d, r12d              ; DstSubresource = k");
+    E("    xor  r9, r9                 ; pDstBox = NULL");
     E("    mov  rax, [r15]");
     E("    call [rax + 0x180]          ; UpdateSubresource");
+    E("    inc  r12");
+    E("    cmp  r12, rsi");
+    E("    jl   .pf_texloop");
     E("    mov  r11, [_gpu_stage_tex]");
     E("    mov  [_gpu_tex_uploaded], r11   ; record uploaded texture");
     E(".pf_tex_done:");
@@ -1237,12 +1341,15 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    lea  r9, [rsp+0x80]");
     E("    mov  rax, [r15]");
     E("    call [rax + 0x40]");
-    // PSSetSamplers(0, 1, &sampler)
+    // PSSetSamplers(0, 2, {point s0, linear s1}) -- 2-entry array at rsp+0x88/0x90.
+    // The array is dead after this call; the RTV setup below reuses rsp+0x90.
     E("    mov  rax, [_gpu_sampler]");
     E("    mov  [rsp+0x88], rax");
+    E("    mov  rax, [_gpu_sampler_lin]");
+    E("    mov  [rsp+0x90], rax");
     E("    mov  rcx, r15");
     E("    xor  edx, edx");
-    E("    mov  r8d, 1");
+    E("    mov  r8d, 2");
     E("    lea  r9, [rsp+0x88]");
     E("    mov  rax, [r15]");
     E("    call [rax + 0x50]");

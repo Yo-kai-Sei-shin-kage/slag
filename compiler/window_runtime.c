@@ -7432,10 +7432,18 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    mov  [_gpu_stage_texh], r10");
     E("    mov  [_gpu_stage_cnt], rax");
     E("    mov  qword [_gpu_prebuilt], 1");
-    // Always convert + re-upload: the caller may rebuild the buffer contents
-    // every frame (scrolling terrain, animated meshes) while reusing the same
-    // pointer/count. A ptr/count-based skip would freeze such geometry, so this
-    // path unconditionally marks the frame dirty and re-uploads.
+    // Same (verts,count) already uploaded -> skip convert/re-upload, redraw persistent vbuf.
+    E("    cmp  qword [_gpu_up_valid], 2");
+    E("    jb   .ftg_upload");
+    E("    cmp  rcx, [_gpu_up_verts]");
+    E("    jne  .ftg_upload");
+    E("    cmp  rax, [_gpu_up_count]");
+    E("    jne  .ftg_upload");
+    E("    ret");
+    E(".ftg_upload:");
+    E("    mov  [_gpu_up_verts], rcx");
+    E("    mov  [_gpu_up_count], rax");
+    E("    mov  qword [_gpu_up_valid], 0");
     E("    mov  qword [_gpu_vbuf_dirty], 1");
     // total vertices = count*3
     E("    mov  r11, rax");
@@ -7484,8 +7492,10 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    cvtsi2ss xmm0, qword [rsi+64]");
     E("    mulss xmm0, xmm4");
     E("    movss [rdi+32], xmm0        ; a/255 (9th int64 src slot)");
-    E("    add  rsi, 72                ; next src vertex (72B stride: 9 int64)");
-    E("    add  rdi, GPU_VTX_STRIDE    ; next dst vertex (36B)");
+    E("    cvtsi2ss xmm0, qword [rsi+72]");
+    E("    movss [rdi+36], xmm0        ; slice (10th int64 src slot, unscaled)");
+    E("    add  rsi, 80                ; next src vertex (80B stride: 10 int64)");
+    E("    add  rdi, GPU_VTX_STRIDE    ; next dst vertex (40B)");
     E("    inc  r10");
     E("    cmp  r10, r11");
     E("    jl   .ftg_vloop");
