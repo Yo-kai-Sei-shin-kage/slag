@@ -901,13 +901,15 @@ Per-face Lambertian lighting can be implemented in Slag: compute each face norma
 single general-purpose ("uber") vertex+pixel shader. It is distinct from the CPU
 `fill_triangle_*` rasterizers, which are unchanged.
 
-**Vertex format.** 10 int64 per vertex, 80-byte stride:
-`x, y, z, u, v, r, g, b, a, slice`. Positions are world-space (transformed by the
-`gpu.set_viewproj` row-major 4×4 matrix in the vertex shader). `r,g,b,a` are
-per-vertex color 0-255 (`a` is alpha for `gpu.set_blend(1)` straight-alpha
-blending). `u,v` are texel-space texture coordinates (the runtime normalizes by
-the texture width/height). Backface culling is on the GPU (CULL_BACK,
-front-face = counter-clockwise as seen on screen after the shader's Y-flip).
+**Vertex format (direct-F32).** 11 **float32** per vertex, 48-byte stride:
+`x, y, z, u, v, r, g, b, a, slice, flag`, built directly with `mem.pokef32`. The
+runtime does a straight bulk copy into the GPU buffer — no int64→float convert.
+Positions are world-space (transformed by the `gpu.set_viewproj` row-major 4×4
+matrix in the vertex shader). `u,v` are raw texel coordinates and `r,g,b,a` are
+0-255; **the vertex shader normalizes** (uv by the texture dimensions supplied in
+the cbuffer, color by 255) — no CPU-side normalization. Backface culling is on the
+GPU (CULL_BACK, front-face = counter-clockwise as seen on screen after the
+shader's Y-flip).
 
 **Textures.** The bound texture is a `Texture2DArray` of 512×512 BGRA layers (256
 max). `tex_ptr` points to a contiguous block of layer images (layer *k* at
@@ -916,9 +918,11 @@ max). `tex_ptr` points to a contiguous block of layer images (layer *k* at
 per-vertex `slice` selects the layer.
 
 **Fog.** The vertex shader applies linear distance fog whose parameters are
-dynamic, supplied through the `gpu.set_viewproj` buffer: it is a 96-byte block of
-24 float32 — the 16-float matrix followed by `fogColor.rgb`, `fogStart`,
-`fogInvRange`, and padding. The `u` texcoord gates fog per vertex.
+dynamic, supplied through the `gpu.set_viewproj` buffer: a 96-byte block of
+float32 — the 16-float matrix, `fogColor.rgb`, `fogStart`, `fogInvRange`, then
+`invTexDims` (1/texw, 1/texh, injected by the runtime for the uv normalize). The
+per-vertex **`flag`** gates fog (`flag = 1` disables fog for that vertex, `0` = full
+fog).
 
 **SDF text.** A **negative** `slice` switches the fragment to signed-distance-field
 text mode: `abs(slice)` is the SDF atlas layer, sampled with a linear sampler and
@@ -926,9 +930,23 @@ thresholded (smoothstep) to a crisp, scalable glyph alpha modulated by the verte
 color. This yields custom-font overlay UI in the same shader and draw call as 3D
 geometry, with no effect on the (nonnegative-`slice`) textured path.
 
-**Persistence.** Re-submitting the same `(verts, count)` skips the convert +
-re-upload and redraws the resident GPU buffer, so static geometry uploads once;
-changing the pointer or count re-uploads (animated/streamed geometry).
+**Billboard points.** A **negative** `flag` switches the vertex shader to
+billboard-point mode: `pos` is a point center (shared by all 3 verts of the tri),
+`u,v` is a corner offset (`(0,0),(1,0),(0,1)`), and `slice` is the tri size. The VS
+expands the point into a camera-facing triangle in view space (offset applied
+after the viewproj transform) and colors it by depth. This makes an upload-once
+static point cloud spin (via the viewproj) and always face the camera with zero
+per-frame CPU vertex work — a GPU particle/point path in the same draw.
+
+**Persistence.** Re-submitting the same `(verts, count)` skips the copy and redraws
+the resident GPU buffer, so static geometry uploads once; changing the pointer or
+count re-uploads (animated/streamed geometry).
+
+**Grow-on-demand buffers.** The GPU vertex/scratch buffers start at a modest
+capacity (65536 triangles) and grow automatically when a `fill_triangle_gpu` call
+exceeds the current capacity (HeapReAlloc the scratch, recreate the D3D11 vertex
+buffers at the new size). A single vertex buffer's 32-bit ByteWidth caps one draw
+at ~29.8M triangles. No fixed startup reservation.
 
 ---
 
@@ -1179,7 +1197,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `fill_triangle_affine(...)`     | PS1-style affine textured triangle (RGB565)        |
 | `fill_triangle_persp(...)`      | PS2-style perspective-correct textured triangle    |
 | `fill_triangle_pcolor(...)`     | Perspective-correct textured triangle, per-vertex color (CPU-optimized) |
-| `fill_triangle_gpu(verts,count,tex,w,h)` | Bulk GPU draw: world-space verts (10 int64/vertex: x,y,z,u,v,r,g,b,a,slice; 80-byte stride) transformed by the view-projection matrix in-shader, depth-tested (CULL_BACK). `tex` is a Texture2DArray (512×512 BGRA layers, layer count in high 32 bits of `w`); `slice` picks the layer (negative `slice` = SDF text mode). Persistent: same verts/count redraws without re-upload |
+| `fill_triangle_gpu(verts,count,tex,w,h)` | Bulk GPU draw: world-space verts (11 float32/vertex: x,y,z,u,v,r,g,b,a,slice,flag; 48-byte stride, built with `mem.pokef32`) transformed by the view-projection matrix in-shader, depth-tested (CULL_BACK). VS normalizes uv/color. `tex` is a Texture2DArray (512×512 BGRA layers, layer count in high 32 bits of `w`); `slice` picks the layer (negative `slice` = SDF text). `flag` gates per-vertex fog; negative `flag` = billboard-point mode (camera-facing expansion). Persistent: same verts/count redraws without re-upload. Buffers grow on demand (initial 65536 tris, up to ~29.8M/draw) |
 | `gpu.detect()`                  | Scan all adapters, select best (discrete preferred); returns vendor 1=Intel/2=AMD/3=NVIDIA/0=none |
 | `gpu.vendor()`                  | Cached vendor code from the last `gpu.detect()` (no re-probe) |
 | `gpu.init()`                    | Create device/swapchain/depth/pipeline on the selected adapter; 1 on success |
@@ -1470,13 +1488,25 @@ PS2-era software rendering at 60fps. Current pipeline status:
 - CPU path (multi-threaded + AVX2): 100,000/frame at ~35 FPS (~3.5M tris/sec).
 - This places the iGPU path in PS2's real-world in-game triangle range (~3-15M tris/sec) and the pure-CPU path at Dreamcast-class throughput. Both sit below PS2's ~20M rated peak.
 
-**Remaining performance target:**
-- 1,000,000 polygons per frame at 1920x1080 (native 1080p), sub-16ms (60fps). Not yet reached; the current iGPU submission path (stage + convert) is single-threaded and is the next optimization lever (thread the convert across the worker pool; the CPU rasterizer is already multi-threaded).
+**Discrete-GPU path (`fill_triangle_gpu`, direct-F32) — 1M-poly target exceeded:**
+- On a discrete GPU (NVIDIA RTX 3060), the `fill_triangle_gpu` direct-F32 path
+  (float32 vertices, bulk `rep movsq` stage, persistent resident buffers) renders
+  **10,000,000 triangles/frame at ~127 FPS (~1.27B tris/sec)**, fully GPU-bound
+  (per-frame CPU cost near zero once geometry is resident). 1,000,000 tris/frame
+  runs at ~1080 FPS.
+- Staging was measured and ruled out as the bottleneck: re-staging ~18MB every
+  frame performs identically to skipping it — the frame is bounded by GPU draw +
+  present, not the CPU copy. So SIMD/threaded staging is unnecessary on this path.
+- A fixed persistence bug (`_gpu_up_valid` never reaching 2) had made every
+  persistent-geometry program silently re-stage the full buffer each frame; with
+  it fixed, static geometry uploads once and redraws resident.
 
 **Planned:**
 - Near-plane triangle clipping (Sutherland-Hodgman) — 0.14
-- Multi-threaded iGPU submission: thread the per-frame stage + vertex convert across the worker pool (the CPU rasterizer already is; the GPU feed is not), to lift the single-threaded submission ceiling toward the 1M-poly target
-- Fog, lighting, and shadows are handled per-vertex in Slag script via `fill_triangle_pcolor` color modulation (e.g. the terrain demo); no built-in fog stage planned — keeps the rasterizer's hot loop free of per-pixel special-casing
+- Fog, lighting, and shadows are handled per-vertex in Slag script via
+  `fill_triangle_gpu`/`fill_triangle_pcolor` color modulation (e.g. the terrain
+  demo); no built-in fog stage planned — keeps the hot loop free of per-pixel
+  special-casing
 
 ---
 

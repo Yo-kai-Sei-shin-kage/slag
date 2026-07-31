@@ -76,6 +76,8 @@ static void emit_window_constants(Codegen *cg) {
     E("WM_PAINT             equ 0x000F");
     E("WM_KEYDOWN           equ 0x0100");
     E("WM_KEYUP             equ 0x0101");
+    E("WM_SETCURSOR         equ 0x0020");
+    E("HTCLIENT             equ 1");
     E("WM_MOUSEMOVE         equ 0x0200");
     E("WM_LBUTTONDOWN       equ 0x0201");
     E("WM_LBUTTONUP         equ 0x0202");
@@ -536,6 +538,8 @@ static void emit_wndproc(Codegen *cg) {
     E("    je   .wndproc_keydown");
     E("    cmp  r13, WM_KEYUP");
     E("    je   .wndproc_keyup");
+    E("    cmp  r13, WM_SETCURSOR");
+    E("    je   .wndproc_setcursor");
     E("    cmp  r13, WM_MOUSEMOVE");
     E("    je   .wndproc_mousemove");
     E("    cmp  r13, WM_LBUTTONDOWN");
@@ -569,6 +573,23 @@ static void emit_wndproc(Codegen *cg) {
     E("    call PostQuitMessage");
     E("    add  rsp, 32");
     E("    xor  rax, rax");
+    E("    jmp  .wndproc_ret");
+    E("");
+
+    // WM_SETCURSOR: while captured (_cursor_hidden) and over client area
+    // (LOWORD(lParam)==HTCLIENT), hide the cursor (SetCursor(NULL)) and return
+    // TRUE so Windows does not reset it to the arrow. Otherwise fall to default.
+    E(".wndproc_setcursor:");
+    E("    cmp  qword [_cursor_hidden], 0");
+    E("    je   .wndproc_default");
+    E("    movzx eax, r15w            ; LOWORD(lParam) = hit-test area");
+    E("    cmp  eax, HTCLIENT");
+    E("    jne  .wndproc_default");
+    E("    xor  rcx, rcx              ; SetCursor(NULL)");
+    E("    sub  rsp, 32");
+    E("    call SetCursor");
+    E("    add  rsp, 32");
+    E("    mov  rax, 1                ; TRUE: we handled it");
     E("    jmp  .wndproc_ret");
     E("");
 
@@ -5198,6 +5219,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    push rbx");
     E("    push r12");
     E("    sub  rsp, 64");
+    E("    mov  qword [_cursor_hidden], 1   ; WndProc WM_SETCURSOR hides it");
     E("");
     E("    ; get struct ptr from TLS");
     E("    sub  rsp, 32");
@@ -5274,6 +5296,7 @@ static void emit_window_utils(Codegen *cg) {
     E("    push rbp");
     E("    mov  rbp, rsp");
     E("    sub  rsp, 32");
+    E("    mov  qword [_cursor_hidden], 0   ; allow WndProc to show cursor again");
     E("");
     E("    ; ReleaseCapture()");
     E("    call ReleaseCapture");
@@ -5727,6 +5750,15 @@ static void emit_window_utils(Codegen *cg) {
     // -------------------------------------------------------------
     E("; --- _slag_zbuffer_clear() ---");
     E("_slag_zbuffer_clear:");
+    // GPU live -> the D3D11 present clears its own depth buffer each frame
+    // (ClearDepthStencilView), so the CPU depth memset is pure dead work. Skip it.
+    E("    mov  rax, [_gpu_ready]");
+    E("    test rax, rax");
+    E("    jz   .zbc_cpu");
+    E("    mov  rax, [_gpu_pipeline]");
+    E("    test rax, rax");
+    E("    jnz  .zbc_gpu_skip         ; GPU owns depth -> no-op");
+    E(".zbc_cpu:");
     E("    push rbp");
     E("    mov  rbp, rsp");
     E("    push rbx");
@@ -5756,6 +5788,8 @@ static void emit_window_utils(Codegen *cg) {
     E("    add  rsp, 40");
     E("    pop  rbx");
     E("    pop  rbp");
+    E("    ret");
+    E(".zbc_gpu_skip:                    ; GPU-live no-op: no frame set up, bare ret");
     E("    ret");
     E("");
 
@@ -7300,6 +7334,7 @@ static void emit_default_event_handlers(Codegen *cg, const EventHandlerFlags *fl
 void emit_window_data(Codegen *cg) {
     E("_window_class_name: db \"SlagWindow\", 0");
     E("_window_tls_index:  dq 0   ; TLS slot for per-thread window state");
+    E("_cursor_hidden:     dq 0   ; 1 while mouse captured -> WndProc hides cursor via WM_SETCURSOR");
     E("_window_tls_init:   dq 0   ; 1 if TLS has been initialized");
     E("");
 }
@@ -7386,6 +7421,7 @@ void emit_window_imports(Codegen *cg) {
     E("; --- Mouse capture ---");
     E("extern SetCapture");
     E("extern ReleaseCapture");
+    E("extern SetCursor");
     E("extern ClipCursor");
     E("extern ShowCursor");
     E("extern GetClientRect");
@@ -7403,11 +7439,14 @@ void emit_window_imports(Codegen *cg) {
 // ---------------------------------------------------------------------
 // Top-level emitter
 // _slag_fill_triangle_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h)
-// Bulk GPU path: convert `count` triangles (contiguous int64 verts, 72B/vertex,
-// x,y,z,u,v,r,g,b,a) to float32 directly into _gpu_convbuf (36B/vertex: pos3 uv2
-// col4, uv scaled by 1/texw,1/texh, color+alpha by 1/255) in one pass, then flag the
-// frame prebuilt so present skips its own convert. No CPU culling -- the D3D11
-// rasterizer state culls backfaces on the GPU. No-op when no device is live.
+// Bulk GPU path (direct-F32): `verts` is GPU-ready float32 vertices, 48B/vertex
+// (11 f32: x,y,z,u,v,r,g,b,a,slice,flag) built with mem.pokef32, matching the GPU
+// vertex layout. Records the texture + count, flags the frame prebuilt (so present
+// skips its own convert), then bulk-copies the batch into _gpu_convbuf with a
+// single rep movsq -- no int64->f32 convert, no normalization on the CPU (the VS
+// divides u,v by the texture dims and rgba by 255; flag gates per-vertex fog).
+// No CPU culling -- the D3D11 rasterizer culls backfaces on the GPU. No-op when
+// no device is live.
 static void emit_fill_triangle_gpu(Codegen *cg) {
     E("; --- _slag_fill_triangle_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h) ---");
     E("_slag_fill_triangle_gpu:");
@@ -7419,86 +7458,73 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    jz   .ftg_ret");
     E("    test rdx, rdx");
     E("    jz   .ftg_ret               ; count==0");
-    // Cap count to GPU_STAGE_CAP.
-    E("    mov  rax, rdx");
-    E("    cmp  rax, GPU_STAGE_CAP");
-    E("    jbe  .ftg_capok");
-    E("    mov  rax, GPU_STAGE_CAP");
-    E(".ftg_capok:");
+    // Grow-on-demand: if count exceeds the current capacity, recreate the GPU
+    // buffers big enough (_slag_gpu_grow). Read texh into r10 first (caller stack
+    // arg at [rsp+40]) so a frame for the call doesn't disturb that offset, then
+    // preserve verts/count/tex/texw/texh across the call (grow clobbers volatiles).
+    E("    mov  r10d, [rsp+40]         ; tex_h (5th stack arg) -> r10 (nonvolatile? no; saved below)");
+    E("    cmp  rdx, [_gpu_cap]");
+    E("    jbe  .ftg_nogrow");
+    // Preserve the 5 args on the stack across the grow call (grow clobbers
+    // volatiles; we own none of the callee-saved regs here). 5 pushes (odd) +
+    // 32 shadow => rsp 16-aligned at the call. needed = count.
+    E("    push rcx                    ; verts");
+    E("    push rdx                    ; count");
+    E("    push r8                     ; tex");
+    E("    push r9                     ; texw");
+    E("    push r10                    ; texh");
+    E("    mov  rcx, rdx               ; needed = count");
+    E("    sub  rsp, 32");
+    E("    call _slag_gpu_grow");
+    E("    add  rsp, 32");
+    E("    pop  r10                    ; texh");
+    E("    pop  r9                     ; texw");
+    E("    pop  r8                     ; tex");
+    E("    pop  rdx                    ; count");
+    E("    pop  rcx                    ; verts");
+    E(".ftg_nogrow:");
+    E("    mov  rax, rdx               ; count (now always <= cap)");
     // Record texture + count; mark prebuilt so present skips the convert.
-    E("    mov  r10d, [rsp+40]         ; tex_h (5th stack arg)");
     E("    mov  [_gpu_stage_tex], r8");
     E("    mov  [_gpu_stage_texw], r9");
     E("    mov  [_gpu_stage_texh], r10");
     E("    mov  [_gpu_stage_cnt], rax");
     E("    mov  qword [_gpu_prebuilt], 1");
-    // Same (verts,count) already uploaded -> skip convert/re-upload, redraw persistent vbuf.
-    E("    cmp  qword [_gpu_up_valid], 2");
-    E("    jb   .ftg_upload");
+    // Persistence: decide by geometry match FIRST, then double-buffer fill state.
+    //  - verts/count changed  -> genuine new geometry: full re-upload, reset valid.
+    //  - same geometry, both vbufs filled (valid>=2) -> skip entirely (redraw).
+    //  - same geometry, still filling (valid<2) -> re-stage THIS vbuf but do NOT
+    //    reset valid, so present's inc can climb 0->1->2 across the first 2 frames.
+    // (The old code checked valid<2 first and jumped to a reset-that-zeroed-valid,
+    //  so valid never reached 2 and the copy ran every frame -- persistence dead.)
     E("    cmp  rcx, [_gpu_up_verts]");
-    E("    jne  .ftg_upload");
+    E("    jne  .ftg_changed");
     E("    cmp  rax, [_gpu_up_count]");
-    E("    jne  .ftg_upload");
-    E("    ret");
-    E(".ftg_upload:");
+    E("    jne  .ftg_changed");
+    // same geometry:
+    E("    cmp  qword [_gpu_up_valid], 2");
+    E("    jae  .ftg_ret               ; both vbufs hold it -> skip");
+    E("    mov  qword [_gpu_vbuf_dirty], 1  ; still filling -> stage this vbuf, keep valid");
+    E("    jmp  .ftg_upload");
+    E(".ftg_changed:");
     E("    mov  [_gpu_up_verts], rcx");
     E("    mov  [_gpu_up_count], rax");
     E("    mov  qword [_gpu_up_valid], 0");
     E("    mov  qword [_gpu_vbuf_dirty], 1");
-    // total vertices = count*3
-    E("    mov  r11, rax");
-    E("    imul r11, 3                 ; vertex count");
-    // Reciprocals: xmm6=1/texw, xmm7=1/texh, xmm4=1/255.
-    E("    mov  eax, 1");
-    E("    cvtsi2ss xmm2, eax");
-    E("    mov  eax, r9d");
-    E("    cvtsi2ss xmm0, eax");
-    E("    movss xmm6, xmm2");
-    E("    divss xmm6, xmm0");
-    E("    mov  eax, r10d");
-    E("    cvtsi2ss xmm0, eax");
-    E("    movss xmm7, xmm2");
-    E("    divss xmm7, xmm0");
-    E("    mov  eax, 255");
-    E("    cvtsi2ss xmm0, eax");
-    E("    movss xmm4, xmm2");
-    E("    divss xmm4, xmm0");
-    // rsi = src int64 verts (64B/vertex), rdi = dst float convbuf (32B/vertex).
-    E("    mov  rsi, rcx");
-    E("    mov  rdi, [_gpu_convbuf]");
-    E("    xor  r10, r10               ; vertex index");
-    E(".ftg_vloop:");
-    E("    cvtsi2ss xmm0, qword [rsi+0]");
-    E("    movss [rdi+0], xmm0         ; x");
-    E("    cvtsi2ss xmm0, qword [rsi+8]");
-    E("    movss [rdi+4], xmm0         ; y");
-    E("    cvtsi2ss xmm0, qword [rsi+16]");
-    E("    movss [rdi+8], xmm0         ; z");
-    E("    cvtsi2ss xmm0, qword [rsi+24]");
-    E("    mulss xmm0, xmm6");
-    E("    movss [rdi+12], xmm0        ; u/texw");
-    E("    cvtsi2ss xmm0, qword [rsi+32]");
-    E("    mulss xmm0, xmm7");
-    E("    movss [rdi+16], xmm0        ; v/texh");
-    E("    cvtsi2ss xmm0, qword [rsi+40]");
-    E("    mulss xmm0, xmm4");
-    E("    movss [rdi+20], xmm0        ; r/255");
-    E("    cvtsi2ss xmm0, qword [rsi+48]");
-    E("    mulss xmm0, xmm4");
-    E("    movss [rdi+24], xmm0        ; g/255");
-    E("    cvtsi2ss xmm0, qword [rsi+56]");
-    E("    mulss xmm0, xmm4");
-    E("    movss [rdi+28], xmm0        ; b/255");
-    E("    cvtsi2ss xmm0, qword [rsi+64]");
-    E("    mulss xmm0, xmm4");
-    E("    movss [rdi+32], xmm0        ; a/255 (9th int64 src slot)");
-    E("    cvtsi2ss xmm0, qword [rsi+72]");
-    E("    movss [rdi+36], xmm0        ; slice (10th int64 src slot, unscaled)");
-    E("    add  rsi, 80                ; next src vertex (80B stride: 10 int64)");
-    E("    add  rdi, GPU_VTX_STRIDE    ; next dst vertex (40B)");
-    E("    inc  r10");
-    E("    cmp  r10, r11");
-    E("    jl   .ftg_vloop");
+    E(".ftg_upload:");
+    // Direct-F32 path: the script now supplies GPU-ready float32 vertices
+    // (40B/vertex = 10 f32: x,y,z,u,v,r,g,b,a,slice, built with mem.pokef32),
+    // already matching the GPU vertex layout. No int64->f32 convert and no
+    // normalization here -- the shader divides u,v by the texture dims and rgba
+    // by 255. So this collapses to a pure copy of the whole batch into the
+    // cached scratch _gpu_convbuf, which present bulk-streams to the WC vbuf.
+    // Bytes = count*3 verts * 48B = count*144 = count*18 qwords (always exact:
+    // 48B/vertex is 6 qwords, no tail). count <= GPU_STAGE_CAP so count*18
+    // (<= 2359296) never overflows. rsi/rdi/rcx volatile; leaf, no frame, xmm untouched.
+    E("    mov  rsi, rcx               ; src = f32 verts (48B/vertex: 11 f32)");
+    E("    mov  rdi, [_gpu_convbuf]    ; dst = cached scratch");
+    E("    imul rcx, rax, 18           ; qwords = count*3*48/8 = count*18");
+    E("    rep  movsq");
     E(".ftg_ret:");
     E("    ret");
 }

@@ -533,14 +533,25 @@ which is unchanged). Stages
 .I count
 triangles from one contiguous buffer
 .RI ( verts :
-3 verts/tri, 10 int64 each \(em x,y,z,u,v,r,g,b,a,slice, 80-byte stride) in a
-single pass, converting to float32 directly into the GPU vertex buffer.
-Positions are world-space and transformed by the
+3 verts/tri, 11 float32 each \(em x,y,z,u,v,r,g,b,a,slice,flag, 48-byte stride,
+built with
+.BR mem.pokef32 )
+via a straight bulk copy into the GPU vertex buffer (direct-F32: no int64\(->float
+convert). Positions are world-space and transformed by the
 .B gpu.set_viewproj
 matrix in the vertex shader; the depth buffer resolves occlusion for any
-submission order; backface culling is done on the GPU (CULL_BACK). The
-.I u
-texcoord doubles as a per-vertex fog/effect flag for shader use. The
+submission order; backface culling is done on the GPU (CULL_BACK). The vertex
+shader normalizes
+.IR u , v
+by the texture dimensions and
+.IR r , g , b , a
+by 255 (raw 0-255 color in the buffer). The
+.I flag
+component gates per-vertex fog (1 = no fog); a
+.B negative
+.I flag
+switches the vertex to billboard-point mode (the shader expands the point into a
+camera-facing triangle). The
 .I a
 component is per-vertex alpha (0-255), used by straight-alpha blending when
 .B gpu.set_blend
@@ -567,12 +578,13 @@ and the number of layers to upload is packed into the high 32 bits of
 .IR tex_w
 .RI ( "texw | (nlayers<<32)" ;
 zero high bits means one layer, layer 0). UV coordinates are texel-space
-(0..texw-1, normalized by the runtime). Persistent: a re-submission with the
+(0..texw-1, normalized in the shader). Persistent: a re-submission with the
 same
 .IR verts / count
-skips the convert+re-upload and redraws the resident buffer, so static geometry
-uploads once; changed geometry (fresh pointer or count) re-uploads. No-op when
-no GPU device is live.
+skips the copy and redraws the resident buffer, so static geometry
+uploads once; changed geometry (fresh pointer or count) re-uploads. The GPU
+buffers grow on demand (initial 65536 triangles, up to ~29.8M per draw). No-op
+when no GPU device is live.
 .TP
 .B zbuffer.clear()
 Reset the depth buffer to a far value prior to rendering a frame.
