@@ -202,7 +202,20 @@ Mixed `int` and `float` operands are promoted automatically — no explicit cast
 ### 6.3 Logical Operators
 
 ```
-&&   ||   !
+&&   ||   ^^   !
+```
+
+`^^` is logical XOR: the result is `true` when **exactly one** operand is
+truthy (an operand is truthy if it is nonzero), and `false` otherwise. Unlike
+`&&` and `||` it does not short-circuit — both operands are always evaluated.
+Precedence sits between `||` and `&&` (mirroring bitwise `^` in C). Note that
+for boolean operands `a != b` is equivalent to `a ^^ b`, and `a == b` is its
+inverse (logical XNOR).
+
+```
+true  ^^ false   // true  — exactly one operand truthy
+true  ^^ true    // false — both truthy
+5     ^^ 0       // true  — 5 is nonzero (truthy), 0 is not
 ```
 
 ---
@@ -950,6 +963,16 @@ Bit shift operations for fixed-point arithmetic and low-level manipulation:
 ```
 bit.shl(value, count)   // left shift — inlined to shl instruction
 bit.shr(value, count)   // unsigned right shift — inlined to shr instruction
+bit.xor(a, b)           // bitwise XOR of all 64 bits — inlined to xor instruction
+```
+
+`bit.xor` operates on every bit of the two operands in parallel (unlike the
+`^^` logical operator, which collapses each side to a single truth value). It
+is the primitive for XOR ciphers, xorshift PRNGs, hashing, and bit toggling:
+
+```
+state = bit.xor(state, bit.shl(state, 13));   // one xorshift step
+cipher = bit.xor(plain, key);                 // XOR cipher (its own inverse)
 ```
 
 **16.16 Fixed-Point Example:**
@@ -1240,6 +1263,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `audio.position(handle)`        | Current byte offset into the sound's PCM data      |
 | `bit.shl(val,count)`            | Left shift (inlined to shl instruction)            |
 | `bit.shr(val,count)`            | Unsigned right shift (inlined to shr instruction)  |
+| `bit.xor(a,b)`                  | Bitwise XOR of all 64 bits (inlined to xor)        |
 | `mat.identity()`                | Reset current matrix to identity                   |
 | `mat.push()` / `mat.pop()`      | Push/pop matrix stack (16 levels)                  |
 | `mat.translate(x,y,z)`          | Multiply translation into current matrix           |
@@ -1421,6 +1445,7 @@ function main() {
 | 0.15.1  | File-scope `on` handlers (declarable at top level, not only inside a function body); key comparison against a global `str[]` element at a compile-time constant index (`key == keys[0]`) folds to the key code, with an unrecognized name now a compile-time error | ✅ Complete |
 | 0.15.2  | iGPU auto-dispatch for `fill_triangle_pcolor` (D3D11/DXGI, Intel/AMD auto-detect via `gpu.*`); `window.set_title` for live title-bar updates. **PS2-era triangle throughput reached**: ~9.1M tris/sec on an AMD Vega 8 iGPU (100k `pcolor` tris/frame @ ~91 FPS). **Bug fix:** GPU vertex convert wrote scattered stores into write-combined mapped memory (pathologically slow); now converts into a cached scratch buffer and bulk-copies via `rep movsq` | ✅ Complete |
 | 0.16.0  | GPU shader path recovered to HLSL source (`shaders/`), vertex COLOR widened RGB→RGBA (per-vertex alpha); `gpu.clear(ptr)` for GPU clear/background color; `gpu.set_blend(mode)` straight-alpha output-merger blending for `fill_triangle_gpu` | ✅ Complete |
+| 0.9     | **GPU:** `fill_triangle_gpu` vertex widened to 10×int64 with per-vertex Texture2DArray slice (512×512 BGRA, 256 layers); negative slice selects SDF text mode (linear-sampled distance field, smoothstep glyph alpha) in the same draw call; fog constants moved to the `gpu.set_viewproj` cbuf for runtime-dynamic fog; persistent vertex buffers skip re-convert/re-upload on identical resubmit. **Language:** `str[]` string arrays (local & global) — indexed read/write from anywhere, brace initializers, parallel ptr/len storage; `bit.xor` (bitwise XOR); `^^` logical XOR operator; `bool` values print as `true`/`false` (not `0`/`1`); float formatting rounds to nearest 6th decimal (`3.3` → `3.300000`, was `3.299999`). **Bug fixes:** `calculate_frame_size` under-reserved stack for `str[]` locals (clobbered the next local via call shadow space); global `str[]` element literals now interned before the string-constant pool flush (fixed undefined `_str*` labels) | ✅ Complete |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ### PS2-Era Graphics Target (60fps)

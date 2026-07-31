@@ -1,10 +1,10 @@
 // Example: Control Flow
-//
-//
-//
-//
-//
-//
+
+
+
+
+
+
 function main() {
     local int x = 10;
 

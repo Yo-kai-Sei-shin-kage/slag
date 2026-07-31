@@ -219,7 +219,11 @@ static Local *alloc_local(Codegen *cg, const char *name, SlagType type,
     // Arrays take 8 * size bytes. Non-array strings take 16 bytes
     // (ptr + len).
     int bytes;
-    if (is_array) {
+    if (is_array && elem_type == TYPE_STR) {
+        // str[]: a ptr slot per element plus a parallel len slot per element.
+        // Lengths live at loc->offset + size*8 (see emit_str_expr EXPR_INDEX).
+        bytes = 16 * size;
+    } else if (is_array) {
         bytes = 8 * size;
     } else if (type == TYPE_STR) {
         bytes = 16;
@@ -336,6 +340,7 @@ static void emit_store_str_local(Codegen *cg, const Local *loc) {
 // and len in rdx. Handles: string literals, str-typed local variables,
 // and calls (readfile/readline/match — assumed to return ptr in rax,
 // len in rdx per the codegen calling convention).
+static void emit_int_expr(Codegen *cg, const Expr *e);
 static void emit_str_expr(Codegen *cg, const Expr *e) {
     switch (e->kind) {
         case EXPR_STR_LIT:
@@ -357,6 +362,37 @@ static void emit_str_expr(Codegen *cg, const Expr *e) {
                     emit(cg, "    xor  rax, rax");
                     emit(cg, "    xor  rdx, rdx");
                 }
+            }
+            break;
+        }
+
+        case EXPR_INDEX: {
+            // str[] element at a runtime index -> ptr in rax, len in rdx.
+            Local *loc = NULL;
+            Global *g = NULL;
+            if (e->as.index.base->kind == EXPR_IDENT) {
+                loc = find_local(cg, e->as.index.base->as.str.value);
+                if (!loc) g = find_global(cg, e->as.index.base->as.str.value);
+            }
+            if (loc && loc->is_array && loc->elem_type == TYPE_STR) {
+                // Local str[]: ptr at offset+i*8, len at offset+(size+i)*8.
+                emit_int_expr(cg, e->as.index.index);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    lea  r10, [rbp%+d]", loc->offset);
+                emit(cg, "    mov  rax, [r10 + rcx*8]");
+                emit(cg, "    lea  r10, [rbp%+d]", loc->offset + loc->size * 8);
+                emit(cg, "    mov  rdx, [r10 + rcx*8]");
+            } else if (g && g->is_array && g->elem_type == TYPE_STR) {
+                emit_int_expr(cg, e->as.index.index);
+                emit(cg, "    mov  rcx, rax");
+                emit(cg, "    lea  rax, [_globarr%d]", g->label_id);
+                emit(cg, "    mov  rax, [rax + rcx*8]");
+                emit(cg, "    lea  rdx, [_globarrlen%d]", g->label_id);
+                emit(cg, "    mov  rdx, [rdx + rcx*8]");
+            } else {
+                fprintf(stderr, "codegen error: string index base not a str[]\n");
+                emit(cg, "    xor  rax, rax");
+                emit(cg, "    xor  rdx, rdx");
             }
             break;
         }
@@ -815,7 +851,7 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    jmp  .L%d", end_label);
                 emit(cg, ".L%d:", false_label);
                 emit(cg, "    xor  rax, rax");
-            } else { // TOK_OR
+            } else if (e->as.logical.op == TOK_OR) {
                 int true_label = new_label(cg);
                 emit_int_expr(cg, e->as.logical.left);
                 emit(cg, "    test rax, rax");
@@ -827,6 +863,19 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    jmp  .L%d", end_label);
                 emit(cg, ".L%d:", true_label);
                 emit(cg, "    mov  rax, 1");
+            } else { // TOK_XOR: no short-circuit; normalize both to 0/1, xor.
+                emit_int_expr(cg, e->as.logical.left);
+                emit(cg, "    test rax, rax");
+                emit(cg, "    setne al          ; left -> 0/1");
+                emit(cg, "    movzx rax, al");
+                emit(cg, "    push rax           ; save left (right eval clobbers regs)");
+                emit_int_expr(cg, e->as.logical.right);
+                emit(cg, "    test rax, rax");
+                emit(cg, "    setne al          ; right -> 0/1");
+                emit(cg, "    movzx rax, al");
+                emit(cg, "    pop  rcx           ; restore left");
+                emit(cg, "    xor  rax, rcx     ; logical XOR (exactly one true)");
+                emit(cg, "    jmp  .L%d", end_label);
             }
             emit(cg, ".L%d:", end_label);
             break;
@@ -1176,6 +1225,23 @@ if (t == TYPE_STR) {
         emit(cg, "    mov  rcx, [_stdout]");
         emit_write_console(cg);
         emit(cg, "    add  rsp, 32");
+    } else if (t == TYPE_BOOL) {
+        // Print bool as the words true/false (NOT as 0/1). Nonzero -> true.
+        int false_label = new_label(cg);
+        int done_label  = new_label(cg);
+        emit(cg, "    ; print bool");
+        emit_int_expr(cg, arg);          // 0/1 in rax
+        emit(cg, "    test rax, rax");
+        emit(cg, "    jz   .L%d", false_label);
+        emit(cg, "    lea  rdx, [_bool_true]");
+        emit(cg, "    mov  r8,  4            ; len(\"true\")");
+        emit(cg, "    jmp  .L%d", done_label);
+        emit(cg, ".L%d:", false_label);
+        emit(cg, "    lea  rdx, [_bool_false]");
+        emit(cg, "    mov  r8,  5            ; len(\"false\")");
+        emit(cg, ".L%d:", done_label);
+        emit(cg, "    mov  rcx, [_stdout]");
+        emit_write_console(cg);
     }
 
     if (is_println) {
@@ -2874,6 +2940,16 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    shr  rax, cl");
             }
         }
+        // bit.xor(a, b) -> int (bitwise XOR of all 64 bits)
+        else if (strcmp(member, "xor") == 0) {
+            emit(cg, "    ; bit.xor (inlined)");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    xor  rax, r12");
+            }
+        }
         // mat.identity() -> reset current matrix to identity
         else if (strcmp(member, "identity") == 0) {
             emit(cg, "    ; mat.identity");
@@ -3660,6 +3736,11 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
                     if (elem == TYPE_FLOAT) {
                         emit_float_expr(cg, elem_expr);
                         emit(cg, "    movsd [rbp%+d], xmm0", elem_offset);
+                    } else if (elem == TYPE_STR) {
+                        // ptr in the element slot, len in the parallel block.
+                        emit_str_expr(cg, elem_expr);
+                        emit(cg, "    mov  [rbp%+d], rax", elem_offset);
+                        emit(cg, "    mov  [rbp%+d], rdx", loc->offset + (size + i) * 8);
                     } else {
                         emit_int_expr(cg, elem_expr);
                         emit(cg, "    mov  [rbp%+d], rax", elem_offset);
@@ -3734,6 +3815,24 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
                 }
                 if (loc) {
                     emit(cg, "    ; assign %s[idx]", loc->name);
+                    if (loc->elem_type == TYPE_STR) {
+                        // str[i] = value. Evaluate the value FIRST (it may
+                        // itself contain an EXPR_INDEX that clobbers rcx/r10/
+                        // r11), stash ptr+len on the stack, then compute the
+                        // index. ptr slot at offset+i*8, len at offset+(size+i)*8.
+                        emit_str_expr(cg, value);        // rax=ptr, rdx=len
+                        emit(cg, "    push rax          ; save str ptr");
+                        emit(cg, "    push rdx          ; save str len");
+                        emit_int_expr(cg, target->as.index.index);
+                        emit(cg, "    mov  rcx, rax     ; rcx = index");
+                        emit(cg, "    pop  rdx          ; restore len");
+                        emit(cg, "    pop  rax          ; restore ptr");
+                        emit(cg, "    lea  r10, [rbp%+d]", loc->offset);
+                        emit(cg, "    mov  [r10 + rcx*8], rax   ; store ptr");
+                        emit(cg, "    lea  r10, [rbp%+d]", loc->offset + loc->size * 8);
+                        emit(cg, "    mov  [r10 + rcx*8], rdx   ; store len");
+                        break;
+                    }
                     // Compute index into r10.
                     emit_int_expr(cg, target->as.index.index);
                     emit(cg, "    mov  r10, rax");
@@ -3750,6 +3849,23 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
                     }
                 } else {
                     emit(cg, "    ; assign %s[idx] (global)", glb->name);
+                    if (glb->elem_type == TYPE_STR) {
+                        // str[i] = value. Value first (may clobber index regs),
+                        // stash ptr+len, then index. ptr -> _globarr, len ->
+                        // _globarrlen (parallel arrays).
+                        emit_str_expr(cg, value);        // rax=ptr, rdx=len
+                        emit(cg, "    push rax          ; save str ptr");
+                        emit(cg, "    push rdx          ; save str len");
+                        emit_int_expr(cg, target->as.index.index);
+                        emit(cg, "    mov  rcx, rax     ; rcx = index");
+                        emit(cg, "    pop  rdx          ; restore len");
+                        emit(cg, "    pop  rax          ; restore ptr");
+                        emit(cg, "    lea  r10, [_globarr%d]", glb->label_id);
+                        emit(cg, "    mov  [r10 + rcx*8], rax   ; store ptr");
+                        emit(cg, "    lea  r10, [_globarrlen%d]", glb->label_id);
+                        emit(cg, "    mov  [r10 + rcx*8], rdx   ; store len");
+                        break;
+                    }
                     // Compute index into r10.
                     emit_int_expr(cg, target->as.index.index);
                     emit(cg, "    mov  r10, rax");
@@ -3988,7 +4104,10 @@ static int calculate_frame_size(const StmtList *list) {
                 } else {
                     n = 8;
                 }
-                size += 8 * n;
+                // str[] reserves a parallel len slot per element (matches
+                // alloc_local: 16*n vs 8*n). Under-reserving here leaves the
+                // next local past `sub rsp` where call shadow space clobbers it.
+                size += (s->as.array_decl.elem_type == TYPE_STR ? 16 : 8) * n;
                 break;
             }
             case STMT_IF:
@@ -4311,6 +4430,10 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    btr  rax, 63            ; clear sign bit in the raw bits");
     emit(cg, "    movq xmm0, rax          ; xmm0 = |value|");
     emit(cg, ".ftoa_nonneg:");
+    emit(cg, "    ; round |x| to nearest 6th decimal so a fractional part that");
+    emit(cg, "    ; rounds up carries into the integer part before either is");
+    emit(cg, "    ; written (e.g. 3.2999999 -> 3.300000, 2.9999997 -> 3.000000).");
+    emit(cg, "    addsd xmm0, [rel _ftoa_round]");
     emit(cg, "    ; integer part");
     emit(cg, "    cvttsd2si rax, xmm0");
     emit(cg, "    mov  rcx, rax");
@@ -4603,6 +4726,21 @@ static void emit_data_section(Codegen *cg) {
     }
     if (cg->str_const_count) emit(cg, "");
 
+    // ftoa rounding bias: 0.5 ULP at 6 fractional digits = 0.5e-6.
+    // Added to |x| before splitting int/frac so a fractional value that
+    // rounds up carries into the integer part (e.g. 3.2999999 -> 3.300000).
+    {
+        union { double d; unsigned long long u; } r;
+        r.d = 0.0000005;
+        emit(cg, "_ftoa_round: dq 0x%016llx   ; 0.5e-6", r.u);
+    }
+    emit(cg, "");
+
+    // Bool print words (used by emit_print's TYPE_BOOL branch).
+    emit(cg, "_bool_true:  db \"true\"");
+    emit(cg, "_bool_false: db \"false\"");
+    emit(cg, "");
+
     // Newline byte for println.
     emit(cg, "_newline: db 10");
     emit(cg, "");
@@ -4686,6 +4824,31 @@ static void emit_data_section(Codegen *cg) {
             Global *g = &cg->globals[i];
             if (!g->is_array) continue;
             emit(cg, "; global array %s[%d]", g->name, g->size);
+            if (g->elem_type == TYPE_STR) {
+                // str[]: element slot holds a ptr to the string bytes;
+                // a parallel _globarrlen%d array holds each element's length.
+                for (int j = 0; j < g->size; j++) {
+                    int str_id = -1;
+                    if (j < g->arr_init.count &&
+                        g->arr_init.items[j]->kind == EXPR_STR_LIT) {
+                        str_id = add_str_const(cg, g->arr_init.items[j]->as.str.value);
+                    }
+                    if (j == 0) emit_raw(cg, "_globarr%d: ", g->label_id);
+                    else        emit_raw(cg, "            ");
+                    if (str_id >= 0) emit(cg, "dq _str%d", str_id);
+                    else             emit(cg, "dq 0");
+                }
+                for (int j = 0; j < g->size; j++) {
+                    long slen = 0;
+                    if (j < g->arr_init.count &&
+                        g->arr_init.items[j]->kind == EXPR_STR_LIT) {
+                        slen = (long)strlen(g->arr_init.items[j]->as.str.value);
+                    }
+                    if (j == 0) emit(cg, "_globarrlen%d: dq %ld", g->label_id, slen);
+                    else        emit(cg, "            dq %ld", slen);
+                }
+                continue;
+            }
             for (int j = 0; j < g->size; j++) {
                 if (j < g->arr_init.count) {
                     Expr *e = g->arr_init.items[j];
@@ -5193,6 +5356,16 @@ void codegen_program(const Program *prog, FILE *out) {
             if (size == 0 && s->as.array_decl.size_expr &&
                 s->as.array_decl.size_expr->kind == EXPR_INT_LIT) {
                 size = (int)s->as.array_decl.size_expr->as.int_val;
+            }
+            // Pre-add str[] element literals so their _str labels are
+            // defined before the pool flush in emit_data_section.
+            if (s->as.array_decl.elem_type == TYPE_STR) {
+                for (int j = 0; j < s->as.array_decl.init_list.count; j++) {
+                    Expr *el = s->as.array_decl.init_list.items[j];
+                    if (el && el->kind == EXPR_STR_LIT) {
+                        add_str_const(&cg, el->as.str.value);
+                    }
+                }
             }
             alloc_global_array(&cg, s->as.array_decl.name, s->as.array_decl.elem_type,
                                size, &s->as.array_decl.init_list);

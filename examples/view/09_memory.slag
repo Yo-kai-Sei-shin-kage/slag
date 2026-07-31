@@ -1,10 +1,10 @@
 // Example: Memory Operations
-//
-//
-//
-//
-//
-//
+
+
+
+
+
+
 function main() {
     local int buf = mem.alloc(64);       // allocate 64 bytes, returns address
 

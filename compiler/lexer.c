@@ -379,6 +379,12 @@ Token lexer_next(Lexer *lex) {
         last_type = tok.type;
         return tok;
     }
+    if (c == '^' && peek_at(lex, 1) == '^') {
+        advance(lex); advance(lex);
+        Token tok = { TOK_XOR, dup_range("^^", 0, 2), start_line, start_col, 0, 0.0 };
+        last_type = tok.type;
+        return tok;
+    }
 
     TokenType type = TOK_UNKNOWN;
     switch (c) {
@@ -466,6 +472,7 @@ const char *token_type_name(TokenType type) {
         case TOK_GE: return "GE";
         case TOK_AND: return "AND";
         case TOK_OR: return "OR";
+        case TOK_XOR: return "XOR";
         case TOK_NOT: return "NOT";
         default: return "UNKNOWN";
     }

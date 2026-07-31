@@ -381,13 +381,30 @@ static Expr *parse_logical_and(Parser *p) {
     return left;
 }
 
-// Logical OR: ||
-static Expr *parse_logical_or(Parser *p) {
+// Logical XOR: ^^  (precedence between || and &&, like C's ^ )
+static Expr *parse_logical_xor(Parser *p) {
     Expr *left = parse_logical_and(p);
-    while (check(p, TOK_OR)) {
+    while (check(p, TOK_XOR)) {
         int line = p->current.line, col = p->current.col;
         advance(p);
         Expr *right = parse_logical_and(p);
+
+        Expr *e = expr_new(EXPR_LOGICAL, line, col);
+        e->as.logical.op = TOK_XOR;
+        e->as.logical.left = left;
+        e->as.logical.right = right;
+        left = e;
+    }
+    return left;
+}
+
+// Logical OR: ||
+static Expr *parse_logical_or(Parser *p) {
+    Expr *left = parse_logical_xor(p);
+    while (check(p, TOK_OR)) {
+        int line = p->current.line, col = p->current.col;
+        advance(p);
+        Expr *right = parse_logical_xor(p);
 
         Expr *e = expr_new(EXPR_LOGICAL, line, col);
         e->as.logical.op = TOK_OR;

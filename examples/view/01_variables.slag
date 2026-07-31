@@ -1,10 +1,13 @@
 // Example: Variables and Types
-//
-//
-//
-//
-//
-//
+
+
+
+
+
+
+global int score = 0;           // file-scope global
+global str title = "Slag";      // globals persist across calls
+
 function main() {
     local int x = 100;          // 64-bit signed integer
     local int count = 42;       // another integer

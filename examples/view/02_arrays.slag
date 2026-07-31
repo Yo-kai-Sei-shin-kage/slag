@@ -1,10 +1,10 @@
 // Example: Local Arrays
-//
-//
-//
-//
-//
-//
+
+
+
+
+
+
 function main() {
     local int[] values = {10, 25, 42, 99, 7};   // fixed-size array
     local int len = values.len;                 // .len returns count

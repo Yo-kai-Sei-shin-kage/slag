@@ -62,6 +62,7 @@ typedef enum {
 
     TOK_AND,          // &&
     TOK_OR,           // ||
+    TOK_XOR,          // ^^ (logical XOR)
     TOK_NOT,          // !
 
     TOK_UNKNOWN

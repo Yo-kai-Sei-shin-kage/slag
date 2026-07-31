@@ -1,10 +1,10 @@
 // Example: Strings
-//
-//
-//
-//
-//
-//
+
+
+
+
+
+
 function main() {
     local str greeting = "Hello";        // string literal
     local str name = "Slag";

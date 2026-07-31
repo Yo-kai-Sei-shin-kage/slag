@@ -71,6 +71,12 @@ Boolean value,
 .B true
 or
 .BR false .
+When printed, a bool renders as the word
+.B true
+or
+.B false
+(never as
+.BR 0 / 1 ).
 .TP
 .B void
 Used only as a function's declared return type for functions that
@@ -95,6 +101,12 @@ Arrays are fixed-size and 1-dimensional. Indexing uses
 .BR arr[i] ,
 and the element count is available via
 .BR arr.len .
+Element types include
+.BR str[] :
+string arrays store a pointer and length per element and support indexed
+read and write (e.g.
+.BR "arr[i] = \(dqtext\(dq" )
+in both local and global scope.
 .SS Variable scope
 .TP
 .B global
@@ -132,6 +144,32 @@ total = total + nums[j];
 while (i < nums.len) { ... }
 .fi
 .RE
+.SS Logical operators
+.B &&
+(and),
+.B ||
+(or), and
+.B !
+(not) behave as usual;
+.B &&
+and
+.B ||
+short-circuit. Logical XOR is
+.BR ^^ :
+its result is true when exactly one operand is truthy (nonzero), false
+otherwise. Unlike
+.B &&
+and
+.BR ||
+it does not short-circuit \(em both operands are always evaluated. Its
+precedence sits between
+.B ||
+and
+.BR && .
+For boolean operands
+.B "a != b"
+is equivalent to
+.BR "a ^^ b" .
 .SS Control flow
 .B if
 /
@@ -788,6 +826,13 @@ arithmetic (e.g., bit.shl(n, 16) converts an integer to fixed-point).
 .B bit.shr(value,count)
 Unsigned right shift. Inlined to a single shr instruction; bit.shr(fixed, 16)
 converts fixed-point back to integer.
+.TP
+.B bit.xor(a,b)
+Bitwise XOR of all 64 bits of the two operands. Inlined to a single xor
+instruction. The primitive for XOR ciphers, xorshift PRNGs, and hashing.
+Distinct from the
+.B ^^
+logical operator, which collapses each side to a single truth value.
 .SS Matrix stack
 A 3x4 transformation matrix stack using 16.16 fixed-point arithmetic.
 Pre-computed sin/cos lookup tables enable fast rotation. All coordinates
