@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.9**
+**Version 0.99**
 
 ---
 
@@ -1212,6 +1212,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `window.clear(r,g,b)`           | Fill framebuffer with a solid color                |
 | `window.text(x,y,val,r,g,b)`    | Draw str/int text at (x,y); drains pending fill_triangle* first, so it composites on top |
 | `window.textbuf(x,y,ptr,len,r,g,b)` | Draw `len` bytes from a runtime byte buffer as text (for dynamically built strings) |
+| `window.set_title(ptr)`         | Update the title-bar text at run time (SetWindowTextA; `ptr` = null-terminated byte buffer or str ptr) |
 | `window.flush()`                | Drain deferred fill_triangle* queue, blit to window (uncapped) |
 | `window.capture_mouse()`        | Capture mouse, clip to window, hide cursor         |
 | `window.center_cursor()`        | Move cursor to window center (FPS mouse-look re-center) |
@@ -1463,7 +1464,7 @@ function main() {
 | 0.15.1  | File-scope `on` handlers (declarable at top level, not only inside a function body); key comparison against a global `str[]` element at a compile-time constant index (`key == keys[0]`) folds to the key code, with an unrecognized name now a compile-time error | ✅ Complete |
 | 0.15.2  | iGPU auto-dispatch for `fill_triangle_pcolor` (D3D11/DXGI, Intel/AMD auto-detect via `gpu.*`); `window.set_title` for live title-bar updates. **PS2-era triangle throughput reached**: ~9.1M tris/sec on an AMD Vega 8 iGPU (100k `pcolor` tris/frame @ ~91 FPS). **Bug fix:** GPU vertex convert wrote scattered stores into write-combined mapped memory (pathologically slow); now converts into a cached scratch buffer and bulk-copies via `rep movsq` | ✅ Complete |
 | 0.16.0  | GPU shader path recovered to HLSL source (`shaders/`), vertex COLOR widened RGB→RGBA (per-vertex alpha); `gpu.clear(ptr)` for GPU clear/background color; `gpu.set_blend(mode)` straight-alpha output-merger blending for `fill_triangle_gpu` | ✅ Complete |
-| 0.9     | **GPU:** `fill_triangle_gpu` vertex widened to 10×int64 with per-vertex Texture2DArray slice (512×512 BGRA, 256 layers); negative slice selects SDF text mode (linear-sampled distance field, smoothstep glyph alpha) in the same draw call; fog constants moved to the `gpu.set_viewproj` cbuf for runtime-dynamic fog; persistent vertex buffers skip re-convert/re-upload on identical resubmit. **Language:** `str[]` string arrays (local & global) — indexed read/write from anywhere, brace initializers, parallel ptr/len storage; `bit.xor` (bitwise XOR); `^^` logical XOR operator; `bool` values print as `true`/`false` (not `0`/`1`); float formatting rounds to nearest 6th decimal (`3.3` → `3.300000`, was `3.299999`). **Bug fixes:** `calculate_frame_size` under-reserved stack for `str[]` locals (clobbered the next local via call shadow space); global `str[]` element literals now interned before the string-constant pool flush (fixed undefined `_str*` labels) | ✅ Complete |
+| 0.99    | **GPU:** `fill_triangle_gpu` vertex is direct-F32 — 11 float32 per vertex, 48-byte stride (`x,y,z,u,v,r,g,b,a,slice,flag`, built with `mem.pokef32`, bulk-copied with no int64→float convert); per-vertex Texture2DArray slice (512×512 BGRA, 256 layers), negative slice selects SDF text mode (linear-sampled distance field, smoothstep glyph alpha) in the same draw call; negative `flag` selects billboard-point mode (camera-facing expansion); per-vertex RGBA alpha with `gpu.set_blend` straight-alpha blending; `gpu.clear(ptr)` GPU background color; fog constants live in the `gpu.set_viewproj` cbuf for runtime-dynamic fog; persistent vertex buffers skip re-upload on identical resubmit; grow-on-demand vertex/scratch buffers (initial 65536 tris, up to ~29.8M/draw). **Language:** `str[]` string arrays (local & global) — indexed read/write from anywhere, brace initializers, parallel ptr/len storage; `bit.xor` (bitwise XOR); `^^` logical XOR operator; `bool` values print as `true`/`false` (not `0`/`1`); float formatting rounds to nearest 6th decimal (`3.3` → `3.300000`, was `3.299999`). **Bug fixes:** `calculate_frame_size` under-reserved stack for `str[]` locals (clobbered the next local via call shadow space); global `str[]` element literals now interned before the string-constant pool flush (fixed undefined `_str*` labels); `_gpu_up_valid` persistence bug (every persistent-geometry program silently re-staged each frame) | ✅ Complete |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 
 ### PS2-Era Graphics Target (60fps)
@@ -1510,4 +1511,4 @@ PS2-era software rendering at 60fps. Current pipeline status:
 
 ---
 
-*Slag Language Specification v0.16.0 — Subject to revision*
+*Slag Language Specification v0.99 — Subject to revision*
