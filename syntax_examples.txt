@@ -167,16 +167,26 @@ mem.poke8(buf, 0, 72);
 ## Peek byte at offset
 local int ch = mem.peek8(buf, i);
 
-## Poke 64-bit at byte offset
-mem.poke64(buf, 0, 12345678);
-mem.poke64(buf, 8, 87654321);
+## Poke 64-bit at byte offset. To fill several slots, drive the offset from a
+## loop counter (i*8) rather than writing one mem.poke64 line per value.
+local int[] words = {12345678, 87654321, 555};
+local int wi = 0;
+while (wi < words.len) {
+    mem.poke64(buf, wi * 8, words[wi]);
+    wi = wi + 1;
+}
 
 ## Peek 64-bit at byte offset
 local int val = mem.peek64(buf, 0);
 
-## Poke 32-bit float at byte offset (for SIMD vec4 buffers)
-mem.pokef32(buf, 0, 1.0);
-mem.pokef32(buf, 4, 2.5);
+## Poke 32-bit float at byte offset (for SIMD vec4 buffers). A float[] array
+## plus a loop keeps a vec4 (or larger) fill readable, one poke at i*4.
+local float[] vec = {1.0, 2.5, -3.0, 0.0};
+local int vi = 0;
+while (vi < vec.len) {
+    mem.pokef32(buf, vi * 4, vec[vi]);
+    vi = vi + 1;
+}
 
 ## File open (mode: 1=read, 2=write/truncate, 3=append) -> int handle, -1 on fail
 local int fh = file.open("save.dat", 2);
@@ -421,17 +431,306 @@ function main() {
     return;
 }
 
-## Fill triangle perspective-correct with vertex colors (vertex buffer)
+## Fill triangle perspective-correct with vertex colors (vertex buffer).
+## verts points to 24 consecutive int64 == 3 vertices x 8 fields each
+## (x, y, z, u, v, r, g, b), so the buffer is 192 bytes (24 * 8). Texture
+## color is multiplied by the interpolated per-vertex color. The texture is
+## 32-bit BGRA (4 bytes/pixel), NOT the RGB565 used by fill_triangle_affine.
+## Stage the 24 fields in a local array and loop the pokes -- one poke per
+## element at offset i*8 -- instead of 24 hand-written mem.poke64 lines.
+local int[] v = {
+    x0, y0, z0, u0, v0, r0, g0, b0,
+    x1, y1, z1, u1, v1, r1, g1, b1,
+    x2, y2, z2, u2, v2, r2, g2, b2
+};
 local int verts = mem.alloc(192);
-mem.poke64(verts, 0, x0);
-mem.poke64(verts, 8, y0);
-mem.poke64(verts, 16, z0);
-mem.poke64(verts, 24, u0);
-mem.poke64(verts, 32, v0);
-mem.poke64(verts, 40, r0);
-mem.poke64(verts, 48, g0);
-mem.poke64(verts, 56, b0);
+local int i = 0;
+while (i < v.len) {
+    mem.poke64(verts, i * 8, v[i]);
+    i = i + 1;
+}
 fill_triangle_pcolor(verts, tex_ptr, tex_w, tex_h);
 ## Note: fill_triangle_persp/fill_triangle_pcolor automatically discard
 ## a triangle if any vertex is at/behind the camera (z <= 0) or projects
 ## far outside the window's bounds -- a safety net, not a full clip.
+## On AVX2 CPUs fill_triangle_pcolor auto-dispatches an 8-px-wide SoA kernel
+## (~2x); it also transparently offloads to an iGPU after gpu.init() succeeds.
+
+## ============================================================================
+## bool type, true/false, and printing
+## ============================================================================
+
+## bool variable; prints as the WORD true/false (not 1/0)
+local bool active = true;
+local bool done = false;
+println(active);              // prints: true
+
+## bool from a comparison
+local bool positive = x > 0;
+if (positive) { println("x is positive"); }
+
+## ============================================================================
+## Logical operators: && || ! and ^^ (logical XOR)
+## ============================================================================
+## ^^ is logical XOR: true when EXACTLY ONE operand is truthy (nonzero). It
+## does NOT short-circuit (both sides always evaluated). Precedence sits
+## between || and &&. For bools, (a != b) == (a ^^ b).
+local bool only_one = a ^^ b;
+if ((x > 0) ^^ (y > 0)) { println("exactly one is positive"); }
+if (!(a && b) || c) { println("compound logic"); }
+
+## ============================================================================
+## else if chaining
+## ============================================================================
+if (x < 0) {
+    println("negative");
+} else if (x == 0) {
+    println("zero");
+} else {
+    println("positive");
+}
+
+## ============================================================================
+## Typed function return (the return TYPE precedes the value)
+## ============================================================================
+function scale(int a, int b) {
+    return int a * b;
+}
+function half(float f) {
+    return float f / 2.0;
+}
+
+## ============================================================================
+## String arrays (str[]) -- local and global, indexed read AND write
+## ============================================================================
+## Parallel ptr/len storage per element; brace initializers; index anywhere.
+global str[] names = {"alpha", "beta", "gamma"};
+local str[] words = {"one", "two", "three"};
+println(names[0]);            // alpha
+words[1] = "TWO";             // indexed write
+local int n = names.len;      // element count
+
+## Compare a translated key against a str[] element at a COMPILE-TIME constant
+## index -- folds to the same key code as the equivalent literal.
+global str[] keys = {"a", "esc", "left"};
+on key_down(int key) {
+    if (key == keys[0]) { }                 // same as key == "a"
+    if (key == keys[1]) { window.close(); } // same as key == "esc"
+}
+
+## ============================================================================
+## bit.xor -- bitwise XOR of all 64 bits (distinct from the ^^ logical op)
+## ============================================================================
+## Primitive for XOR ciphers, xorshift PRNGs, hashing, bit toggling.
+local int cipher = bit.xor(plain, key);          // XOR cipher (its own inverse)
+local int step = bit.xor(state, bit.shl(state, 13)); // one xorshift step
+
+## ============================================================================
+## Full mat.* stack (translate/scale/rotate on all 3 axes)
+## ============================================================================
+## 16.16 fixed-point; angle 0-255 maps to 0-360 degrees. Convert ints in with
+## bit.shl(n, 16) and results back with bit.shr(result, 16).
+mat.identity();
+mat.push();
+mat.translate(bit.shl(100, 16), bit.shl(200, 16), 0);
+mat.scale(bit.shl(2, 16), bit.shl(2, 16), bit.shl(2, 16));
+mat.rotate_x(32);
+mat.rotate_y(64);            // 64/256 * 360 = 90 degrees
+mat.rotate_z(16);
+local int sx = bit.shr(mat.transform_x(bit.shl(50, 16), 0, 0), 16);
+mat.pop();
+
+## ============================================================================
+## Full simd.* set (SSE2 128-bit; all pointers are 16-byte mem.alloc buffers)
+## ============================================================================
+## Packed 4-float arithmetic
+simd.addf4(dest, a, b);
+simd.subf4(dest, a, b);
+simd.mulf4(dest, a, b);
+simd.divf4(dest, a, b);
+## 4x4 matrix ops (row-major) and matrix-vector multiply
+simd.mat4_mul(dest, a, b);
+simd.mat4_vec4(dest, m, vec);
+## RGB565 pixel ops (8 pixels per 128-bit register)
+simd.rgb565_unpack(r, g, b, pixels);
+simd.rgb565_pack(dest, r, g, b);
+simd.rgb565_blend(dest, a, b, alpha);   // alpha: 8x16-bit, 0-256
+
+## ============================================================================
+## tex.perlin2d -- Perlin noise (0-255)
+## ============================================================================
+local int p = tex.perlin2d(x, y, freq, seed);
+
+## ============================================================================
+## window.* additions: set_title, center_cursor, clip
+## ============================================================================
+## Update the title bar at run time (SetWindowTextA). ptr is a null-terminated
+## byte buffer (mem.alloc + mem.poke8) or a str global's pointer. Updates even
+## while an iGPU swapchain owns the client surface (title bar is non-client).
+window.set_title(title_ptr);
+## Move cursor to window center -- FPS mouse-look re-center, call each frame.
+window.center_cursor();
+## Per-window raster clip rect for the CPU fill_triangle* rasterizers; pixels
+## outside the rectangle are not written.
+window.clip(x0, y0, x1, y1);
+
+## ============================================================================
+## All mouse event handlers (down/up/wheel in addition to move)
+## ============================================================================
+on mouse_down(int button) {   // 0 = left, 1 = right, 2 = middle
+    if (button == 0) { println("left click"); }
+}
+on mouse_up(int button) { }
+on mouse_wheel(int delta) {   // +-120 per notch
+    input.add_wheel(delta);
+}
+
+## ============================================================================
+## Per-window input state accessors (stored per-window via TLS, so handlers on
+## one window never leak state into another). Bridges event handlers (which run
+## in their own frames) and the main loop.
+## ============================================================================
+input.add_drag(dx, dy);
+local int dx = input.drag_x();
+local int dy = input.drag_y();
+input.set_dragging(1);
+if (input.is_dragging()) { }
+input.set_last(mx, my);
+local int lx = input.last_x();
+local int ly = input.last_y();
+input.add_wheel(delta);
+local int w = input.wheel();          // returns AND resets accumulated delta
+input.set_bbox(minx, miny, maxx, maxy);
+if (input.in_bbox(mx, my)) { }        // axis-aligned hit test -> 1 if inside
+
+## ============================================================================
+## audio.* additions: pause/resume/is_paused/pan
+## ============================================================================
+audio.pause(music);          // retains position (unlike stop, which resets)
+audio.resume(music);
+if (audio.is_paused(music)) { }
+audio.pan(sfx, 0);           // 0 = full left, 128 = center, 255 = full right
+
+## ============================================================================
+## Networking: single-byte API + blocking/non-blocking listen paths
+## ============================================================================
+## A listener binds once then accepts (blocking on the bind/accept path).
+net.start();
+net.bind(5555);              // socket + bind + listen (does not block)
+net.accept();               // block until a peer connects
+## Or the one-call convenience (bind + listen + accept):
+net.listen(5555);
+## Single-byte send/recv
+net.send(65);                            // send one byte
+local int b = net.recv();                // -> byte, or -2 (poll again) / -1 (closed)
+## net.recv()/net.recv_buf() return contract on a net.connect() (non-blocking)
+## connection: >=0 bytes, -2 (no data this instant, still alive), -1 (peer gone).
+if (net.ack()) { }                       // did the last op succeed?
+if (net.connected()) { }                 // active non-blocking liveness check
+
+## Exact-length reassembly: returns n only once the FULL n bytes arrive, -2
+## while partial (call again next tick), -1 on error. Use for framed/encrypted
+## payloads (fixed length prefix, 72-byte pubkey, an AES message, ...).
+local int got = net.recv_buf_exact(buf, n);
+if (got == n) { println("full message"); }
+
+## ============================================================================
+## Persistent multi-client server (host) + LAN discovery (client)
+## ============================================================================
+## HOST: TCP listen + a UDP discovery listener (fixed port 9001) advertising
+## name/port. All server_* calls are non-blocking -- poll every tick.
+net.server_start(7777, "My Game Server");
+local int slot = net.server_accept();       // -> client slot idx, or -1 if none
+if (slot >= 0) { println("client connected"); }
+net.server_send(slot, 200);
+local int rb = net.server_recv(slot);       // byte / -2 (no data) / -1 (gone)
+net.server_send_buf(slot, buf, len);
+local int rn = net.server_recv_buf(slot, buf, maxlen);
+local int rx = net.server_recv_buf_exact(slot, buf, n); // per-slot exact-n
+if (net.server_connected(slot)) { }
+net.server_stop();
+
+## CLIENT: browse the LAN for servers, then connect with the single-peer API.
+net.discover_send();                        // UDP broadcast (rate-limited/1s)
+local int upd = net.discover_poll();        // -> slot idx just updated, or -1
+local int servers = net.discover_count();
+local str ip = net.discover_ip(0);
+local int port = net.discover_port(0);
+local str sname = net.discover_name(0);
+local int maxc = net.discover_max(0);
+local int live = net.discover_clients(0);
+net.start();
+net.connect(ip, port);                      // then talk with net.send/recv/*_buf
+
+## ============================================================================
+## Cryptography: ECDH P-256 key exchange + AES-256-CBC (bcrypt/CNG)
+## ============================================================================
+## Pure primitives -- the script does the handshake and wraps each payload
+## itself, over either the net.* or net.server_* transport. One keypair and one
+## derived session key are held at a time.
+crypto.dh_keygen();                         // ephemeral ECDH P-256 keypair
+local int publen = crypto.dh_pubkey(pub);   // export our 72-byte pubkey -> len
+crypto.dh_derive(peer_pub, 72);             // import peer key -> derive AES-256
+## out must hold 16 + in_len rounded up to the next 16-byte block (IV + PKCS7).
+local int clen = crypto.aes_encrypt(msg, msg_len, out);  // 16-byte IV prepended
+local int plen = crypto.aes_decrypt(inbuf, in_len, plain); // -> len, or -1 fail
+
+## ============================================================================
+## GPU dispatch (Direct3D 11 / DXGI) -- gpu.* + fill_triangle_gpu
+## ============================================================================
+## Optional bulk GPU draw path, separate from the CPU fill_triangle_* rasters.
+## Detect + bring up a device AFTER window.open(); the detector prefers a
+## discrete GPU over an integrated one automatically.
+local int vendor = gpu.detect();     // 1=Intel 2=AMD 3=NVIDIA 0=none (no device yet)
+local int v2 = gpu.vendor();         // cached vendor from last detect (no re-probe)
+if (gpu.init()) {                    // create device/swapchain/depth/pipeline -> 1 ok
+    if (gpu.ready()) { }             // device + swapchain live
+    if (gpu.pipeline()) { }          // full pipeline live (both needed to draw)
+    if (gpu.discrete()) { }          // 1 = discrete (UMA=0), 0 = integrated
+}
+
+## Camera: upload a 16-float row-major 4x4 view-projection matrix each frame.
+## gpu.set_viewproj also carries dynamic fog params in its cbuf (see fog/flag).
+gpu.set_viewproj(mat_ptr);
+
+## GPU clear/background color: 4 floats (R,G,B,A, 0.0-1.0). On the GPU path the
+## present replaces the window surface, so this is the background (window.clear
+## does not apply while the GPU owns the client surface).
+local float[] bg = {0.1, 0.1, 0.15, 1.0};
+local int cbuf = mem.alloc(16);
+local int ci = 0;
+while (ci < bg.len) {
+    mem.pokef32(cbuf, ci * 4, bg[ci]);
+    ci = ci + 1;
+}
+gpu.clear(cbuf);
+
+## Blend mode: 0 = opaque (default), 1 = straight alpha (uses per-vertex a).
+gpu.set_blend(1);
+
+## fill_triangle_gpu(verts, count, tex_ptr, tex_w, tex_h)
+## verts: count*3 vertices, each 11 float32 (48-byte stride), built DIRECTLY
+## with mem.pokef32 (no int64->float convert): x,y,z, u,v, r,g,b,a, slice, flag.
+##   - positions are WORLD-space (transformed by set_viewproj in the shader)
+##   - u,v are raw texel coords; r,g,b,a are 0-255 -- the shader normalizes both
+##   - slice: Texture2DArray layer (512x512 BGRA); NEGATIVE slice = SDF text mode
+##   - flag: 1 disables per-vertex fog, 0 = full fog; NEGATIVE flag = billboard
+##     point mode (camera-facing expansion)
+## tex_w packs the layer count in its high 32 bits: texw | (nlayers << 32).
+## Stage one triangle's 33 floats (3 verts x 11) from an array + loop:
+local float[] tri = {
+    x0, y0, z0, u0, v0, r0, g0, b0, a0, 0.0, 0.0,
+    x1, y1, z1, u1, v1, r1, g1, b1, a1, 0.0, 0.0,
+    x2, y2, z2, u2, v2, r2, g2, b2, a2, 0.0, 0.0
+};
+local int gverts = mem.alloc(144);   // 3 verts * 48-byte stride
+local int gi = 0;
+while (gi < tri.len) {
+    mem.pokef32(gverts, gi * 4, tri[gi]);
+    gi = gi + 1;
+}
+fill_triangle_gpu(gverts, 1, tex_ptr, tex_w, tex_h);
+## Persistence: re-submitting the SAME (verts, count) skips the copy and redraws
+## the resident GPU buffer -- static geometry uploads once. Changing the pointer
+## or count re-uploads (animated/streamed geometry). Buffers grow on demand
+## (initial 65536 tris, up to ~29.8M per draw).
