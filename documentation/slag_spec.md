@@ -1,5 +1,5 @@
 # Slag Language Specification
-**Version 0.16.0**
+**Version 0.9**
 
 ---
 
