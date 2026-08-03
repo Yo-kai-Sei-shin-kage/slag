@@ -86,6 +86,7 @@ static void emit_window_constants(Codegen *cg) {
     E("WM_MBUTTONDOWN       equ 0x0207");
     E("WM_MBUTTONUP         equ 0x0208");
     E("WM_MOUSEWHEEL        equ 0x020A");
+    E("WM_INPUT             equ 0x00FF  ; Raw Input (controller HID reports)");
     E("WM_USER_FLUSH        equ 0x0401  ; WM_USER+1: trigger BitBlt");
     E("WM_USER_RESIZE       equ 0x0402  ; WM_USER+2: recreate DIB at new size");
     E("WM_SIZE              equ 0x0005");
@@ -351,6 +352,24 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    mov  [rbx + WSTATE_HWND], rax");
     E("    mov  qword [rbx + WSTATE_OPEN], 1");
     E("");
+    // Register for Raw Input controller reports (usage 4 joystick + usage 5
+    // gamepad, page 1). RIDEV_INPUTSINK delivers even when not foreground.
+    E("    ; --- RegisterRawInputDevices: 2x RAWINPUTDEVICE (16 bytes each) ---");
+    E("    sub  rsp, 32 + 32             ; shadow + two 16-byte entries");
+    E("    mov  word  [rsp+32+0], 1      ; usUsagePage = 0x01 (generic desktop)");
+    E("    mov  word  [rsp+32+2], 4      ; usUsage = joystick");
+    E("    mov  dword [rsp+32+4], 0x100  ; dwFlags = RIDEV_INPUTSINK");
+    E("    mov  [rsp+32+8], r13          ; hwndTarget");
+    E("    mov  word  [rsp+32+16], 1     ; usUsagePage = 0x01");
+    E("    mov  word  [rsp+32+18], 5     ; usUsage = gamepad");
+    E("    mov  dword [rsp+32+20], 0x100 ; dwFlags = RIDEV_INPUTSINK");
+    E("    mov  [rsp+32+24], r13         ; hwndTarget");
+    E("    lea  rcx, [rsp+32]            ; pRawInputDevices");
+    E("    mov  edx, 2                   ; uiNumDevices");
+    E("    mov  r8d, 16                  ; cbSize = sizeof(RAWINPUTDEVICE)");
+    E("    call RegisterRawInputDevices");
+    E("    add  rsp, 32 + 32");
+    E("");
 
     // Store struct ptr in window's GWLP_USERDATA
     E("    ; --- Store struct ptr in window userdata ---");
@@ -523,6 +542,11 @@ static void emit_wndproc(Codegen *cg) {
     E("    call GetWindowLongPtrA");
     E("    add  rsp, 32");
     E("    mov  rbx, rax         ; rbx = struct ptr");
+    E("    ; WM_INPUT is handled BEFORE the struct-ptr early-out: the controller");
+    E("    ; decode reads global _gpad_raw, not the window struct, so it must not");
+    E("    ; be dropped when GWLP_USERDATA is not set yet (races registration).");
+    E("    cmp  r13, WM_INPUT");
+    E("    je   .wndproc_input");
     E("    test rbx, rbx");
     E("    jz   .wndproc_default ; no struct yet, use default");
     E("");
@@ -776,6 +800,16 @@ static void emit_wndproc(Codegen *cg) {
     E("    add  rsp, 32");
     E("    xor  rax, rax");
     E("    jmp  .wndproc_ret");
+    E("");
+    // WM_INPUT -- controller HID report; lParam (r15) = hRawInput. Decode in
+    // the input runtime, then fall through to DefWindowProc (required for
+    // WM_INPUT cleanup).
+    E(".wndproc_input:");
+    E("    mov  rcx, r15                 ; hRawInput");
+    E("    sub  rsp, 32");
+    E("    call _slag_gamepad_dispatch");
+    E("    add  rsp, 32");
+    E("    jmp  .wndproc_default");
     E("");
     E(".wndproc_close:");
     E("    mov  rcx, r12");
@@ -4918,7 +4952,24 @@ static void emit_window_utils(Codegen *cg) {
     E("    ; draw + Present through the swapchain and return -- the swapchain owns");
     E("    ; the window surface, so the CPU drain + DIB BitBlt path is skipped.");
     E("    cmp  qword [_gpu_stage_cnt], 0");
+    E("    jne  .wf_gpu_path");
+    E("    cmp  qword [_gpu_draw_cnt], 0   ; fill_triangle_gpu bulk path uses draw_cnt, not stage_cnt");
     E("    je   .wf_cpu_path");
+    E(".wf_gpu_path:");
+    E("    ; Commit a pending resize into the live client size BEFORE presenting.");
+    E("    ; The GPU path never sends WM_USER_RESIZE (that recreates the unused");
+    E("    ; DIB), so without this WSTATE_WIDTH/HEIGHT -- and thus window.width()/");
+    E("    ; height() -- stay frozen at the initial size and the swapchain stretches");
+    E("    ; a fixed backbuffer. _slag_gpu_present_frame then sees the new size and");
+    E("    ; calls _slag_gpu_resize to rebuild the swapchain/RTV/depth 1:1.");
+    E("    cmp  qword [rbx + WSTATE_RESIZE_PENDING], 0");
+    E("    je   .wf_gpu_no_resize");
+    E("    mov  rax, [rbx + WSTATE_PENDING_W]");
+    E("    mov  [rbx + WSTATE_WIDTH], rax");
+    E("    mov  rax, [rbx + WSTATE_PENDING_H]");
+    E("    mov  [rbx + WSTATE_HEIGHT], rax");
+    E("    mov  qword [rbx + WSTATE_RESIZE_PENDING], 0");
+    E(".wf_gpu_no_resize:");
     E("    call _slag_gpu_present_frame");
     E("    add  rsp, 64");
     E("    pop  r14");
@@ -7325,6 +7376,22 @@ static void emit_default_event_handlers(Codegen *cg, const EventHandlerFlags *fl
         E("_slag_on_mouse_wheel:");
         E("    ret");
     }
+    if (!flags->has_gpad_button) {
+        E("_slag_on_gpad_button:");
+        E("    ret");
+    }
+    if (!flags->has_js_left) {
+        E("_slag_on_js_left:");
+        E("    ret");
+    }
+    if (!flags->has_js_right) {
+        E("_slag_on_js_right:");
+        E("    ret");
+    }
+    if (!flags->has_gpad_trigger) {
+        E("_slag_on_gpad_trigger:");
+        E("    ret");
+    }
     E("");
 }
 
@@ -7450,6 +7517,10 @@ void emit_window_imports(Codegen *cg) {
 static void emit_fill_triangle_gpu(Codegen *cg) {
     E("; --- _slag_fill_triangle_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h) ---");
     E("_slag_fill_triangle_gpu:");
+    // Save callee-saved rbx/r12 (used by the draw-list append below). 2 pushes ->
+    // the 5th stack arg tex_h moves from [rsp+40] to [rsp+56].
+    E("    push rbx");
+    E("    push r12");
     E("    mov  rax, [_gpu_ready]");
     E("    test rax, rax");
     E("    jz   .ftg_ret               ; no device -> no-op");
@@ -7462,18 +7533,31 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     // buffers big enough (_slag_gpu_grow). Read texh into r10 first (caller stack
     // arg at [rsp+40]) so a frame for the call doesn't disturb that offset, then
     // preserve verts/count/tex/texw/texh across the call (grow clobbers volatiles).
-    E("    mov  r10d, [rsp+40]         ; tex_h (5th stack arg) -> r10 (nonvolatile? no; saved below)");
-    E("    cmp  rdx, [_gpu_cap]");
+    E("    mov  r10d, [rsp+56]         ; tex_h (5th stack arg; +16 from the 2 entry pushes) -> r10");
+    // Grow against the RUNNING total (existing appended verts + this call's verts),
+    // since multiple draw items accumulate into one convbuf/vbuf this frame.
+    // Compare in vertex units to avoid a divide: needed_verts = stage_off + count*3,
+    // cap_verts = _gpu_cap*3. r11 = needed verts, rax = cap verts (rdx=count kept).
+    E("    mov  r11, rdx");
+    E("    imul r11, r11, 3            ; this call's verts");
+    E("    add  r11, [_gpu_stage_off]  ; + already-appended verts");
+    E("    mov  rax, [_gpu_cap]");
+    E("    imul rax, rax, 3            ; cap in verts");
+    E("    cmp  r11, rax");
     E("    jbe  .ftg_nogrow");
-    // Preserve the 5 args on the stack across the grow call (grow clobbers
-    // volatiles; we own none of the callee-saved regs here). 5 pushes (odd) +
-    // 32 shadow => rsp 16-aligned at the call. needed = count.
+    // Preserve the 5 args across the grow call. needed tris = running verts / 3,
+    // computed AFTER pushing (so the div's rdx clobber doesn't corrupt the saved
+    // count). r11 (needed verts) survives until used here.
     E("    push rcx                    ; verts");
     E("    push rdx                    ; count");
     E("    push r8                     ; tex");
     E("    push r9                     ; texw");
     E("    push r10                    ; texh");
-    E("    mov  rcx, rdx               ; needed = count");
+    E("    mov  rax, r11               ; needed verts");
+    E("    xor  rdx, rdx");
+    E("    mov  r11, 3");
+    E("    div  r11                    ; rax = needed tris");
+    E("    mov  rcx, rax               ; needed = running total tris");
     E("    sub  rsp, 32");
     E("    call _slag_gpu_grow");
     E("    add  rsp, 32");
@@ -7483,49 +7567,57 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    pop  rdx                    ; count");
     E("    pop  rcx                    ; verts");
     E(".ftg_nogrow:");
-    E("    mov  rax, rdx               ; count (now always <= cap)");
-    // Record texture + count; mark prebuilt so present skips the convert.
-    E("    mov  [_gpu_stage_tex], r8");
-    E("    mov  [_gpu_stage_texw], r9");
-    E("    mov  [_gpu_stage_texh], r10");
-    E("    mov  [_gpu_stage_cnt], rax");
-    E("    mov  qword [_gpu_prebuilt], 1");
-    // Persistence: decide by geometry match FIRST, then double-buffer fill state.
-    //  - verts/count changed  -> genuine new geometry: full re-upload, reset valid.
-    //  - same geometry, both vbufs filled (valid>=2) -> skip entirely (redraw).
-    //  - same geometry, still filling (valid<2) -> re-stage THIS vbuf but do NOT
-    //    reset valid, so present's inc can climb 0->1->2 across the first 2 frames.
-    // (The old code checked valid<2 first and jumped to a reset-that-zeroed-valid,
-    //  so valid never reached 2 and the copy ran every frame -- persistence dead.)
-    E("    cmp  rcx, [_gpu_up_verts]");
-    E("    jne  .ftg_changed");
-    E("    cmp  rax, [_gpu_up_count]");
-    E("    jne  .ftg_changed");
-    // same geometry:
-    E("    cmp  qword [_gpu_up_valid], 2");
-    E("    jae  .ftg_ret               ; both vbufs hold it -> skip");
-    E("    mov  qword [_gpu_vbuf_dirty], 1  ; still filling -> stage this vbuf, keep valid");
-    E("    jmp  .ftg_upload");
-    E(".ftg_changed:");
-    E("    mov  [_gpu_up_verts], rcx");
-    E("    mov  [_gpu_up_count], rax");
-    E("    mov  qword [_gpu_up_valid], 0");
-    E("    mov  qword [_gpu_vbuf_dirty], 1");
-    E(".ftg_upload:");
-    // Direct-F32 path: the script now supplies GPU-ready float32 vertices
-    // (40B/vertex = 10 f32: x,y,z,u,v,r,g,b,a,slice, built with mem.pokef32),
-    // already matching the GPU vertex layout. No int64->f32 convert and no
-    // normalization here -- the shader divides u,v by the texture dims and rgba
-    // by 255. So this collapses to a pure copy of the whole batch into the
-    // cached scratch _gpu_convbuf, which present bulk-streams to the WC vbuf.
-    // Bytes = count*3 verts * 48B = count*144 = count*18 qwords (always exact:
-    // 48B/vertex is 6 qwords, no tail). count <= GPU_STAGE_CAP so count*18
-    // (<= 2359296) never overflows. rsi/rdi/rcx volatile; leaf, no frame, xmm untouched.
-    E("    mov  rsi, rcx               ; src = f32 verts (48B/vertex: 11 f32)");
-    E("    mov  rdi, [_gpu_convbuf]    ; dst = cached scratch");
-    E("    imul rcx, rax, 18           ; qwords = count*3*48/8 = count*18");
+    E("    mov  rax, rdx               ; rax = tri count (<= cap)");
+    // DRAW-LIST APPEND. Each call appends one draw item and copies its verts into
+    // _gpu_convbuf at the running vertex offset, so one frame can hold several
+    // draws with independent viewproj/light (world-space 3D mesh + ortho 2D UI).
+    // present iterates the items. Overflow guard: cap draw items at 16.
+    E("    mov  r11, [_gpu_draw_cnt]");
+    E("    cmp  r11, 16");
+    E("    jae  .ftg_ret               ; too many draws this frame -> drop");
+    // dst vertex offset (verts, not tris) = _gpu_stage_off; byte offset = *48.
+    E("    mov  rbx, [_gpu_stage_off]  ; startVertex (rbx is callee-saved; restore below)");
+    // vertexCount for this item = tri count * 3
+    E("    mov  r12, rax");
+    E("    imul r12, r12, 3            ; r12 = vertexCount (callee-saved; restore below)");
+    // Copy verts into convbuf at byte offset startVertex*48. rcx=src verts.
+    // qwords = vertexCount * 48 / 8 = vertexCount * 6.
+    E("    push rbx");
+    E("    push r12");
+    E("    mov  rsi, rcx               ; src f32 verts");
+    E("    mov  rdi, [_gpu_convbuf]");
+    E("    mov  r11, rbx");
+    E("    imul r11, r11, 48           ; dst byte offset = startVertex*48");
+    E("    add  rdi, r11");
+    E("    mov  rcx, r12");
+    E("    imul rcx, rcx, 6            ; qwords = vertexCount*6");
     E("    rep  movsq");
+    E("    pop  r12");
+    E("    pop  rbx");
+    // Record the draw item at _gpu_draw_items + draw_cnt*64.
+    E("    mov  r11, [_gpu_draw_cnt]");
+    E("    imul r11, r11, 64");
+    E("    lea  rax, [_gpu_draw_items]   ; base separately (avoid ADDR32 [sym+reg] reloc)");
+    E("    add  r11, rax");
+    E("    mov  [r11 + 0],  rbx        ; startVertex");
+    E("    mov  [r11 + 8],  r12        ; vertexCount");
+    E("    mov  [r11 + 16], r8         ; tex");
+    E("    mov  [r11 + 24], r9         ; texw");
+    E("    mov  [r11 + 32], r10        ; texh");
+    E("    mov  rax, [_gpu_viewproj]");
+    E("    mov  [r11 + 40], rax        ; viewproj snapshot");
+    E("    mov  rax, [_gpu_lightproj]");
+    E("    mov  [r11 + 48], rax        ; lightproj snapshot");
+    E("    mov  rax, [_gpu_lightdir]");
+    E("    mov  [r11 + 56], rax        ; lightdir snapshot");
+    // advance running offset + item count; mark prebuilt (convbuf holds f32).
+    E("    add  [_gpu_stage_off], r12  ; += vertexCount");
+    E("    inc  qword [_gpu_draw_cnt]");
+    E("    mov  qword [_gpu_prebuilt], 1");
+    E("    mov  qword [_gpu_vbuf_dirty], 1");
     E(".ftg_ret:");
+    E("    pop  r12");
+    E("    pop  rbx");
     E("    ret");
 }
 

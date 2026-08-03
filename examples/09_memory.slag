@@ -7,6 +7,13 @@
 //
 // Example: mem.alloc, mem.poke8, mem.peek8, mem.free
 
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
+
 function main() {
     window.open(320, 200, "Memory");
     

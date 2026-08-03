@@ -851,6 +851,36 @@ can be rendered directly without a string literal.
 
 ---
 
+### 12.11 Gamepad Input
+
+Descriptor-driven HID gamepad support for any brand of controller. Reports
+arrive via Raw Input (`WM_INPUT`, `RIDEV_INPUTSINK`); rather than hardcoding
+per-brand byte offsets, the device's own HID report descriptor is parsed via
+`hid.dll` (`HidP_*`), so axes and buttons are decoded by their HID *usage*.
+Programs using gamepad input link `hid` (`-lhid`). A window must be open (the
+raw-input sink is attached to the window).
+
+Analog axes are read-only polled accessors returning `int`:
+
+```
+gpad.lx()  gpad.ly()  gpad.rx()  gpad.ry()   // sticks, signed -32768..32767
+gpad.lt()  gpad.rt()                          // triggers, 0..32767
+```
+
+Buttons are delivered through an event handler, edge-diffed so it fires only on
+a state change (press or release):
+
+```
+on gpad_button(int id, bool down) {
+    if (id == 0 && down) { ... }   // button 0 pressed
+}
+```
+
+`id` is the 0-based HID button index; `down` is `true` on press, `false` on
+release. Undeclared handlers default to no-op stubs.
+
+---
+
 ## 13. 3D Rendering
 
 ### 13.1 Overview
@@ -1145,7 +1175,7 @@ Every Slag executable links the following libraries (see `slagrun` / the
 `makefile`'s `LDLIBS`):
 
 ```
--lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt -ldxgi -ld3d11
+-lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt -ldxgi -ld3d11 -lhid
 ```
 
 Each maps to a runtime subsystem:
@@ -1158,6 +1188,7 @@ Each maps to a runtime subsystem:
 | `-lwinmm`            | Audio mixer: `audio.*`                           | `winmm.dll`            |
 | `-lbcrypt`           | Cryptography: `crypto.*` (CNG ECDH/AES)          | `bcrypt.dll`           |
 | `-ldxgi -ld3d11`     | iGPU dispatch: `gpu.*` (Direct3D 11 / DXGI)      | `dxgi.dll`, `d3d11.dll`|
+| `-lhid`              | Gamepad input: `gpad.*`, `on gpad_button`        | `hid.dll`              |
 
 **All of these flags are currently required for every program**, regardless of
 which builtins it uses. The compiler emits every runtime — and its `extern`
@@ -1206,6 +1237,10 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `gpu.set_viewproj(ptr)`         | Set the 4x4 row-major view-projection matrix (16 floats) for `fill_triangle_gpu` |
 | `gpu.clear(ptr)`                | Set the GPU clear/background color; `ptr` = 4 f32 (R,G,B,A) from `mem.pokef32` |
 | `gpu.set_blend(mode)`           | GPU blend mode: 0 = opaque (default), 1 = straight alpha (uses per-vertex `a`) |
+| `gpu.set_lightproj(mat,dir)`    | Enable shadow-mapped diffuse lighting for lit geometry (per-vertex `flag`=2): `mat` = 16 f32 light view-projection, `dir` = 3 f32 light direction; 2048² shadow map + 3×3 PCF. Zero `mat` disables |
+| `gpad.lx/ly/rx/ry()`            | Left/right analog stick axis, signed −32768..32767 (polled) |
+| `gpad.lt/rt()`                  | Left/right trigger, 0..32767 (polled) |
+| `on gpad_button(id,down)`       | HID button event (edge-diffed): `id` 0-based, `down` bool press/release |
 | `window.open(w,h,title[,fs])`   | Open window on its own thread; nonzero `fs` = fullscreen |
 | `window.close()`                | Post WM_CLOSE to window                            |
 | `window.is_open()`              | Returns 1 if window is open                        |

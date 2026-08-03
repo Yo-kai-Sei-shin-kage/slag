@@ -7,6 +7,13 @@
 //
 // Example: on mouse_move, on mouse_down, on mouse_up, on mouse_wheel
 
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
+
 global int mouse_x = 200;
 global int mouse_y = 150;
 global int is_clicking = 0;

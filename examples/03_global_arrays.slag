@@ -7,6 +7,13 @@
 //
 // Example: global array declaration, file-scope persistence
 
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
+
 global int[] data = {100, 200, 300, 400, 500};
 global int counter = 0;
 

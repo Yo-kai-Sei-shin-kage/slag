@@ -35,6 +35,7 @@
 #include "ast.h"
 #include "codegen.h"
 #include "window_runtime.h"
+#include "gamepad_runtime.h"
 #include "net_runtime.h"
 #include "server_runtime.h"
 #include "mem_runtime.h"
@@ -619,6 +620,14 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
     switch (e->kind) {
         case EXPR_INT_LIT:
             emit(cg, "    mov  rax, %ld", e->as.int_val);
+            break;
+
+        case EXPR_STR_LIT:
+            // A string literal used where an int is expected yields its byte
+            // pointer (rax), matching how a str global/local IDENT does. Lets a
+            // literal be passed to a user function's int-pointer parameter
+            // (e.g. mem.peek8-based text/path helpers).
+            emit_load_str_lit(cg, e);
             break;
 
         case EXPR_BOOL_LIT:
@@ -1831,6 +1840,15 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    mov  rcx, [_qpc_freq]");
             emit(cg, "    div  rcx              ; rax = (counter*1e6)/freq = microseconds");
         }
+        // gpad.lx/ly/rx/ry/lt/rt() -> float latched axis normalized to -1..1.
+        // Polled each frame by the render loop; no event-handler noise.
+        else if (strcmp(base, "gpad") == 0 &&
+                 (strcmp(member, "lx") == 0 || strcmp(member, "ly") == 0 ||
+                  strcmp(member, "rx") == 0 || strcmp(member, "ry") == 0 ||
+                  strcmp(member, "lt") == 0 || strcmp(member, "rt") == 0)) {
+            emit(cg, "    ; gpad.%s (latched axis, int)", member);
+            emit(cg, "    mov  rax, [_gpad_cur_%s]", member);
+        }
         else if (strcmp(member, "set_bbox") == 0) {
             emit(cg, "    ; input.set_bbox");
             if (args->count >= 4) {
@@ -2896,6 +2914,18 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             if (args->count >= 1) {
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  [_gpu_viewproj], rax");
+            }
+        }
+        // gpu.set_lightproj(matptr, dirptr) -> enable shadow-mapped lighting.
+        // matptr = 16 f32 light view-projection (row-major), dirptr = 3 f32 world
+        // light direction. Setting matptr non-zero turns on the shadow depth pass.
+        else if (strcmp(member, "set_lightproj") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.set_lightproj");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_gpu_lightproj], rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  [_gpu_lightdir], rax");
             }
         }
         // gpu.clear(ptr) -> set the GPU clear color; ptr is a buffer of 4 f32
@@ -4378,11 +4408,13 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    sub  rsp, 32");
     emit(cg, "    mov  rax, rcx       ; value");
     emit(cg, "    mov  r8,  rdx       ; output buffer");
+    emit(cg, "    xor  r11, r11       ; r11 = sign length (0 or 1 for '-')");
     emit(cg, "    test rax, rax");
     emit(cg, "    jns  .itoa_pos");
     emit(cg, "    neg  rax");
     emit(cg, "    mov  byte [r8], '-'");
     emit(cg, "    inc  r8");
+    emit(cg, "    mov  r11, 1         ; account for '-' in returned length");
     emit(cg, ".itoa_pos:");
     emit(cg, "    mov  rcx, 10");
     emit(cg, "    lea  r9,  [rsp+20]  ; end of temp buf");
@@ -4400,7 +4432,7 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    mov  rdi, r8");
     emit(cg, "    mov  rcx, r9");
     emit(cg, "    sub  rcx, r10       ; digit count");
-    emit(cg, "    mov  rax, rcx       ; return length");
+    emit(cg, "    lea  rax, [rcx + r11]  ; return length = digits + sign");
     emit(cg, "    rep  movsb");
     emit(cg, "    add  rsp, 32");
     emit(cg, "    pop  rdi");
@@ -5304,6 +5336,7 @@ void codegen_program(const Program *prog, FILE *out) {
     // Imports.
     emit_imports(&cg);
     emit_window_imports(&cg);
+    emit_gamepad_imports(&cg);
     emit_net_imports(&cg);
     emit_server_imports(&cg);
     emit_mem_imports(&cg);
@@ -5388,6 +5421,10 @@ void codegen_program(const Program *prog, FILE *out) {
             else if (strcmp(ev, "mouse_down") == 0) ev_flags.has_mouse_down = 1;
             else if (strcmp(ev, "mouse_up") == 0)   ev_flags.has_mouse_up = 1;
             else if (strcmp(ev, "mouse_wheel") == 0) ev_flags.has_mouse_wheel = 1;
+            else if (strcmp(ev, "gpad_button") == 0) ev_flags.has_gpad_button = 1;
+            else if (strcmp(ev, "js_left") == 0)     ev_flags.has_js_left = 1;
+            else if (strcmp(ev, "js_right") == 0)    ev_flags.has_js_right = 1;
+            else if (strcmp(ev, "gpad_trigger") == 0) ev_flags.has_gpad_trigger = 1;
         }
     }
     // File-scope `on` handlers.
@@ -5401,6 +5438,10 @@ void codegen_program(const Program *prog, FILE *out) {
         else if (strcmp(ev, "mouse_down") == 0) ev_flags.has_mouse_down = 1;
         else if (strcmp(ev, "mouse_up") == 0)   ev_flags.has_mouse_up = 1;
         else if (strcmp(ev, "mouse_wheel") == 0) ev_flags.has_mouse_wheel = 1;
+        else if (strcmp(ev, "gpad_button") == 0) ev_flags.has_gpad_button = 1;
+        else if (strcmp(ev, "js_left") == 0)     ev_flags.has_js_left = 1;
+        else if (strcmp(ev, "js_right") == 0)    ev_flags.has_js_right = 1;
+        else if (strcmp(ev, "gpad_trigger") == 0) ev_flags.has_gpad_trigger = 1;
     }
 
     // Runtime helpers.
@@ -5408,6 +5449,7 @@ void codegen_program(const Program *prog, FILE *out) {
     emit_cpu_topology_helper(&cg);
     emit_simd_detect_helper(&cg);
     emit_window_runtime(&cg, &ev_flags);
+    emit_gamepad_runtime(&cg);
     emit_net_runtime(&cg);
     emit_server_runtime(&cg);
     emit_mem_runtime(&cg);
@@ -5438,6 +5480,7 @@ void codegen_program(const Program *prog, FILE *out) {
     // populated by the time we write them).
     emit_data_section(&cg);
     emit_window_data(&cg);
+    emit_gamepad_data(&cg);
     emit_gpu_data(&cg);
     emit_mat_data(&cg);
     emit_mesh_data(&cg);

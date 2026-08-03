@@ -17,18 +17,22 @@ function main() {
     on key_down(int keycode) {
         // WASD movement
         // W = 87, A = 65, S = 83, D = 68
-        if (keycode == 87) {
+        if (keycode == "w") {
             player_y = player_y - 10;
         }
-        if (keycode == 83) {
+        if (keycode == "s") {
             player_y = player_y + 10;
         }
-        if (keycode == 65) {
+        if (keycode == "a") {
             player_x = player_x - 10;
         }
-        if (keycode == 68) {
+        if (keycode == "d") {
             player_x = player_x + 10;
+	}
+        if (keycode == "esc" || keycode == "enter") {
+            window.close();
         }
+
 
         // Space = 32 - change color
         if (keycode == 32) {

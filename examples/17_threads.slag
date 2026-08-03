@@ -6,6 +6,12 @@
 //
 //
 // Example: thread {}, sync {}, lock {}, parallel progress bars
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
 
 global int bar1 = 0;
 global int bar2 = 0;

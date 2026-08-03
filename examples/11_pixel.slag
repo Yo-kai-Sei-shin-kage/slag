@@ -6,6 +6,12 @@
 //
 //
 // Example: pixel(x, y, r, g, b) for individual pixel access
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
 
 function main() {
     window.open(400, 300, "Pixel Example");

@@ -526,6 +526,26 @@ Set the output-merger blend mode for
 .I a
 component. Applied every frame, so the mode may change at run time.
 .TP
+.BI gpu.set_lightproj( mat_ptr , " dir_ptr" )
+Enable shadow-mapped diffuse lighting for
+.B fill_triangle_gpu
+geometry flagged as lit (per-vertex
+.I flag
+= 2).
+.I mat_ptr
+points to a 16-float32 row-major light view-projection matrix (the light's
+camera, same layout as
+.BR gpu.set_viewproj )
+and
+.I dir_ptr
+to 3 float32 giving the world-space light direction. When set, each frame
+runs a depth-only shadow pass from the light's point of view into a
+2048x2048 shadow map, then the main pass samples it (3x3 PCF) for per-pixel
+N\(bulL diffuse plus shadowing on lit faces; UI, text, and unlit geometry are
+untouched. Passing a zero
+.I mat_ptr
+disables shadows (the default \(em geometry renders unlit/fog-shaded as before).
+.TP
 .BI fill_triangle_gpu( verts , " count" , " tex_ptr" , " tex_w" , " tex_h" )
 Bulk GPU draw path (separate from the CPU-optimized
 .BR fill_triangle_pcolor ,
@@ -1231,6 +1251,51 @@ input.set_bbox(minx, miny, maxx, maxy)
 input.in_bbox(mx, my)   // axis-aligned hit test
 .fi
 .RE
+.SS Gamepad input
+Descriptor-driven HID gamepad support (any brand). Controller reports arrive via
+Raw Input
+.RB ( WM_INPUT ,
+.BR RIDEV_INPUTSINK );
+the device's own HID report descriptor is parsed via
+.B hid.dll
+.RB ( HidP_* ),
+so axes and buttons are decoded by their HID
+.I usage
+rather than a per-brand byte layout \(em no per-controller configuration.
+Programs using gamepad input link
+.B hid
+.RB ( \-lhid ).
+A window must be open (the raw-input sink is tied to the window).
+.PP
+Analog axes are polled read-only accessors returning
+.BR int :
+.TP
+.BR gpad.lx() ", " gpad.ly() ", " gpad.rx() ", " gpad.ry()
+Left / right analog stick axes, signed
+.BR \-32768 .. 32767 .
+.TP
+.BR gpad.lt() ", " gpad.rt()
+Left / right trigger, 0..32767.
+.PP
+Buttons are delivered through an event handler, edge-diffed so it fires only on
+a state change:
+.PP
+.RS
+.nf
+on gpad_button(int id, bool down) {
+    if (id == 0) { ... }        // button 0 pressed/released
+}
+.fi
+.RE
+.PP
+.I id
+is the 0-based HID button index and
+.I down
+is
+.B true
+on press,
+.B false
+on release. Handlers not declared default to no-op stubs.
 .SH NOT YET IMPLEMENTED
 The following are described in the language design but are not
 currently functional:
@@ -1253,7 +1318,7 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe \e
     -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt \e
-    -ldxgi -ld3d11 -e _start
+    -ldxgi -ld3d11 -lhid -e _start
 .fi
 .RE
 .PP
@@ -1283,6 +1348,9 @@ cryptography (crypto.*)
 .TP
 .B \-ldxgi \-ld3d11
 integrated-GPU dispatch (gpu.*, Direct3D 11 / DXGI)
+.TP
+.B \-lhid
+gamepad input (gpad.*, on gpad_button)
 .PP
 Add
 .B \-mwindows

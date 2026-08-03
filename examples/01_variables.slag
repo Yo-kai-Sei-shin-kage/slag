@@ -7,15 +7,43 @@
 //
 // Example: var declarations, int, float, str, bool types
 
-global int var1 = 1;
-global str var1 = hello;
-global bool var1 = 0;
+on key_down(int key) {
+
+	if (key=="esc" || key=="enter") { window.close(); }
+
+}
 
 function main() {
 
     local int var1 = 1;
-    local str var1 = hello;
-    local bool var1 = 0;
+    local str var2 = "hello";
+    local bool var3 = 0;
+
+    window.open(320, 240, "Variables Example 01");
+    window.clear(0, 0, 0);
+
+	while (window.is_open()) {
+	local int TIME = time.now_us() % 2;
+
+	if (TIME == 0) { var3 = 0; } else { var3 = 1; }
+	      window.text(window.width() / 8, (window.height() / 2) - 96, "Integer Variable: ", 205, 155, 255);
+	      window.text((window.width() / 8) + 128, (window.height() / 2) - 96, var1, 100, 200, 10);
+              window.text(window.width() / 8, (window.height() / 2) - 72, "String Variable: ", 205, 155, 255);
+              window.text((window.width() / 8) + 128, (window.height() / 2) - 72, var2, 100, 200, 10);
+              window.text(window.width() / 8, (window.height() / 2) - 48, "Bool Variable: ", 205, 155, 255);
+
+              if (var3 == true) {
+                    window.text((window.width() / 8) + 128, (window.height() / 2) - 48, "True", 100, 200, 10);
+	      } else {
+		    window.text((window.width() / 8) + 128, (window.height() / 2) - 48, "False", 200, 200, 0);
+	      }
+
+	      window.flush();
+	      window.clear(0, 0, 0);
+	      sleep(250);
+
+	}
+
     return int 0;
 
 }

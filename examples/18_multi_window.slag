@@ -7,6 +7,12 @@
 //
 // Example: Two windows from a single program using TLS + threads
 
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
 global int running = 1;
 
 function main() {

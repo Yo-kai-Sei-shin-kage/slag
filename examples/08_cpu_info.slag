@@ -7,6 +7,13 @@
 //
 // Example: cpu.physical_cores(), cpu.logical_cores(), cpu.simd_detect(), cpu.has_avx2()
 
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
+
 function main() {
     window.open(360, 240, "CPU Info");
 

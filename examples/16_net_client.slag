@@ -7,6 +7,12 @@
 //
 // Example: net.start(), net.connect(), net.send_buf(), net.end()
 
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
 function main() {
     window.open(320, 200, "Network Client");
     

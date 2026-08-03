@@ -6,6 +6,12 @@
 //
 //
 // Example: string declaration, string display
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
 
 function main() {
     window.open(320, 200, "Strings");

@@ -37,10 +37,11 @@ function main() {
         if (keycode == "d") { move_right = 1; }
         if (keycode == "q") { move_up = 1; }
         if (keycode == "e") { move_down = 1; }
-        if (keycode == "esc") {
+        if (keycode == "enter") {
             window.release_mouse();
             mouse_captured = 0;
         }
+	if (keycode == "esc") { window.close(); }
     }
 
     on key_up(int keycode) {

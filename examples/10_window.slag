@@ -7,6 +7,13 @@
 //
 // Example: window.open(), window.is_open(), window.flush()
 
+on key_down(int key) {
+
+        if (key=="esc" || key=="enter") { window.close(); }
+
+}
+
+
 function main() {
     // Open a window with specific dimensions and title
     window.open(400, 300, "Window Example");
