@@ -93,6 +93,16 @@ void functionlist_push(FunctionList *list, Function func) {
 // Constructors
 // ---------------------------------------------------------------------
 
+// Heap-duplicate a NUL-terminated string. Used when the parser synthesizes
+// AST nodes (e.g. desugaring `i++` into `i = i + 1`) that need to own an
+// identifier name independently of the source token that produced it.
+char *ast_strdup(const char *s) {
+    size_t len = strlen(s);
+    char *r = malloc(len + 1);
+    memcpy(r, s, len + 1);
+    return r;
+}
+
 Expr *expr_new(ExprKind kind, int line, int col) {
     Expr *e = malloc(sizeof(Expr));
     memset(e, 0, sizeof(Expr));

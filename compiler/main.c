@@ -1,4 +1,4 @@
-// main.c — Slag compiler entry point
+// main.c ??? Slag compiler entry point
 //
 // Usage:
 //   slag <file.slag>
@@ -71,8 +71,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    codegen_program(&prog, asm_out);
+    int cg_err = codegen_program(&prog, asm_out);
     fclose(asm_out);
+
+    if (cg_err) {
+        remove(asm_path);                 // don't leave a half-written .asm
+        free(src);
+        free(asm_path);
+        return 1;
+    }
 
     printf("%s compiled successfully\n", src_path);
 

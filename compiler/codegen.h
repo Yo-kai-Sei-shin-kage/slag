@@ -19,6 +19,7 @@
 // No CRT functions are used.
 // ---------------------------------------------------------------------
 
-void codegen_program(const Program *prog, FILE *out);
+// Returns 0 on success, nonzero if a fatal semantic error was detected.
+int codegen_program(const Program *prog, FILE *out);
 
 #endif // CODEGEN_H

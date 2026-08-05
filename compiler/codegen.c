@@ -1,4 +1,4 @@
-// codegen.c — Slag NASM x86-64 Win64 code generator
+// codegen.c ??? Slag NASM x86-64 Win64 code generator
 //
 // Pipeline:
 //   Program (AST) -> emit NASM assembly -> assemble with NASM -> link with MinGW-w64
@@ -20,12 +20,12 @@
 //   ...
 //
 // Register usage:
-//   rax  — integer return value / scratch
-//   rcx,rdx,r8,r9 — call arguments
-//   xmm0 — float return value / scratch
-//   r10,r11 — scratch (caller-saved, used freely)
-//   rbp  — frame pointer
-//   rsp  — stack pointer
+//   rax  ??? integer return value / scratch
+//   rcx,rdx,r8,r9 ??? call arguments
+//   xmm0 ??? float return value / scratch
+//   r10,r11 ??? scratch (caller-saved, used freely)
+//   rbp  ??? frame pointer
+//   rsp  ??? stack pointer
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,6 +81,7 @@ typedef struct Global {
 typedef struct Codegen {
     FILE *out;            // output assembly file
     int label_counter;    // unique label suffix generator
+    int had_error;        // set on a fatal semantic error; fails the build
 
     // Current function state
     Local locals[MAX_LOCALS];
@@ -339,7 +340,7 @@ static void emit_store_str_local(Codegen *cg, const Local *loc) {
 
 // Emit code that evaluates a str-typed expression, leaving ptr in rax
 // and len in rdx. Handles: string literals, str-typed local variables,
-// and calls (readfile/readline/match — assumed to return ptr in rax,
+// and calls (readfile/readline/match ??? assumed to return ptr in rax,
 // len in rdx per the codegen calling convention).
 static void emit_int_expr(Codegen *cg, const Expr *e);
 static void emit_str_expr(Codegen *cg, const Expr *e) {
@@ -591,9 +592,9 @@ static int keylit_code(const char *s, int *out) {
     return 0;
 }
 
-// If `e` names a compile-time-known string in a key comparison — either a
+// If `e` names a compile-time-known string in a key comparison ??? either a
 // bare string literal, or a constant index into a global str[] whose
-// initializers are string literals — return that string. Otherwise NULL.
+// initializers are string literals ??? return that string. Otherwise NULL.
 // This lets `key == ARR[0]` fold to a key code exactly like `key == "a"`,
 // pulling the element's literal straight out of the array initializer.
 static const char *const_key_str(Codegen *cg, const Expr *e) {
@@ -614,7 +615,7 @@ static const char *const_key_str(Codegen *cg, const Expr *e) {
 }
 
 // ---------------------------------------------------------------------
-// Integer expression emission — result in rax
+// Integer expression emission ??? result in rax
 // ---------------------------------------------------------------------
 static void emit_int_expr(Codegen *cg, const Expr *e) {
     switch (e->kind) {
@@ -762,7 +763,7 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
                     emit(cg, "    cvttsd2si rax, xmm0");
                     break;
                 }
-                // Comparison between floats — result is int (0/1)
+                // Comparison between floats ??? result is int (0/1)
                 emit_float_expr(cg, e->as.binary.left);
                 PUSH_XMM0(cg);
                 emit_float_expr(cg, e->as.binary.right);
@@ -941,7 +942,7 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
                     emit(cg, "    xor  rax, rax");
                 }
             } else {
-                // cpu.* fields — these are global read-only values
+                // cpu.* fields ??? these are global read-only values
                 // populated at startup (stub: return 0 for now)
                 emit(cg, "    mov  rax, [_%s_%s]",
                      e->as.member.base->as.str.value,
@@ -979,7 +980,7 @@ static void emit_int_expr(Codegen *cg, const Expr *e) {
 }
 
 // ---------------------------------------------------------------------
-// Float expression emission — result in xmm0
+// Float expression emission ??? result in xmm0
 // ---------------------------------------------------------------------
 static void emit_float_expr(Codegen *cg, const Expr *e) {
     switch (e->kind) {
@@ -1038,7 +1039,7 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
             // xmm0 = right; load left into xmm1
             emit(cg, "    movsd xmm1, [rsp]");
             emit(cg, "    add  rsp, 8");
-            // Perform: xmm1 op xmm0 → xmm0
+            // Perform: xmm1 op xmm0 ??? xmm0
             switch (e->as.binary.op) {
                 case TOK_PLUS:
                     emit(cg, "    addsd xmm0, xmm1"); // xmm0 = right+left
@@ -1285,7 +1286,7 @@ static void emit_user_call(Codegen *cg, const char *name, const ExprList *args) 
     // therefore leaves rsp misaligned by 8. Since `alloc` below is always a
     // multiple of 16, rsp would be misaligned at the `call` whenever reg_args
     // is odd (1 or 3), which corrupts the 16-byte-alignment the Win64 ABI
-    // requires — Win32 APIs called (transitively) by the callee then fault
+    // requires ??? Win32 APIs called (transitively) by the callee then fault
     // deep in ntdll (SwitchBack/SbSelectProcedure). Emit an 8-byte pad first
     // so the total displacement (pad + reg_args*8 + alloc) stays a multiple
     // of 16. The pad sits above the pushed args, so shadow/stack-arg offsets
@@ -1327,7 +1328,7 @@ static void emit_user_call(Codegen *cg, const char *name, const ExprList *args) 
     }
 
     // Pop first 4 args into registers (they were pushed left-to-right,
-    // so arg3 is on top — we need a temp area above rsp to swap).
+    // so arg3 is on top ??? we need a temp area above rsp to swap).
     // Use r10/r11 as scratch for args 2/3, rcx/rdx for 0/1.
     // Simpler: use the shadow space slots to hold them then load.
     // We pushed arg0..arg(reg_args-1) before sub rsp, so they are at
@@ -1472,10 +1473,10 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         if (strcmp(member, "open") == 0 && strcmp(base, "window") == 0) {
            emit(cg, "    ; window.open");
         if (args->count >= 3) {
-           // w → rcx
+           // w ??? rcx
            emit_int_expr(cg, args->items[0]);
            emit(cg, "    mov  r12, rax");
-           // h → rdx
+           // h ??? rdx
            emit_int_expr(cg, args->items[1]);
            emit(cg, "    mov  r13, rax");
            // optional fullscreen flag -> r14 (default 0)
@@ -1947,7 +1948,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_net_recv_byte");
             emit_call_epilogue(cg, 0);
         }
-        // net.send_buf(ptr, len) — send len bytes from buffer
+        // net.send_buf(ptr, len) ??? send len bytes from buffer
         else if (strcmp(member, "send_buf") == 0) {
             emit(cg, "    ; net.send_buf");
             if (args->count >= 2) {
@@ -1999,7 +2000,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    call _slag_net_end");
             emit_call_epilogue(cg, 0);
         }
-        // net.bind(port) — socket+bind+listen (no block)
+        // net.bind(port) ??? socket+bind+listen (no block)
         else if (strcmp(member, "bind") == 0) {
             emit(cg, "    ; net.bind");
             if (args->count >= 1) {
@@ -2010,7 +2011,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit_call_epilogue(cg, 0);
             }
         }
-        // net.accept() — block for a peer on the bound socket
+        // net.accept() ??? block for a peer on the bound socket
         else if (strcmp(member, "accept") == 0) {
             emit(cg, "    ; net.accept");
             emit_call_prologue(cg);
@@ -2821,7 +2822,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         }
         // cpu.simd_detect() -> int (re-runs CPUID feature detection; returns 1)
         // Runs automatically at startup; this builtin lets Slag re-run it
-        // on demand. Idempotent — writes the same flag bytes each time.
+        // on demand. Idempotent ??? writes the same flag bytes each time.
         else if (strcmp(member, "simd_detect") == 0) {
             emit(cg, "    ; cpu.simd_detect");
             emit(cg, "    sub  rsp, 32");
@@ -3683,6 +3684,52 @@ static void emit_stmtlist(Codegen *cg, const StmtList *list) {
     }
 }
 
+// True if `e` is a statically nonzero constant ? i.e. a loop with this
+// controlling expression can never terminate via its condition.
+static int expr_is_const_true(const Expr *e) {
+    if (!e) return 1;                       // omitted condition == always true
+    if (e->kind == EXPR_INT_LIT)  return e->as.int_val != 0;
+    if (e->kind == EXPR_BOOL_LIT) return e->as.bool_val != 0;
+    return 0;
+}
+
+// True if any statement in `list` (recursively, through nested blocks and
+// control flow) is a `return`. Used to enforce that a provably-infinite loop
+// contains an exit, since Slag has no break/continue.
+static int stmtlist_has_return(const StmtList *list) {
+    for (int i = 0; i < list->count; i++) {
+        const Stmt *s = list->items[i];
+        if (!s) continue;
+        switch (s->kind) {
+            case STMT_RETURN:
+                return 1;
+            case STMT_IF:
+                if (stmtlist_has_return(&s->as.if_stmt.then_body)) return 1;
+                if (s->as.if_stmt.has_else &&
+                    stmtlist_has_return(&s->as.if_stmt.else_body)) return 1;
+                break;
+            case STMT_WHILE:
+                if (stmtlist_has_return(&s->as.while_stmt.body)) return 1;
+                break;
+            case STMT_BLOCK:
+                if (stmtlist_has_return(&s->as.block.body)) return 1;
+                break;
+            case STMT_THREAD:
+                if (stmtlist_has_return(&s->as.thread_stmt.body)) return 1;
+                break;
+            case STMT_SYNC:
+                if (stmtlist_has_return(&s->as.sync_stmt.body)) return 1;
+                break;
+            case STMT_LOCK:
+                if (stmtlist_has_return(&s->as.lock_stmt.body)) return 1;
+                break;
+            default:
+                break;
+        }
+    }
+    return 0;
+}
+
 static void emit_stmt(Codegen *cg, const Stmt *s) {
     if (!s) return;
 
@@ -3945,6 +3992,16 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         // while (cond) { ... }
         // ------------------------------------------------------------------
         case STMT_WHILE: {
+            // A provably-infinite loop (constant-true / omitted condition)
+            // must contain a return, since Slag has no break/continue.
+            if (expr_is_const_true(s->as.while_stmt.cond) &&
+                !stmtlist_has_return(&s->as.while_stmt.body)) {
+                fprintf(stderr,
+                    "codegen error: line %d: infinite loop requires a return statement\n",
+                    s->line);
+                cg->had_error = 1;
+            }
+
             int loop_label = new_label(cg);
             int end_label  = new_label(cg);
 
@@ -3975,7 +4032,7 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
                     // rax holds return value
                 }
             }
-            // Function epilogue jump — each function has a single exit point.
+            // Function epilogue jump ??? each function has a single exit point.
             emit(cg, "    jmp  .Lepilogue");
             break;
         }
@@ -3994,7 +4051,7 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         }
 
         // ------------------------------------------------------------------
-        // thread { ... } — spawn a Win32 thread for the body
+        // thread { ... } ??? spawn a Win32 thread for the body
         // ------------------------------------------------------------------
         case STMT_THREAD: {
             if (cg->thread_body_count >= MAX_THREADS) {
@@ -4003,7 +4060,7 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
                 break;
             }
             int tid = new_label(cg);
-            // Defer the body — it's emitted as a standalone proc
+            // Defer the body ??? it's emitted as a standalone proc
             // (_slag_thread_proc_N) right after the enclosing function,
             // same pattern as on-handlers.
             cg->thread_bodies[cg->thread_body_count] = &s->as.thread_stmt.body;
@@ -4033,7 +4090,7 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         }
 
         // ------------------------------------------------------------------
-        // sync { ... } — wait for all threads (WaitForMultipleObjects)
+        // sync { ... } ??? wait for all threads (WaitForMultipleObjects)
         // ------------------------------------------------------------------
         case STMT_SYNC: {
             emit(cg, "    ; sync block");
@@ -4066,10 +4123,10 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         }
 
         // ------------------------------------------------------------------
-        // lock { ... } — global critical section (mutual exclusion)
+        // lock { ... } ??? global critical section (mutual exclusion)
         // ------------------------------------------------------------------
         case STMT_LOCK: {
-            emit(cg, "    ; lock { — enter global critical section");
+            emit(cg, "    ; lock { ??? enter global critical section");
             emit(cg, "    lea  rcx, [_slag_lock_cs]");
             emit(cg, "    sub  rsp, 32");
             emit(cg, "    call EnterCriticalSection");
@@ -4079,15 +4136,15 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
             emit(cg, "    sub  rsp, 32");
             emit(cg, "    call LeaveCriticalSection");
             emit(cg, "    add  rsp, 32");
-            emit(cg, "    ; } lock — left critical section");
+            emit(cg, "    ; } lock ??? left critical section");
             break;
         }
 
         // ------------------------------------------------------------------
-        // on key_down / mouse_move etc. — register event handler
+        // on key_down / mouse_move etc. ??? register event handler
         // ------------------------------------------------------------------
         case STMT_ON_HANDLER: {
-            emit(cg, "    ; on %s — registered at window message pump",
+            emit(cg, "    ; on %s ??? registered at window message pump",
                  s->as.on_handler.event_name);
             // The handler body is emitted as a separate labeled proc
             // during window codegen. Stub for now.
@@ -4248,7 +4305,7 @@ static void emit_on_handlers(Codegen *cg, const Function *f) {
 // thread {} proc emission
 //
 // thread{} blocks are collected (not emitted in place) while the
-// enclosing function's body is generated — see STMT_THREAD in
+// enclosing function's body is generated ??? see STMT_THREAD in
 // emit_stmt(). Once the function body is fully emitted, this walks
 // the deferred list and emits each body as a standalone proc:
 //
@@ -4261,7 +4318,7 @@ static void emit_on_handlers(Codegen *cg, const Function *f) {
 // DWORD; Slag threads currently take no parameters and the return
 // value is unused (CreateThread is called with lpParameter = NULL).
 // The proc gets its own fresh local symbol table sized for its body,
-// completely separate from the enclosing function's frame — captured
+// completely separate from the enclosing function's frame ??? captured
 // variables are not currently supported (file-scope shared data should
 // be used instead, per spec 11.4).
 // ---------------------------------------------------------------------
@@ -5320,7 +5377,7 @@ static void emit_entry(Codegen *cg, const char *entry_name) {
 // Top-level codegen entry point
 // ---------------------------------------------------------------------
 
-void codegen_program(const Program *prog, FILE *out) {
+int codegen_program(const Program *prog, FILE *out) {
     Codegen cg;
     memset(&cg, 0, sizeof(cg));
     cg.out           = out;
@@ -5503,4 +5560,6 @@ void codegen_program(const Program *prog, FILE *out) {
     for (int i = 0; i < cg.str_const_count; i++) {
         free(cg.str_consts[i]);
     }
+
+    return cg.had_error;
 }

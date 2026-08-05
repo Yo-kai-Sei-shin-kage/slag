@@ -20,6 +20,8 @@ typedef enum {
     TOK_KW_IF,
     TOK_KW_ELSE,
     TOK_KW_WHILE,
+    TOK_KW_FOR,
+    TOK_KW_IN,
     TOK_KW_TRUE,
     TOK_KW_FALSE,
     TOK_KW_FUNCTION,
@@ -45,9 +47,12 @@ typedef enum {
     TOK_SEMICOLON,    // ;
     TOK_COMMA,        // ,
     TOK_DOT,          // .
+    TOK_DOTDOT,       // ..
 
     TOK_PLUS,         // +
     TOK_MINUS,        // -
+    TOK_INC,          // ++
+    TOK_DEC,          // --
     TOK_STAR,         // *
     TOK_SLASH,        // /
     TOK_PERCENT,      // %

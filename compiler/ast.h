@@ -261,6 +261,7 @@ void functionlist_push(FunctionList *list, Function func);
 // during normal compiler operation - freed via ast_free_* if needed)
 // ---------------------------------------------------------------------
 
+char *ast_strdup(const char *s);
 Expr *expr_new(ExprKind kind, int line, int col);
 Stmt *stmt_new(StmtKind kind, int line, int col);
 

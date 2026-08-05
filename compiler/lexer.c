@@ -101,6 +101,8 @@ static TokenType keyword_type(const char *text) {
     if (strcmp(text, "if") == 0)       return TOK_KW_IF;
     if (strcmp(text, "else") == 0)     return TOK_KW_ELSE;
     if (strcmp(text, "while") == 0)    return TOK_KW_WHILE;
+    if (strcmp(text, "for") == 0)      return TOK_KW_FOR;
+    if (strcmp(text, "in") == 0)       return TOK_KW_IN;
     if (strcmp(text, "true") == 0)     return TOK_KW_TRUE;
     if (strcmp(text, "false") == 0)    return TOK_KW_FALSE;
     if (strcmp(text, "function") == 0) return TOK_KW_FUNCTION;
@@ -386,6 +388,26 @@ Token lexer_next(Lexer *lex) {
         return tok;
     }
 
+    if (c == '.' && peek_at(lex, 1) == '.') {
+        advance(lex); advance(lex);
+        Token tok = { TOK_DOTDOT, dup_range("..", 0, 2), start_line, start_col, 0, 0.0 };
+        last_type = tok.type;
+        return tok;
+    }
+
+    if (c == '+' && peek_at(lex, 1) == '+') {
+        advance(lex); advance(lex);
+        Token tok = { TOK_INC, dup_range("++", 0, 2), start_line, start_col, 0, 0.0 };
+        last_type = tok.type;
+        return tok;
+    }
+    if (c == '-' && peek_at(lex, 1) == '-') {
+        advance(lex); advance(lex);
+        Token tok = { TOK_DEC, dup_range("--", 0, 2), start_line, start_col, 0, 0.0 };
+        last_type = tok.type;
+        return tok;
+    }
+
     TokenType type = TOK_UNKNOWN;
     switch (c) {
         case '(': type = TOK_LPAREN; break;
@@ -437,6 +459,8 @@ const char *token_type_name(TokenType type) {
         case TOK_KW_IF: return "KW_IF";
         case TOK_KW_ELSE: return "KW_ELSE";
         case TOK_KW_WHILE: return "KW_WHILE";
+        case TOK_KW_FOR: return "KW_FOR";
+        case TOK_KW_IN: return "KW_IN";
         case TOK_KW_TRUE: return "KW_TRUE";
         case TOK_KW_FALSE: return "KW_FALSE";
         case TOK_KW_FUNCTION: return "KW_FUNCTION";
@@ -458,8 +482,11 @@ const char *token_type_name(TokenType type) {
         case TOK_SEMICOLON: return "SEMICOLON";
         case TOK_COMMA: return "COMMA";
         case TOK_DOT: return "DOT";
+        case TOK_DOTDOT: return "DOTDOT";
         case TOK_PLUS: return "PLUS";
         case TOK_MINUS: return "MINUS";
+        case TOK_INC: return "INC";
+        case TOK_DEC: return "DEC";
         case TOK_STAR: return "STAR";
         case TOK_SLASH: return "SLASH";
         case TOK_PERCENT: return "PERCENT";

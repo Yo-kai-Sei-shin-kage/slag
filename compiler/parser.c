@@ -1,4 +1,4 @@
-// parser.c — Slag recursive descent parser
+// parser.c ??? Slag recursive descent parser
 //
 // Depends on: lexer.h, ast.h
 //
@@ -12,12 +12,12 @@
 // The Parser struct wraps a Lexer and maintains a one-token lookahead
 // (p->current). Helpers:
 //
-//   advance(p)          — consume current, load next token
-//   check(p, type)      — true if current token is `type`
-//   match(p, type)      — consume and return true if current == type
-//   expect(p, type, msg)— consume or emit error
-//   error_at(p, msg)    — print error at current token position
-//   copy_text(tok)      — heap-duplicate tok->text (caller owns)
+//   advance(p)          ??? consume current, load next token
+//   check(p, type)      ??? true if current token is `type`
+//   match(p, type)      ??? consume and return true if current == type
+//   expect(p, type, msg)??? consume or emit error
+//   error_at(p, msg)    ??? print error at current token position
+//   copy_text(tok)      ??? heap-duplicate tok->text (caller owns)
 //
 // ---------------------------------------------------------------------
 // Expression parsing
@@ -617,6 +617,31 @@ static Stmt *parse_assign_or_expr(Parser *p) {
 
     Expr *lhs = parse_expr(p);
 
+    // Post-increment / -decrement statement: `name++;` / `name--;`
+    // Desugars to `name = name +/- 1;`. Only a plain identifier target is
+    // supported (matches C's common counter idiom).
+    if (check(p, TOK_INC) || check(p, TOK_DEC)) {
+        int is_inc = check(p, TOK_INC);
+        advance(p); // ++ or --
+        expect(p, TOK_SEMICOLON, "expected ';' after '++' / '--'");
+        if (lhs->kind != EXPR_IDENT) {
+            fprintf(stderr, "parse error at line %d: '++'/'--' requires a simple variable\n", line);
+            p->had_error = 1;
+        }
+        Expr *cur = expr_new(EXPR_IDENT, line, col);
+        cur->as.str.value = lhs->kind == EXPR_IDENT ? ast_strdup(lhs->as.str.value) : NULL;
+        Expr *one = expr_new(EXPR_INT_LIT, line, col);
+        one->as.int_val = 1;
+        Expr *bin = expr_new(EXPR_BINARY, line, col);
+        bin->as.binary.op = is_inc ? TOK_PLUS : TOK_MINUS;
+        bin->as.binary.left = cur;
+        bin->as.binary.right = one;
+        Stmt *s = stmt_new(STMT_ASSIGN, line, col);
+        s->as.assign.target = lhs;
+        s->as.assign.value = bin;
+        return s;
+    }
+
     if (check(p, TOK_ASSIGN)) {
         advance(p); // =
         Expr *rhs = parse_expr(p);
@@ -687,6 +712,235 @@ static Stmt *parse_if(Parser *p) {
 }
 
 // ---------------------------------------------------------------------
+// for statement  (three surface forms, all desugared to existing nodes)
+//
+//   C-style:     for (init ; cond ; post) { body }
+//   Range-decl:  for (local TYPE i = a ; cond) { body }   (no post clause)
+//   Count:       for i in a .. b { body }
+//
+// Each lowers to a STMT_BLOCK wrapping an optional init/decl followed by a
+// STMT_WHILE. STMT_BLOCK codegen is a bare emit_stmtlist (no scope push,
+// locals are function-flat), so the emitted asm is byte-for-byte what a
+// hand-written `while`-with-counter produces ??? no new codegen, no runtime
+// cost.
+// ---------------------------------------------------------------------
+
+// Parse the init clause of a paren-form for, WITHOUT consuming the trailing
+// ';'. Accepts a local decl (local TYPE name = expr) or a plain assignment
+// (name = expr), mirroring parse_local_decl / parse_assign_or_expr.
+static Stmt *parse_for_init(Parser *p) {
+    int line = p->current.line, col = p->current.col;
+
+    // A for-init that begins with `local` or directly with a type keyword is
+    // a declaration; the `local` keyword is optional here (for-scoped).
+    if (check(p, TOK_KW_LOCAL) || is_type_keyword(p)) {
+        if (check(p, TOK_KW_LOCAL)) advance(p); // optional 'local'
+        if (!is_type_keyword(p)) {
+            error_at(p, "expected type keyword in for-init declaration");
+            return NULL;
+        }
+        SlagType t = slag_type_from_token(p->current.type);
+        advance(p);
+        if (!check(p, TOK_IDENT)) {
+            error_at(p, "expected variable name in for-init");
+            return NULL;
+        }
+        char *name = copy_text(&p->current);
+        advance(p);
+        expect(p, TOK_ASSIGN, "expected '=' in for-init declaration");
+        Stmt *s = stmt_new(STMT_LOCAL_DECL, line, col);
+        s->as.var_decl.type = t;
+        s->as.var_decl.name = name;
+        s->as.var_decl.init = parse_expr(p);
+        return s;
+    }
+
+    Expr *lhs = parse_expr(p);
+    expect(p, TOK_ASSIGN, "expected '=' in for-init assignment");
+    Expr *rhs = parse_expr(p);
+    if (lhs->kind != EXPR_IDENT && lhs->kind != EXPR_INDEX &&
+        lhs->kind != EXPR_MEMBER) {
+        error_at(p, "invalid for-init assignment target");
+    }
+    Stmt *s = stmt_new(STMT_ASSIGN, line, col);
+    s->as.assign.target = lhs;
+    s->as.assign.value = rhs;
+    return s;
+}
+
+// Desugar `IDENT++` / `IDENT--` into `IDENT = IDENT +/- 1`. `name` is the
+// (already parsed) target token; consumes the TOK_INC/TOK_DEC.
+static Stmt *make_incdec(Parser *p, char *name, int is_inc, int line, int col) {
+    advance(p); // consume ++ or --
+    Expr *tgt = expr_new(EXPR_IDENT, line, col);
+    tgt->as.str.value = name;              // takes ownership of the dup'd name
+    Expr *cur = expr_new(EXPR_IDENT, line, col);
+    cur->as.str.value = ast_strdup(name);
+    Expr *one = expr_new(EXPR_INT_LIT, line, col);
+    one->as.int_val = 1;
+    Expr *bin = expr_new(EXPR_BINARY, line, col);
+    bin->as.binary.op = is_inc ? TOK_PLUS : TOK_MINUS;
+    bin->as.binary.left = cur;
+    bin->as.binary.right = one;
+    Stmt *s = stmt_new(STMT_ASSIGN, line, col);
+    s->as.assign.target = tgt;
+    s->as.assign.value = bin;
+    return s;
+}
+
+// Parse the post clause WITHOUT consuming the trailing ')'. Accepts either an
+// assignment (name = expr) or a post-increment/decrement (name++ / name--).
+static Stmt *parse_for_post(Parser *p) {
+    int line = p->current.line, col = p->current.col;
+
+    // Fast path: bare `IDENT++` / `IDENT--`. Duplicate the identifier text
+    // BEFORE advancing ? advance() frees the current token's storage.
+    if (check(p, TOK_IDENT)) {
+        char *name = copy_text(&p->current);
+        advance(p); // IDENT
+        if (check(p, TOK_INC)) return make_incdec(p, name, 1, line, col);
+        if (check(p, TOK_DEC)) return make_incdec(p, name, 0, line, col);
+        // Not ++/-- : it was a plain assignment target; finish it below.
+        Expr *lhs = expr_new(EXPR_IDENT, line, col);
+        lhs->as.str.value = name;              // takes ownership of the dup
+        lhs = parse_postfix(p, lhs); // allow name[idx] / name.member
+        expect(p, TOK_ASSIGN, "expected '=', '++' or '--' in for-post clause");
+        Expr *rhs = parse_expr(p);
+        if (lhs->kind != EXPR_IDENT && lhs->kind != EXPR_INDEX &&
+            lhs->kind != EXPR_MEMBER) {
+            error_at(p, "invalid for-post assignment target");
+        }
+        Stmt *s = stmt_new(STMT_ASSIGN, line, col);
+        s->as.assign.target = lhs;
+        s->as.assign.value = rhs;
+        return s;
+    }
+
+    Expr *lhs = parse_expr(p);
+    expect(p, TOK_ASSIGN, "expected '=' in for-post assignment");
+    Expr *rhs = parse_expr(p);
+    if (lhs->kind != EXPR_IDENT && lhs->kind != EXPR_INDEX &&
+        lhs->kind != EXPR_MEMBER) {
+        error_at(p, "invalid for-post assignment target");
+    }
+    Stmt *s = stmt_new(STMT_ASSIGN, line, col);
+    s->as.assign.target = lhs;
+    s->as.assign.value = rhs;
+    return s;
+}
+
+// Wrap [init] + while(cond){body} in a STMT_BLOCK and return it.
+static Stmt *for_wrap(Stmt *init, Expr *cond, StmtList body, int line, int col) {
+    // An omitted condition is an always-true loop: synthesize the constant 1
+    // so STMT_WHILE codegen tests a nonzero value each iteration (ISO C rule).
+    if (!cond) {
+        cond = expr_new(EXPR_INT_LIT, line, col);
+        cond->as.int_val = 1;
+    }
+    Stmt *wh = stmt_new(STMT_WHILE, line, col);
+    wh->as.while_stmt.cond = cond;
+    wh->as.while_stmt.body = body;
+
+    Stmt *blk = stmt_new(STMT_BLOCK, line, col);
+    stmtlist_init(&blk->as.block.body);
+    if (init) stmtlist_push(&blk->as.block.body, init);
+    stmtlist_push(&blk->as.block.body, wh);
+    return blk;
+}
+
+static Stmt *parse_for(Parser *p) {
+    int line = p->current.line, col = p->current.col;
+    advance(p); // consume 'for'
+
+    // ---- Count form:  for IDENT in A .. B { body } ----
+    if (check(p, TOK_IDENT)) {
+        // Duplicate the loop-variable name BEFORE advancing ? advance() frees
+        // the current token's storage. `var` is heap-owned for the rest of
+        // this function and consumed by the decl below.
+        char *var = copy_text(&p->current);
+        advance(p);                      // IDENT
+        expect(p, TOK_KW_IN, "expected 'in' after loop variable in count-for");
+        Expr *lo = parse_expr(p);
+        expect(p, TOK_DOTDOT, "expected '..' in count-for range");
+        Expr *hi = parse_expr(p);
+
+        expect(p, TOK_LBRACE, "expected '{' to open for body");
+        StmtList body;
+        parse_block(p, &body);
+        expect(p, TOK_RBRACE, "expected '}' to close for body");
+
+        // Desugar: { local int V = lo; while (V < hi) { body...; V = V + 1; } }
+        Stmt *decl = stmt_new(STMT_LOCAL_DECL, line, col);
+        decl->as.var_decl.type = TYPE_INT;
+        decl->as.var_decl.name = var;              // takes ownership
+        decl->as.var_decl.init = lo;
+
+        Expr *lhsv = expr_new(EXPR_IDENT, line, col);
+        lhsv->as.str.value = ast_strdup(var);
+        Expr *cond = expr_new(EXPR_BINARY, line, col);
+        cond->as.binary.op = TOK_LT;
+        cond->as.binary.left = lhsv;
+        cond->as.binary.right = hi;
+
+        Expr *incl = expr_new(EXPR_IDENT, line, col);
+        incl->as.str.value = ast_strdup(var);
+        Expr *one = expr_new(EXPR_INT_LIT, line, col);
+        one->as.int_val = 1;
+        Expr *sum = expr_new(EXPR_BINARY, line, col);
+        sum->as.binary.op = TOK_PLUS;
+        sum->as.binary.left = incl;
+        sum->as.binary.right = one;
+        Expr *tgt = expr_new(EXPR_IDENT, line, col);
+        tgt->as.str.value = ast_strdup(var);
+        Stmt *inc = stmt_new(STMT_ASSIGN, line, col);
+        inc->as.assign.target = tgt;
+        inc->as.assign.value = sum;
+        stmtlist_push(&body, inc);
+
+        return for_wrap(decl, cond, body, line, col);
+    }
+
+    // ---- Paren forms: C-style and range-decl ----
+    expect(p, TOK_LPAREN, "expected '(' or loop variable after 'for'");
+
+    // Each clause is independently optional (ISO C: `for (clause1opt ; e2opt ; e3opt)`).
+    // clause-1 (init) empty  -> no init emitted.
+    // e2 (condition) empty   -> always-true (unconditional loop).
+    // e3 (post) empty        -> no step emitted.
+    // A one-semicolon form `for (init ; cond)` (range-decl) is still accepted:
+    // post simply stays NULL.
+    Stmt *init = NULL;
+    if (!check(p, TOK_SEMICOLON)) {
+        init = parse_for_init(p);
+    }
+    expect(p, TOK_SEMICOLON, "expected ';' after for-init clause");
+
+    Expr *cond = NULL;                    // NULL condition == always true
+    if (!check(p, TOK_SEMICOLON) && !check(p, TOK_RPAREN)) {
+        cond = parse_expr(p);
+    }
+
+    Stmt *post = NULL;
+    if (check(p, TOK_SEMICOLON)) {
+        advance(p);                      // second ';' -> post clause present/optional
+        if (!check(p, TOK_RPAREN)) {
+            post = parse_for_post(p);
+        }
+    }
+    // else: one-semicolon (range-decl) form; no post clause.
+    expect(p, TOK_RPAREN, "expected ')' after for clauses");
+
+    expect(p, TOK_LBRACE, "expected '{' to open for body");
+    StmtList body;
+    parse_block(p, &body);
+    expect(p, TOK_RBRACE, "expected '}' to close for body");
+
+    if (post) stmtlist_push(&body, post);
+
+    return for_wrap(init, cond, body, line, col);
+}
+
+// ---------------------------------------------------------------------
 // while statement
 // ---------------------------------------------------------------------
 static Stmt *parse_while(Parser *p) {
@@ -711,8 +965,8 @@ static Stmt *parse_while(Parser *p) {
 // ---------------------------------------------------------------------
 // return statement
 //
-// return;              — void return
-// return TYPE expr;    — typed return
+// return;              ??? void return
+// return TYPE expr;    ??? typed return
 // ---------------------------------------------------------------------
 static Stmt *parse_return(Parser *p) {
     int line = p->current.line, col = p->current.col;
@@ -734,7 +988,7 @@ static Stmt *parse_return(Parser *p) {
         s->as.return_stmt.type = slag_type_from_token(p->current.type);
         advance(p); // consume type keyword
     } else {
-        // No type keyword — treat as void return with a warning.
+        // No type keyword ??? treat as void return with a warning.
         fprintf(stderr, "warning: line %d: 'return' missing type keyword, treating as void\n", line);
         s->as.return_stmt.is_void = 1;
         s->as.return_stmt.type = TYPE_VOID;
@@ -864,6 +1118,7 @@ static Stmt *parse_stmt(Parser *p) {
         case TOK_KW_GLOBAL: return parse_global_decl(p);
         case TOK_KW_LOCAL:  return parse_local_decl(p);
         case TOK_KW_IF:     return parse_if(p);
+        case TOK_KW_FOR:    return parse_for(p);
         case TOK_KW_WHILE:  return parse_while(p);
         case TOK_KW_RETURN: return parse_return(p);
         case TOK_KW_THREAD: return parse_thread(p);
@@ -872,7 +1127,7 @@ static Stmt *parse_stmt(Parser *p) {
         case TOK_KW_ON:     return parse_on_handler(p);
 
         case TOK_LBRACE: {
-            // Anonymous block — rare but legal.
+            // Anonymous block ??? rare but legal.
             int line = p->current.line, col = p->current.col;
             advance(p);
             StmtList body;
@@ -884,7 +1139,7 @@ static Stmt *parse_stmt(Parser *p) {
         }
 
         case TOK_SEMICOLON:
-            // Empty statement — skip silently.
+            // Empty statement ??? skip silently.
             advance(p);
             return NULL;
 
