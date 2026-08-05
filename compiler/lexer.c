@@ -103,6 +103,8 @@ static TokenType keyword_type(const char *text) {
     if (strcmp(text, "while") == 0)    return TOK_KW_WHILE;
     if (strcmp(text, "for") == 0)      return TOK_KW_FOR;
     if (strcmp(text, "in") == 0)       return TOK_KW_IN;
+    if (strcmp(text, "break") == 0)    return TOK_KW_BREAK;
+    if (strcmp(text, "continue") == 0) return TOK_KW_CONTINUE;
     if (strcmp(text, "true") == 0)     return TOK_KW_TRUE;
     if (strcmp(text, "false") == 0)    return TOK_KW_FALSE;
     if (strcmp(text, "function") == 0) return TOK_KW_FUNCTION;
@@ -171,7 +173,7 @@ static Token scan_number(Lexer *lex, int start_line, int start_col) {
         tok.float_val = strtod(text, NULL);
     } else {
         tok.type = TOK_INT_LIT;
-        tok.int_val = strtol(text, NULL, 10);
+        tok.int_val = strtoll(text, NULL, 10);
     }
 
     return tok;
@@ -461,6 +463,8 @@ const char *token_type_name(TokenType type) {
         case TOK_KW_WHILE: return "KW_WHILE";
         case TOK_KW_FOR: return "KW_FOR";
         case TOK_KW_IN: return "KW_IN";
+        case TOK_KW_BREAK: return "KW_BREAK";
+        case TOK_KW_CONTINUE: return "KW_CONTINUE";
         case TOK_KW_TRUE: return "KW_TRUE";
         case TOK_KW_FALSE: return "KW_FALSE";
         case TOK_KW_FUNCTION: return "KW_FUNCTION";

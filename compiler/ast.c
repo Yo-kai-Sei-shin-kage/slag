@@ -169,7 +169,7 @@ static void print_expr(const Expr *e, int depth) {
 
     switch (e->kind) {
         case EXPR_INT_LIT:
-            printf("IntLit %ld\n", e->as.int_val);
+            printf("IntLit %lld\n", e->as.int_val);
             break;
         case EXPR_FLOAT_LIT:
             printf("FloatLit %f\n", e->as.float_val);
@@ -298,6 +298,14 @@ static void print_stmt(const Stmt *s, int depth) {
                 printf("Return %s\n", slag_type_name(s->as.return_stmt.type));
                 print_expr(s->as.return_stmt.value, depth + 1);
             }
+            break;
+
+        case STMT_BREAK:
+            printf("Break\n");
+            break;
+
+        case STMT_CONTINUE:
+            printf("Continue\n");
             break;
 
         case STMT_EXPR:

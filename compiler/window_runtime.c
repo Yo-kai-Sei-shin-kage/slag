@@ -7580,6 +7580,27 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     // vertexCount for this item = tri count * 3
     E("    mov  r12, rax");
     E("    imul r12, r12, 3            ; r12 = vertexCount (callee-saved; restore below)");
+    // STATIC-GEOMETRY SKIP: for the first draw of a frame (stage_off==0), if the
+    // verts ptr + tri count match the last upload AND both vbufs are already warm
+    // (_gpu_up_valid>=2), the convbuf already holds this exact geometry -- skip the
+    // ~stride*verts rep-movsq copy AND leave _gpu_vbuf_dirty clear so present skips
+    // the GPU re-upload too. This turns a per-frame static mesh (terrain) into a
+    // true resident draw: only the cheap draw-item append runs each frame.
+    E("    test rbx, rbx               ; first draw this frame? (stage_off==0)");
+    E("    jnz  .ftg_do_copy          ; later draws in a multi-draw frame: always copy");
+    E("    cmp  rcx, [_gpu_up_verts]  ; same verts ptr as last upload?");
+    E("    jne  .ftg_changed");
+    E("    cmp  rdx, [_gpu_up_count]  ; same tri count?");
+    E("    jne  .ftg_changed");
+    E("    cmp  qword [_gpu_up_valid], 2");
+    E("    jb   .ftg_do_copy          ; unchanged but vbufs not both warm yet -> copy");
+    E("    jmp  .ftg_skip_copy        ; unchanged + resident -> skip copy & dirty");
+    E(".ftg_changed:");
+    // Geometry changed: record it and force a fresh 2-frame re-warm of both vbufs.
+    E("    mov  [_gpu_up_verts], rcx");
+    E("    mov  [_gpu_up_count], rdx");
+    E("    mov  qword [_gpu_up_valid], 0");
+    E(".ftg_do_copy:");
     // Copy verts into convbuf at byte offset startVertex*48. rcx=src verts.
     // qwords = vertexCount * 48 / 8 = vertexCount * 6.
     E("    push rbx");
@@ -7594,6 +7615,8 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    rep  movsq");
     E("    pop  r12");
     E("    pop  rbx");
+    E("    mov  qword [_gpu_vbuf_dirty], 1  ; copied new verts -> present must re-upload");
+    E(".ftg_skip_copy:");
     // Record the draw item at _gpu_draw_items + draw_cnt*64.
     E("    mov  r11, [_gpu_draw_cnt]");
     E("    imul r11, r11, 64");
@@ -7614,7 +7637,6 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    add  [_gpu_stage_off], r12  ; += vertexCount");
     E("    inc  qword [_gpu_draw_cnt]");
     E("    mov  qword [_gpu_prebuilt], 1");
-    E("    mov  qword [_gpu_vbuf_dirty], 1");
     E(".ftg_ret:");
     E("    pop  r12");
     E("    pop  rbx");

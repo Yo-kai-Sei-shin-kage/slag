@@ -22,6 +22,8 @@ typedef enum {
     TOK_KW_WHILE,
     TOK_KW_FOR,
     TOK_KW_IN,
+    TOK_KW_BREAK,
+    TOK_KW_CONTINUE,
     TOK_KW_TRUE,
     TOK_KW_FALSE,
     TOK_KW_FUNCTION,
@@ -80,7 +82,7 @@ typedef struct {
     int col;
 
     // Literal values
-    long int_val;
+    long long int_val;
     double float_val;
 } Token;
 

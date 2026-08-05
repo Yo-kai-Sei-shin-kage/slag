@@ -110,6 +110,14 @@ typedef struct Codegen {
     // Slot index into _slag_thread_handles for the *next* thread {}
     // encountered. Incremented by STMT_THREAD, reset to 0 by STMT_SYNC.
     int thread_slot;
+
+    // Loop-context stacks for break/continue. Pushed on entry to STMT_WHILE,
+    // popped on exit. break_label[top] is the loop's end label; cont_label[top]
+    // is the target for `continue` (loop top for a plain while, or the label
+    // just before the for-desugar post step).
+    int break_label[32];
+    int cont_label[32];
+    int loop_depth;
 } Codegen;
 
 #define MAX_THREADS 64
@@ -620,7 +628,7 @@ static const char *const_key_str(Codegen *cg, const Expr *e) {
 static void emit_int_expr(Codegen *cg, const Expr *e) {
     switch (e->kind) {
         case EXPR_INT_LIT:
-            emit(cg, "    mov  rax, %ld", e->as.int_val);
+            emit(cg, "    mov  rax, %lld", e->as.int_val);
             break;
 
         case EXPR_STR_LIT:
@@ -992,7 +1000,7 @@ static void emit_float_expr(Codegen *cg, const Expr *e) {
 
         case EXPR_INT_LIT:
             // Promote int literal to float.
-            emit(cg, "    mov  rax, %ld", e->as.int_val);
+            emit(cg, "    mov  rax, %lld", e->as.int_val);
             emit(cg, "    cvtsi2sd xmm0, rax");
             break;
 
@@ -1178,19 +1186,13 @@ static void emit_call_epilogue(Codegen *cg, int extra) {
     (void)extra;
 }
 
-// Emit code to call WriteConsoleA(handle, buf, len, &written, NULL)
-// which writes `len` bytes at `buf` to stdout.
-// On entry: rcx = handle (already loaded), rdx = buf ptr, r8 = length.
+// Emit code to append `len` bytes at `buf` to the buffered stdout stream.
+// Output is accumulated in a userspace buffer (_slag_out) and flushed to a
+// single WriteFile in large chunks, turning N print calls into a few syscalls.
+// The buffer is flushed once at program exit (see emit_entry). On entry:
+// rcx = handle (ignored; stdout is implicit), rdx = buf ptr, r8 = length.
 static void emit_write_console(Codegen *cg) {
-    // WriteConsoleA has 5 args: rcx, rdx, r8, r9, [rsp+32].
-    // We need: 32 bytes shadow + 8 bytes for arg5 + 8 bytes alignment pad = 48.
-    // 48 is a multiple of 16 so rsp stays aligned at the call site.
-    emit(cg, "    sub  rsp, 48          ; shadow(32) + arg5(8) + pad(8)");
-    emit(cg, "    lea  r9,  [rsp+32]    ; &written");
-    emit(cg, "    mov  qword [rsp+32], 0");
-    emit(cg, "    mov  qword [rsp+40], 0 ; lpOverlapped = NULL (5th arg on stack)");
-    emit(cg, "    call WriteConsoleA");
-    emit(cg, "    add  rsp, 48");
+    emit(cg, "    call _slag_out        ; buffered stdout: rdx=buf, r8=len");
 }
 
 // Emit a print or println call.
@@ -3693,10 +3695,11 @@ static int expr_is_const_true(const Expr *e) {
     return 0;
 }
 
-// True if any statement in `list` (recursively, through nested blocks and
-// control flow) is a `return`. Used to enforce that a provably-infinite loop
-// contains an exit, since Slag has no break/continue.
-static int stmtlist_has_return(const StmtList *list) {
+// True if any statement in `list` is a `return`, recursing through everything
+// including nested loop bodies. `break` never counts here (it does not exit a
+// function). Used to test whether a nested loop can still exit its enclosing
+// infinite loop via a function return.
+static int stmtlist_has_return_only(const StmtList *list) {
     for (int i = 0; i < list->count; i++) {
         const Stmt *s = list->items[i];
         if (!s) continue;
@@ -3704,24 +3707,69 @@ static int stmtlist_has_return(const StmtList *list) {
             case STMT_RETURN:
                 return 1;
             case STMT_IF:
-                if (stmtlist_has_return(&s->as.if_stmt.then_body)) return 1;
+                if (stmtlist_has_return_only(&s->as.if_stmt.then_body)) return 1;
                 if (s->as.if_stmt.has_else &&
-                    stmtlist_has_return(&s->as.if_stmt.else_body)) return 1;
+                    stmtlist_has_return_only(&s->as.if_stmt.else_body)) return 1;
                 break;
             case STMT_WHILE:
-                if (stmtlist_has_return(&s->as.while_stmt.body)) return 1;
+                if (stmtlist_has_return_only(&s->as.while_stmt.body)) return 1;
                 break;
             case STMT_BLOCK:
-                if (stmtlist_has_return(&s->as.block.body)) return 1;
+                if (stmtlist_has_return_only(&s->as.block.body)) return 1;
                 break;
             case STMT_THREAD:
-                if (stmtlist_has_return(&s->as.thread_stmt.body)) return 1;
+                if (stmtlist_has_return_only(&s->as.thread_stmt.body)) return 1;
                 break;
             case STMT_SYNC:
-                if (stmtlist_has_return(&s->as.sync_stmt.body)) return 1;
+                if (stmtlist_has_return_only(&s->as.sync_stmt.body)) return 1;
                 break;
             case STMT_LOCK:
-                if (stmtlist_has_return(&s->as.lock_stmt.body)) return 1;
+                if (stmtlist_has_return_only(&s->as.lock_stmt.body)) return 1;
+                break;
+            default:
+                break;
+        }
+    }
+    return 0;
+}
+
+// True if any statement in `list` can terminate the innermost enclosing loop.
+// A `return` counts anywhere (it exits the whole function). A `break` counts
+// only at THIS loop level: recursion does NOT descend into a nested STMT_WHILE
+// body, because a break there targets the nested loop, not this one. Used to
+// enforce that a provably-infinite loop has some way out.
+static int stmtlist_has_exit(const StmtList *list) {
+    for (int i = 0; i < list->count; i++) {
+        const Stmt *s = list->items[i];
+        if (!s) continue;
+        switch (s->kind) {
+            case STMT_RETURN:
+            case STMT_BREAK:
+                return 1;
+            case STMT_IF:
+                if (stmtlist_has_exit(&s->as.if_stmt.then_body)) return 1;
+                if (s->as.if_stmt.has_else &&
+                    stmtlist_has_exit(&s->as.if_stmt.else_body)) return 1;
+                break;
+            case STMT_WHILE:
+                // Nested loop: a break inside targets the nested loop, so it
+                // does not exit this one. Only a return inside would; scan for
+                // that alone by recursing without break-credit is unnecessary
+                // here since return is caught at its own case above during that
+                // nested scan. Recurse to catch a nested `return`.
+                if (stmtlist_has_return_only(&s->as.while_stmt.body)) return 1;
+                break;
+            case STMT_BLOCK:
+                if (stmtlist_has_exit(&s->as.block.body)) return 1;
+                break;
+            case STMT_THREAD:
+                if (stmtlist_has_exit(&s->as.thread_stmt.body)) return 1;
+                break;
+            case STMT_SYNC:
+                if (stmtlist_has_exit(&s->as.sync_stmt.body)) return 1;
+                break;
+            case STMT_LOCK:
+                if (stmtlist_has_exit(&s->as.lock_stmt.body)) return 1;
                 break;
             default:
                 break;
@@ -3993,17 +4041,31 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
         // ------------------------------------------------------------------
         case STMT_WHILE: {
             // A provably-infinite loop (constant-true / omitted condition)
-            // must contain a return, since Slag has no break/continue.
+            // must have an exit: a `return` anywhere, or a `break` at this
+            // loop's level.
             if (expr_is_const_true(s->as.while_stmt.cond) &&
-                !stmtlist_has_return(&s->as.while_stmt.body)) {
+                !stmtlist_has_exit(&s->as.while_stmt.body)) {
                 fprintf(stderr,
-                    "codegen error: line %d: infinite loop requires a return statement\n",
+                    "codegen error: line %d: infinite loop requires a return or break\n",
                     s->line);
                 cg->had_error = 1;
             }
 
             int loop_label = new_label(cg);
+            int cont_label = new_label(cg);
             int end_label  = new_label(cg);
+
+            // Register loop context so nested break/continue can find labels.
+            if (cg->loop_depth >= 32) {
+                fprintf(stderr,
+                    "codegen error: line %d: loop nesting too deep (max 32)\n",
+                    s->line);
+                cg->had_error = 1;
+            } else {
+                cg->break_label[cg->loop_depth] = end_label;
+                cg->cont_label[cg->loop_depth]  = cont_label;
+                cg->loop_depth++;
+            }
 
             emit(cg, ".L%d:   ; while", loop_label);
             emit_int_expr(cg, s->as.while_stmt.cond);
@@ -4012,8 +4074,40 @@ static void emit_stmt(Codegen *cg, const Stmt *s) {
 
             emit_stmtlist(cg, &s->as.while_stmt.body);
 
+            // `continue` lands here: run the for-desugar step (if any), then
+            // re-test the condition at the loop top.
+            emit(cg, ".L%d:   ; continue target", cont_label);
+            if (s->as.while_stmt.post) emit_stmt(cg, s->as.while_stmt.post);
+
             emit(cg, "    jmp  .L%d", loop_label);
             emit(cg, ".L%d:", end_label);
+
+            if (cg->loop_depth > 0) cg->loop_depth--;
+            break;
+        }
+
+        // ------------------------------------------------------------------
+        // break; | continue;
+        // ------------------------------------------------------------------
+        case STMT_BREAK: {
+            if (cg->loop_depth <= 0) {
+                fprintf(stderr,
+                    "codegen error: line %d: 'break' outside a loop\n", s->line);
+                cg->had_error = 1;
+                break;
+            }
+            emit(cg, "    jmp  .L%d   ; break", cg->break_label[cg->loop_depth - 1]);
+            break;
+        }
+
+        case STMT_CONTINUE: {
+            if (cg->loop_depth <= 0) {
+                fprintf(stderr,
+                    "codegen error: line %d: 'continue' outside a loop\n", s->line);
+                cg->had_error = 1;
+                break;
+            }
+            emit(cg, "    jmp  .L%d   ; continue", cg->cont_label[cg->loop_depth - 1]);
             break;
         }
 
@@ -4453,6 +4547,96 @@ static void emit_function(Codegen *cg, const Function *f) {
 // ---------------------------------------------------------------------
 
 static void emit_runtime_helpers(Codegen *cg) {
+    // _slag_out: append r8 bytes at [rdx] to the buffered stdout stream.
+    // The buffer (_out_ptr/_out_len/_out_cap) is a dynamic ptr+len region:
+    // lazily HeapAlloc'd on first use and grown via HeapReAlloc to fit, exactly
+    // like slag's other ptr+len buffers. Never flushes on its own; the whole
+    // stream is written once at program exit by _slag_flush.
+    // In: rdx = src ptr, r8 = length. Clobbers volatile regs only (preserves
+    // rbx/rsi/rdi which the print path relies on across the call).
+    emit(cg, "; --- _slag_out (buffered stdout append) ---");
+    emit(cg, "_slag_out:");
+    emit(cg, "    push rbx");
+    emit(cg, "    push rsi");
+    emit(cg, "    push rdi");
+    emit(cg, "    sub  rsp, 32          ; shadow space, keeps rsp 16-aligned");
+    emit(cg, "    mov  rsi, rdx         ; rsi = src");
+    emit(cg, "    mov  rbx, r8          ; rbx = len");
+    emit(cg, "    test rbx, rbx");
+    emit(cg, "    jz   .out_done        ; nothing to append");
+    emit(cg, "    ; needed = _out_len + len");
+    emit(cg, "    mov  rax, [_out_len]");
+    emit(cg, "    add  rax, rbx         ; rax = needed total bytes");
+    emit(cg, "    cmp  rax, [_out_cap]");
+    emit(cg, "    jbe  .out_copy        ; fits in current capacity");
+    emit(cg, "    ; --- grow: newcap = max(cap*2, needed), min 65536 ---");
+    emit(cg, "    mov  r9,  [_out_cap]");
+    emit(cg, "    shl  r9,  1           ; cap*2");
+    emit(cg, "    cmp  r9,  rax");
+    emit(cg, "    jae  .out_have_newcap");
+    emit(cg, "    mov  r9,  rax         ; needed is larger");
+    emit(cg, ".out_have_newcap:");
+    emit(cg, "    cmp  r9,  65536");
+    emit(cg, "    jae  .out_cap_ok");
+    emit(cg, "    mov  r9,  65536       ; floor initial capacity at 64 KB");
+    emit(cg, ".out_cap_ok:");
+    emit(cg, "    mov  r15, r9          ; r15 = new capacity (save across call)");
+    emit(cg, "    call GetProcessHeap   ; rax = heap handle");
+    emit(cg, "    mov  rcx, rax         ; hHeap");
+    emit(cg, "    xor  rdx, rdx         ; dwFlags = 0");
+    emit(cg, "    mov  r14, [_out_ptr]");
+    emit(cg, "    test r14, r14");
+    emit(cg, "    jz   .out_first_alloc");
+    emit(cg, "    ; HeapReAlloc(heap, 0, _out_ptr, newcap)");
+    emit(cg, "    mov  r8,  r14         ; lpMem = old ptr");
+    emit(cg, "    mov  r9,  r15         ; dwBytes = new capacity");
+    emit(cg, "    call HeapReAlloc");
+    emit(cg, "    jmp  .out_after_alloc");
+    emit(cg, ".out_first_alloc:");
+    emit(cg, "    ; HeapAlloc(heap, 0, newcap)");
+    emit(cg, "    mov  r8,  r15         ; dwBytes = new capacity");
+    emit(cg, "    call HeapAlloc");
+    emit(cg, ".out_after_alloc:");
+    emit(cg, "    test rax, rax");
+    emit(cg, "    jz   .out_done        ; allocation failed: drop output silently");
+    emit(cg, "    mov  [_out_ptr], rax");
+    emit(cg, "    mov  [_out_cap], r15");
+    emit(cg, ".out_copy:");
+    emit(cg, "    ; memcpy(_out_ptr + _out_len, src, len)");
+    emit(cg, "    mov  rdi, [_out_ptr]");
+    emit(cg, "    add  rdi, [_out_len]  ; dst = base + used");
+    emit(cg, "    mov  rcx, rbx         ; count");
+    emit(cg, "    rep  movsb            ; rsi->rdi (rsi already = src)");
+    emit(cg, "    add  [_out_len], rbx  ; used += len");
+    emit(cg, ".out_done:");
+    emit(cg, "    add  rsp, 32");
+    emit(cg, "    pop  rdi");
+    emit(cg, "    pop  rsi");
+    emit(cg, "    pop  rbx");
+    emit(cg, "    ret");
+    emit(cg, "");
+
+    // _slag_flush: write the entire accumulated buffer to stdout in one
+    // WriteFile, then reset the used count (retaining the grown capacity).
+    // Called once at program exit. No-op if nothing was buffered.
+    emit(cg, "; --- _slag_flush (drain buffered stdout) ---");
+    emit(cg, "_slag_flush:");
+    emit(cg, "    mov  r8,  [_out_len]");
+    emit(cg, "    test r8,  r8");
+    emit(cg, "    jz   .flush_done      ; empty buffer");
+    emit(cg, "    sub  rsp, 48          ; shadow(32) + arg5(8) + pad(8)");
+    emit(cg, "    mov  rcx, [_stdout]   ; hFile");
+    emit(cg, "    mov  rdx, [_out_ptr]  ; lpBuffer");
+    emit(cg, "    ; r8 already = byte count");
+    emit(cg, "    lea  r9,  [_written_bytes] ; lpNumberOfBytesWritten");
+    emit(cg, "    mov  qword [rsp+32], 0     ; lpOverlapped = NULL");
+    emit(cg, "    call WriteFile");
+    emit(cg, "    add  rsp, 48");
+    emit(cg, "    mov  qword [_out_len], 0   ; reset used, keep capacity");
+    emit(cg, ".flush_done:");
+    emit(cg, "    ret");
+    emit(cg, "");
+
     // _slag_itoa: convert signed 64-bit int in rcx to decimal ASCII.
     // rcx = value, rdx = output buffer (caller-allocated, min 21 bytes).
     // Returns length in rax.
@@ -4473,16 +4657,29 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    inc  r8");
     emit(cg, "    mov  r11, 1         ; account for '-' in returned length");
     emit(cg, ".itoa_pos:");
-    emit(cg, "    mov  rcx, 10");
+    emit(cg, "    ; rax = working value (unsigned, non-negative here).");
+    emit(cg, "    ; Divide by 10 via reciprocal multiply instead of DIV:");
+    emit(cg, "    ;   quot = (val * 0xCCCCCCCCCCCCCCCD) >> 64 >> 3   (== val/10)");
+    emit(cg, "    ;   rem  = val - quot*10   (0..9)");
+    emit(cg, "    ; Live across the loop: r8=outbuf r9=bufend r10=cursor r11=sign,");
+    emit(cg, "    ; rcx=magic. mul clobbers rax:rdx, so val is held in rsi (free");
+    emit(cg, "    ; here; rsi is caller-saved at entry and not reused until after).");
+    emit(cg, "    mov  rsi, rax       ; rsi = val");
+    emit(cg, "    mov  rcx, 0xCCCCCCCCCCCCCCCD  ; magic reciprocal of 10");
     emit(cg, "    lea  r9,  [rsp+20]  ; end of temp buf");
     emit(cg, "    mov  r10, r9");
     emit(cg, ".itoa_loop:");
-    emit(cg, "    xor  rdx, rdx");
-    emit(cg, "    div  rcx            ; rax=quot, rdx=rem");
-    emit(cg, "    add  dl, '0'");
+    emit(cg, "    mov  rax, rsi       ; rax = val");
+    emit(cg, "    mul  rcx            ; rdx:rax = val * magic");
+    emit(cg, "    shr  rdx, 3         ; rdx = quot = val/10");
+    emit(cg, "    lea  rax, [rdx + rdx*4] ; rax = quot*5");
+    emit(cg, "    add  rax, rax           ; rax = quot*10");
+    emit(cg, "    sub  rsi, rax       ; rsi = remainder (0..9)");
+    emit(cg, "    add  sil, '0'");
     emit(cg, "    dec  r10");
-    emit(cg, "    mov  [r10], dl");
-    emit(cg, "    test rax, rax");
+    emit(cg, "    mov  [r10], sil");
+    emit(cg, "    mov  rsi, rdx       ; val = quot for next iteration");
+    emit(cg, "    test rsi, rsi");
     emit(cg, "    jnz  .itoa_loop");
     emit(cg, "    ; copy digits to output");
     emit(cg, "    mov  rsi, r10");
@@ -4549,6 +4746,32 @@ static void emit_runtime_helpers(Codegen *cg) {
     emit(cg, "    neg  rax");
 
     emit(cg, ".ftoa_frac_pos:");
+    emit(cg, "    cmp  rax, 100000");
+    emit(cg, "    jae  .ftoa_frac_emit");
+    emit(cg, "    mov  byte [r8], '0'");
+    emit(cg, "    inc  r8");
+    emit(cg, "    inc  r9");
+    emit(cg, "    cmp  rax, 10000");
+    emit(cg, "    jae  .ftoa_frac_emit");
+    emit(cg, "    mov  byte [r8], '0'");
+    emit(cg, "    inc  r8");
+    emit(cg, "    inc  r9");
+    emit(cg, "    cmp  rax, 1000");
+    emit(cg, "    jae  .ftoa_frac_emit");
+    emit(cg, "    mov  byte [r8], '0'");
+    emit(cg, "    inc  r8");
+    emit(cg, "    inc  r9");
+    emit(cg, "    cmp  rax, 100");
+    emit(cg, "    jae  .ftoa_frac_emit");
+    emit(cg, "    mov  byte [r8], '0'");
+    emit(cg, "    inc  r8");
+    emit(cg, "    inc  r9");
+    emit(cg, "    cmp  rax, 10");
+    emit(cg, "    jae  .ftoa_frac_emit");
+    emit(cg, "    mov  byte [r8], '0'");
+    emit(cg, "    inc  r8");
+    emit(cg, "    inc  r9");
+    emit(cg, ".ftoa_frac_emit:");
     emit(cg, "    mov  rcx, rax");
     emit(cg, "    mov  rdx, r8");
     emit(cg, "    push r9");
@@ -4878,13 +5101,13 @@ static void emit_data_section(Codegen *cg) {
             // Skip arrays here - they are emitted separately
             if (g->is_array) continue;
             if (g->type == TYPE_INT || g->type == TYPE_BOOL) {
-                long val = 0;
+                long long val = 0;
                 if (init && init->kind == EXPR_INT_LIT) {
                     val = init->as.int_val;
                 } else if (init && init->kind == EXPR_BOOL_LIT) {
                     val = init->as.bool_val ? 1 : 0;
                 }
-                emit(cg, "_glob%d:  dq %ld   ; global %s", g->label_id, val, g->name);
+                emit(cg, "_glob%d:  dq %lld   ; global %s", g->label_id, val, g->name);
             } else if (g->type == TYPE_FLOAT) {
                 double val = 0.0;
                 if (init && init->kind == EXPR_FLOAT_LIT) {
@@ -4998,7 +5221,10 @@ static void emit_data_section(Codegen *cg) {
 static void emit_bss_section(Codegen *cg) {
     (void)cg;
     emit(cg, "section .bss");
-    emit(cg, "_written_bytes: resq 1     ; scratch for WriteConsoleA");
+    emit(cg, "_written_bytes: resq 1     ; scratch for WriteFile");
+    emit(cg, "_out_ptr: resq 1   ; buffered stdout: heap buffer base (ptr), lazily allocated");
+    emit(cg, "_out_len: resq 1   ; buffered stdout: bytes currently used (len)");
+    emit(cg, "_out_cap: resq 1   ; buffered stdout: allocated capacity, grows ptr+len style");
     emit(cg, "_readline_buf:  resb 1024  ; line input buffer for readline()");
     emit(cg, "_qpc_now:  resq 1   ; QueryPerformanceCounter scratch");
     emit(cg, "_qpc_freq: resq 1   ; QueryPerformanceFrequency scratch");
@@ -5015,7 +5241,7 @@ static void emit_bss_section(Codegen *cg) {
 static void emit_imports(Codegen *cg) {
     emit(cg, "; --- Win32 imports ---");
     emit(cg, "extern GetStdHandle");
-    emit(cg, "extern WriteConsoleA");
+    emit(cg, "extern WriteFile");
     emit(cg, "extern ReadConsoleA");
     emit(cg, "extern ExitProcess");
     emit(cg, "extern CreateThread");
@@ -5027,6 +5253,7 @@ static void emit_imports(Codegen *cg) {
     emit(cg, "extern CloseHandle");
     emit(cg, "extern GetProcessHeap");
     emit(cg, "extern HeapAlloc");
+    emit(cg, "extern HeapReAlloc");
     emit(cg, "extern HeapFree");
     emit(cg, "extern InitializeCriticalSection");
     emit(cg, "extern TlsAlloc");
@@ -5360,13 +5587,61 @@ static void emit_simd_detect_helper(Codegen *cg) {
 // then ExitProcess(0).
 // ---------------------------------------------------------------------
 
+// 1 if init is a compile-time literal (already in the static slot), else 0.
+static int global_init_is_literal(SlagType type, const Expr *init) {
+    if (!init) return 1;                       // uninitialized -> 0, fine as static
+    switch (type) {
+        case TYPE_INT:
+        case TYPE_BOOL:
+            return init->kind == EXPR_INT_LIT || init->kind == EXPR_BOOL_LIT;
+        case TYPE_FLOAT:
+            return init->kind == EXPR_FLOAT_LIT || init->kind == EXPR_INT_LIT;
+        case TYPE_STR:
+            return init->kind == EXPR_STR_LIT;
+        default:
+            return 1;
+    }
+}
+
+// _slag_init_globals: eval non-literal global initializers at startup.
+static void emit_init_globals(Codegen *cg) {
+    emit(cg, "; --- _slag_init_globals ---");
+    emit(cg, "_slag_init_globals:");
+    emit(cg, "    push rbp");
+    emit(cg, "    mov  rbp, rsp");
+    emit(cg, "    sub  rsp, 32          ; shadow space");
+    for (int i = 0; i < cg->global_count; i++) {
+        Global *g = &cg->globals[i];
+        if (g->is_array) continue;
+        if (global_init_is_literal(g->type, g->init)) continue;
+        emit(cg, "    ; init global %s", g->name);
+        if (g->type == TYPE_FLOAT) {
+            emit_float_expr(cg, g->init);
+            emit(cg, "    movsd [_glob%d], xmm0", g->label_id);
+        } else if (g->type == TYPE_STR) {
+            emit_str_expr(cg, g->init);
+            emit(cg, "    mov  [_glob%d], rax", g->label_id);
+            emit(cg, "    mov  [_glob%d_len], rdx", g->label_id);
+        } else {
+            emit_int_expr(cg, g->init);
+            emit(cg, "    mov  [_glob%d], rax", g->label_id);
+        }
+    }
+    emit(cg, "    mov  rsp, rbp");
+    emit(cg, "    pop  rbp");
+    emit(cg, "    ret");
+    emit(cg, "");
+}
+
 static void emit_entry(Codegen *cg, const char *entry_name) {
     emit(cg, "; --- entry point ---");
     emit(cg, "global _start");
     emit(cg, "_start:");
     emit(cg, "    sub  rsp, 8          ; align stack to 16 bytes");
     emit(cg, "    call _slag_startup");
+    emit(cg, "    call _slag_init_globals ; run non-literal global initializers");
     emit(cg, "    call _%s", entry_name);
+    emit(cg, "    call _slag_flush     ; drain buffered stdout before exit");
     emit(cg, "    xor  rcx, rcx        ; exit code 0");
     emit(cg, "    sub  rsp, 32");
     emit(cg, "    call ExitProcess");
@@ -5518,6 +5793,9 @@ int codegen_program(const Program *prog, FILE *out) {
     emit_simd_runtime(&cg);
     emit_mesh_runtime(&cg);
     emit_tex_runtime(&cg);
+
+    // Non-literal global initializers; runs at startup before main.
+    emit_init_globals(&cg);
 
     // File-scope `on` handlers.
     for (int i = 0; i < prog->handlers.count; i++) {

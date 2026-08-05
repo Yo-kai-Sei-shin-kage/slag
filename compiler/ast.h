@@ -56,7 +56,7 @@ struct Expr {
     int col;
 
     union {
-        long int_val;          // EXPR_INT_LIT
+        long long int_val;     // EXPR_INT_LIT
         double float_val;      // EXPR_FLOAT_LIT
         int bool_val;          // EXPR_BOOL_LIT (0/1)
 
@@ -114,6 +114,8 @@ typedef enum {
     STMT_IF,            // if (cond) { ... } else { ... }
     STMT_WHILE,         // while (cond) { ... }
     STMT_RETURN,        // return; | return TYPE expr;
+    STMT_BREAK,         // break;
+    STMT_CONTINUE,      // continue;
     STMT_EXPR,          // expression statement, e.g. println(x);
     STMT_BLOCK,         // { ... } - used for if/while bodies
     STMT_THREAD,        // thread { ... }
@@ -180,6 +182,8 @@ struct Stmt {
         struct {
             Expr *cond;
             StmtList body;
+            Stmt *post;           // for-desugar step; NULL for plain while.
+                                  // 'continue' jumps to just before this.
         } while_stmt;
 
         struct {

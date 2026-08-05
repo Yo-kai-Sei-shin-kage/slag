@@ -829,8 +829,11 @@ static Stmt *parse_for_post(Parser *p) {
     return s;
 }
 
-// Wrap [init] + while(cond){body} in a STMT_BLOCK and return it.
-static Stmt *for_wrap(Stmt *init, Expr *cond, StmtList body, int line, int col) {
+// Wrap [init] + while(cond){body}[post] in a STMT_BLOCK and return it.
+// `post` (may be NULL) is the loop-step statement; codegen runs it at the end
+// of each iteration AND makes it the target of `continue`.
+static Stmt *for_wrap(Stmt *init, Expr *cond, StmtList body, Stmt *post,
+                      int line, int col) {
     // An omitted condition is an always-true loop: synthesize the constant 1
     // so STMT_WHILE codegen tests a nonzero value each iteration (ISO C rule).
     if (!cond) {
@@ -840,12 +843,27 @@ static Stmt *for_wrap(Stmt *init, Expr *cond, StmtList body, int line, int col) 
     Stmt *wh = stmt_new(STMT_WHILE, line, col);
     wh->as.while_stmt.cond = cond;
     wh->as.while_stmt.body = body;
+    wh->as.while_stmt.post = post;
 
     Stmt *blk = stmt_new(STMT_BLOCK, line, col);
     stmtlist_init(&blk->as.block.body);
     if (init) stmtlist_push(&blk->as.block.body, init);
     stmtlist_push(&blk->as.block.body, wh);
     return blk;
+}
+
+// Fold a constant integer expression (INT_LIT, optionally under unary +/-).
+// Returns 1 and writes *out on success; 0 if `e` is not a constant int.
+static int const_int_eval(const Expr *e, long long *out) {
+    if (!e) return 0;
+    if (e->kind == EXPR_INT_LIT) { *out = e->as.int_val; return 1; }
+    if (e->kind == EXPR_UNARY) {
+        long long v;
+        if (!const_int_eval(e->as.unary.operand, &v)) return 0;
+        if (e->as.unary.op == TOK_MINUS) { *out = -v; return 1; }
+        if (e->as.unary.op == TOK_PLUS)  { *out =  v; return 1; }
+    }
+    return 0;
 }
 
 static Stmt *parse_for(Parser *p) {
@@ -860,6 +878,76 @@ static Stmt *parse_for(Parser *p) {
         char *var = copy_text(&p->current);
         advance(p);                      // IDENT
         expect(p, TOK_KW_IN, "expected 'in' after loop variable in count-for");
+
+        // ---- Coalesced bracket form: for IDENT in [a..b, c..d, ...] { } ----
+        // `n` is a flat index over the cartesian product of the ranges. All
+        // bounds must be constant int literals, so the total iteration count
+        // folds at compile time to a single tight count loop. The first range's
+        // direction (lo>hi == descending) sets whether n counts up or down; the
+        // ranges otherwise contribute only their widths to the product.
+        if (check(p, TOK_LBRACKET)) {
+            advance(p);                  // '['
+            long long total = 1;
+            int descending = 0;
+            int first = 1;
+            for (;;) {
+                Expr *rlo = parse_expr(p);
+                expect(p, TOK_DOTDOT, "expected '..' in bracket-for range");
+                Expr *rhi = parse_expr(p);
+                long long a, b;
+                if (!const_int_eval(rlo, &a) || !const_int_eval(rhi, &b)) {
+                    error_at(p, "bracket-for range bounds must be constant integers");
+                    a = b = 0;
+                }
+                long long width = (a <= b ? b - a : a - b) + 1;
+                total *= width;
+                if (first) { descending = (a > b); first = 0; }
+                if (check(p, TOK_COMMA)) { advance(p); continue; }
+                break;
+            }
+            expect(p, TOK_RBRACKET, "expected ']' to close bracket-for range list");
+
+            expect(p, TOK_LBRACE, "expected '{' to open for body");
+            StmtList body;
+            parse_block(p, &body);
+            expect(p, TOK_RBRACE, "expected '}' to close for body");
+
+            // Desugar to a single flat count loop over [0, total).
+            // Ascending:  n = 0;       while (n <  total) { body; n = n + 1; }
+            // Descending: n = total-1; while (n >= 0)     { body; n = n - 1; }
+            Stmt *decl = stmt_new(STMT_LOCAL_DECL, line, col);
+            decl->as.var_decl.type = TYPE_INT;
+            decl->as.var_decl.name = var;                  // takes ownership
+            Expr *initv = expr_new(EXPR_INT_LIT, line, col);
+            initv->as.int_val = descending ? (total - 1) : 0;
+            decl->as.var_decl.init = initv;
+
+            Expr *lhsv = expr_new(EXPR_IDENT, line, col);
+            lhsv->as.str.value = ast_strdup(var);
+            Expr *bound = expr_new(EXPR_INT_LIT, line, col);
+            bound->as.int_val = descending ? 0 : total;
+            Expr *cond = expr_new(EXPR_BINARY, line, col);
+            cond->as.binary.op = descending ? TOK_GE : TOK_LT;
+            cond->as.binary.left = lhsv;
+            cond->as.binary.right = bound;
+
+            Expr *incl = expr_new(EXPR_IDENT, line, col);
+            incl->as.str.value = ast_strdup(var);
+            Expr *one = expr_new(EXPR_INT_LIT, line, col);
+            one->as.int_val = 1;
+            Expr *step = expr_new(EXPR_BINARY, line, col);
+            step->as.binary.op = descending ? TOK_MINUS : TOK_PLUS;
+            step->as.binary.left = incl;
+            step->as.binary.right = one;
+            Expr *tgt = expr_new(EXPR_IDENT, line, col);
+            tgt->as.str.value = ast_strdup(var);
+            Stmt *inc = stmt_new(STMT_ASSIGN, line, col);
+            inc->as.assign.target = tgt;
+            inc->as.assign.value = step;
+
+            return for_wrap(decl, cond, body, inc, line, col);
+        }
+
         Expr *lo = parse_expr(p);
         expect(p, TOK_DOTDOT, "expected '..' in count-for range");
         Expr *hi = parse_expr(p);
@@ -895,9 +983,8 @@ static Stmt *parse_for(Parser *p) {
         Stmt *inc = stmt_new(STMT_ASSIGN, line, col);
         inc->as.assign.target = tgt;
         inc->as.assign.value = sum;
-        stmtlist_push(&body, inc);
 
-        return for_wrap(decl, cond, body, line, col);
+        return for_wrap(decl, cond, body, inc, line, col);
     }
 
     // ---- Paren forms: C-style and range-decl ----
@@ -935,9 +1022,7 @@ static Stmt *parse_for(Parser *p) {
     parse_block(p, &body);
     expect(p, TOK_RBRACE, "expected '}' to close for body");
 
-    if (post) stmtlist_push(&body, post);
-
-    return for_wrap(init, cond, body, line, col);
+    return for_wrap(init, cond, body, post, line, col);
 }
 
 // ---------------------------------------------------------------------
@@ -959,6 +1044,7 @@ static Stmt *parse_while(Parser *p) {
     Stmt *s = stmt_new(STMT_WHILE, line, col);
     s->as.while_stmt.cond = cond;
     s->as.while_stmt.body = body;
+    s->as.while_stmt.post = NULL;
     return s;
 }
 
@@ -1111,6 +1197,23 @@ static Stmt *parse_on_handler(Parser *p) {
 }
 
 // ---------------------------------------------------------------------
+// break / continue statements
+// ---------------------------------------------------------------------
+static Stmt *parse_break(Parser *p) {
+    int line = p->current.line, col = p->current.col;
+    advance(p); // consume 'break'
+    expect(p, TOK_SEMICOLON, "expected ';' after 'break'");
+    return stmt_new(STMT_BREAK, line, col);
+}
+
+static Stmt *parse_continue(Parser *p) {
+    int line = p->current.line, col = p->current.col;
+    advance(p); // consume 'continue'
+    expect(p, TOK_SEMICOLON, "expected ';' after 'continue'");
+    return stmt_new(STMT_CONTINUE, line, col);
+}
+
+// ---------------------------------------------------------------------
 // Statement dispatcher
 // ---------------------------------------------------------------------
 static Stmt *parse_stmt(Parser *p) {
@@ -1121,6 +1224,8 @@ static Stmt *parse_stmt(Parser *p) {
         case TOK_KW_FOR:    return parse_for(p);
         case TOK_KW_WHILE:  return parse_while(p);
         case TOK_KW_RETURN: return parse_return(p);
+        case TOK_KW_BREAK:  return parse_break(p);
+        case TOK_KW_CONTINUE: return parse_continue(p);
         case TOK_KW_THREAD: return parse_thread(p);
         case TOK_KW_SYNC:   return parse_sync(p);
         case TOK_KW_LOCK:   return parse_lock(p);
