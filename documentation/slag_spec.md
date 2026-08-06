@@ -61,7 +61,8 @@ counter1
 
 ```
 int   float   str   bool
-if    else    while
+if    else    while   for   in
+break   continue
 true  false
 function    return
 global   local
@@ -252,14 +253,27 @@ while (condition) {
 }
 ```
 
-No `for` loop syntax. Counted iteration is expressed as `while` with an explicit counter:
+### 7.3 For Loop
+
+Four forms, all desugared to a `while` with an implicit loop variable scope:
 
 ```
-local int i = 0;
-while (i < 10) {
-    // body
-    i = i + 1;
-}
+for i in 0 .. 10 { }            // count: i = 0,1,..,9  (half-open [lo,hi))
+for (local int i = 0; i < 10; i++) { }   // C-style; post is =, ++ or --
+for (local int i = 0; i < 10) { }        // range-decl: no post clause
+for n in [0..3, 0..3] { }       // bracket product; const-int bounds, flat n
+```
+
+- Count form declares `i` as `int`; `hi` may be any int expr.
+- Bracket form folds the range widths at compile time to one flat count loop;
+  bounds must be constant integer literals.
+- `for` and `while` bodies accept `break` and `continue` (see 7.4).
+
+### 7.4 Break / Continue
+
+```
+break;      // exit the innermost for/while
+continue;   // skip to the next iteration (runs the for-post clause first)
 ```
 
 ---
@@ -998,6 +1012,8 @@ at ~29.8M triangles. No fixed startup reservation.
     offset (the float is narrowed from Slag's 64-bit double via `cvtsd2ss`).
     Lets SIMD vec4 buffers be filled with readable float literals, e.g.
     `mem.pokef32(a, 0, 1.0)`, instead of hand-packed IEEE-754 bit patterns
+  - `mem.peekf32(ptr, byteoff)` — load a 32-bit float and widen it to a Slag
+    64-bit double (`cvtss2sd`); complement of `mem.pokef32`
 - Accessors are **unchecked** and **inlined** — each `peek`/`poke` compiles to a single `mov` emitted directly at the call site (no function-call overhead), benchmarked at ~0.3 ns/op, comparable to native array access.
   Bounds are the programmer's responsibility (as in C). `alloc` returning `0`
   is the only built-in safety signal
@@ -1285,6 +1301,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `mem.poke64(ptr,byteoff,v)`     | Store 8 bytes at ptr + byteoff                     |
 | `mem.peek64(ptr,byteoff)`       | Load 8 bytes at ptr + byteoff -> int               |
 | `mem.pokef32(ptr,byteoff,f)`    | Store 32-bit float at ptr + byteoff                |
+| `mem.peekf32(ptr,byteoff)`      | Load 32-bit float at ptr + byteoff -> float        |
 | `file.open(path,mode)`          | Open file; mode 1=read/2=write/3=append -> handle (-1 fail) |
 | `file.close(handle)`            | Close a file handle                                |
 | `file.read(handle,buf,n)`       | Read n bytes into buf -> bytes read (-1 fail)      |

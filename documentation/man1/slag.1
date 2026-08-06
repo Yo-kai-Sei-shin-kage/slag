@@ -178,9 +178,24 @@ is equivalent to
 .BR "else if" )
 and
 .B while
-are supported. There is no
+are supported.
+.PP
 .B for
-loop.
+comes in four forms:
+.BR "for i in 0 .. 10 { }" " (count, half-open [lo,hi)),"
+.BR "for (local int i = 0; i < 10; i++) { }" " (C-style; post is =, ++ or --),"
+the one-semicolon range-decl
+.BR "for (local int i = 0; i < 10) { }" ,
+and the bracket product
+.BR "for n in [0..3, 0..3] { }"
+whose const-integer range widths fold at compile time to one flat count loop.
+All loop forms desugar to
+.BR while .
+.PP
+.B break
+exits the innermost loop and
+.B continue
+skips to the next iteration (running the for-post clause first).
 .SS Functions
 Functions are declared with the
 .B function

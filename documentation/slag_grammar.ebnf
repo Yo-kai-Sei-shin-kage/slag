@@ -73,6 +73,9 @@ statement     = local_decl
               | global_decl
               | if_stmt
               | while_stmt
+              | for_stmt
+              | break_stmt
+              | continue_stmt
               | return_stmt
               | thread_stmt
               | sync_stmt
@@ -96,7 +99,19 @@ array_init    = "{" [ expr { "," expr } [ "," ] ] "}"     (* literal element lis
 
 (* -- Control flow -- *)
 if_stmt       = "if" "(" expr ")" block [ "else" ( if_stmt | block ) ] ;
-while_stmt    = "while" "(" expr ")" block ;              (* Slag has no `for` loop *)
+while_stmt    = "while" "(" expr ")" block ;
+
+for_stmt      = "for" for_header block ;
+for_header    = "(" [ for_init ] ";" [ expr ] [ ";" [ for_post ] ] ")"   (* C-style; one-";" form omits post *)
+              | identifier "in" expr ".." expr                           (* count/range: [lo, hi) *)
+              | identifier "in" "[" range { "," range } "]" ;            (* bracket product; const-int bounds *)
+range         = expr ".." expr ;
+for_init      = [ "local" ] type identifier "=" expr | assign_target "=" expr ;
+for_post      = assign_target ( "=" expr | "++" | "--" ) ;
+assign_target = identifier { index_suffix | member_suffix } ;
+
+break_stmt    = "break" ";" ;
+continue_stmt = "continue" ";" ;
 return_stmt   = "return" ";"                              (* void return *)
               | "return" type expr ";" ;                  (* typed return: type precedes the value *)
 
@@ -152,8 +167,8 @@ arg_list       = expr { "," expr } ;
 (* Notes on what the surface syntax deliberately omits                *)
 (* ------------------------------------------------------------------ *)
 (*
-   - No `for` loop - use `while` with an explicit counter.
-   - No ternary (?:), increment/decrement (++/--), or compound-assign (+=, ...).
+   - No ternary (?:) or compound-assign (+=, ...). `++`/`--` exist only as a
+     for-loop post clause, not as general expression operators.
    - Bitwise ops (bit.shl, bit.shr, bit.xor, ...) are namespace calls parsed as
      member_suffix, NOT operator tokens. The only logical operators as tokens are
      "&&", "||", "^^" (logical XOR, no short-circuit), and "!".
