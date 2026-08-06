@@ -12,19 +12,23 @@ for bare-metal control on Windows — file processing, multithreaded workloads, 
 graphics.
 
 No CRT is linked into Slag-compiled programs; only the Win32 API (`kernel32`, `user32`, `gdi32`,
-`ws2_32`) is used as needed.
+`ws2_32`, `winmm`, `bcrypt`, `dxgi`, `d3d11`, `hid`) is used as needed. The compiler emits only the
+runtime modules a program actually references, so unused subsystems add nothing to the output.
 
 ## What it can do
 
 - Ints, floats, strings, bools, fixed-size and global arrays
-- Functions, control flow (if/else, while), typed returns
+- Functions, control flow, typed returns
 - Threads, sync, and locks for real Win32 concurrency
 - Raw memory access (`mem.*`) and bit ops (`bit.*`)
 - File I/O and per-handle directory listing (`file.*`)
 - 32-slot software-mixed audio (`audio.*`) with automatic WAV loop-point support
-- TCP networking (`net.*`)
+- TCP networking (`net.*`) with a persistent multi-client server and LAN discovery
+- Encrypted P2P: ECDH key exchange + AES via CNG (`crypto.*`)
 - Windowing and software-rendered graphics: pixels, textured/shaded/z-buffered triangle
-  rasterization, keyboard/mouse input, meshes, procedural textures
+  rasterization, keyboard/mouse input, meshes (`mesh.*`), procedural textures (`tex.*`)
+- GPU-accelerated rendering via Direct3D 11 (`gpu.*`), matrix stack (`mat.*`), SIMD ops (`simd.*`)
+- HID gamepad input for any controller (`gpad.*`, `on gpad_button`)
 - CPU topology and SIMD feature detection
 
 ## Getting started
@@ -48,7 +52,7 @@ threading, networking, and more.
 ```bash
 slag program.slag                          # compile to .asm
 nasm -f win64 program.asm -o program.obj   # assemble
-x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -e _start
+x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt -ldxgi -ld3d11 -lhid -e _start
 ```
 
 Or use the helper script: `slagrun program.slag`
