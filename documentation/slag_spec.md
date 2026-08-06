@@ -1207,7 +1207,8 @@ programs.
 .slag source
     → Lexer (C)
     → Parser (C) — produces AST
-    → Code Generator (C) — emits NASM x86-64 assembly
+    → Runtime scan (C) — walks the AST to select needed runtime modules
+    → Code Generator (C) — emits NASM x86-64 assembly (only selected runtimes)
     → NASM — assembles to Win64 COFF object
     → MinGW-w64 linker — links to PE executable
 ```
@@ -1239,13 +1240,29 @@ Each maps to a runtime subsystem:
 | `-ldxgi -ld3d11`     | iGPU dispatch: `gpu.*` (Direct3D 11 / DXGI)      | `dxgi.dll`, `d3d11.dll`|
 | `-lhid`              | Gamepad input: `gpad.*`, `on gpad_button`        | `hid.dll`              |
 
-**All of these flags are currently required for every program**, regardless of
-which builtins it uses. The compiler emits every runtime — and its `extern`
-import declarations — into every program's assembly, so omitting any flag
-leaves those imports unresolved and the link fails. The mapping above is a
-reference for what each flag provides; it is not (yet) a list of flags that can
-be trimmed per program. (A future build that emits runtimes on demand would
-make trimming safe; until then, link all eight.)
+**Runtimes are emitted on demand.** The compiler scans the whole AST before
+emission and includes a runtime module — its code, `extern` imports, and
+data/bss — only when the program actually references one of its builtins. A
+console-only program emits none of the graphics/audio/net/crypto runtimes and
+shrinks its generated assembly by roughly an order of magnitude, which is the
+dominant factor in assemble (NASM) time.
+
+Some modules form a single linkage unit because their emitted code cross-
+references each other's symbols, and pulling one always pulls the others:
+
+- **WINDOW ⇄ GPU** — the window present/WndProc path references `_gpu_*` state
+  and the GPU runtime references window (`WSTATE_*`) symbols.
+- **WINDOW → GAMEPAD** — the WndProc hard-references the raw-input/gamepad
+  dispatch, so any windowed program also emits the gamepad runtime.
+- **NET ⇄ SERVER** — `net.*` and `server.*` (plus LAN discovery) reference each
+  other and always ship together.
+- **`pixel` / `fill_triangle*` / `zbuffer.*` / `input.*`** imply WINDOW.
+
+Core (`kernel32`), plus the `mem.*` and `file.*` primitives, are always emitted.
+The link flag list above is still passed in full by `slagrun`/the `makefile`;
+unused `-l` flags are harmless because no imports reference those DLLs. A future
+step will have the compiler drive the assembler/linker itself and pass only the
+flags the detected runtime set requires.
 
 Note: `dxgi.dll` and `d3d11.dll` ship with Windows, so no runtime install is
 needed by end users. The GPU runtime's vertex/pixel shaders are pre-compiled to
@@ -1549,6 +1566,7 @@ function main() {
 | 0.15.1  | File-scope `on` handlers (declarable at top level, not only inside a function body); key comparison against a global `str[]` element at a compile-time constant index (`key == keys[0]`) folds to the key code, with an unrecognized name now a compile-time error | ✅ Complete |
 | 0.15.2  | iGPU auto-dispatch for `fill_triangle_pcolor` (D3D11/DXGI, Intel/AMD auto-detect via `gpu.*`); `window.set_title` for live title-bar updates. **PS2-era triangle throughput reached**: ~9.1M tris/sec on an AMD Vega 8 iGPU (100k `pcolor` tris/frame @ ~91 FPS). **Bug fix:** GPU vertex convert wrote scattered stores into write-combined mapped memory (pathologically slow); now converts into a cached scratch buffer and bulk-copies via `rep movsq` | ✅ Complete |
 | 0.16.0  | GPU shader path recovered to HLSL source (`shaders/`), vertex COLOR widened RGB→RGBA (per-vertex alpha); `gpu.clear(ptr)` for GPU clear/background color; `gpu.set_blend(mode)` straight-alpha output-merger blending for `fill_triangle_gpu` | ✅ Complete |
+| 0.98    | **Language:** `for` loops (C-style `for (init; cond; post)`, one-";" range-decl, count `for i in a..b`, and constant bracket-product `for i in [a..b, c..d]`); `break`/`continue`; 64-bit int literals; buffered stdout; runtime global initializers. **Compiler:** on-demand runtime emission — an AST pre-scan selects only the runtime modules a program references (WINDOW⇄GPU, WINDOW→GAMEPAD, NET⇄SERVER coupled as linkage units), collapsing console-only programs by ~8× of generated assembly and cutting NASM time accordingly. **Docs:** `mem.peekf32`; build environment/toolchain section (Cygwin, MinGW-w64, NASM) | ✅ Complete |
 | 0.99    | **GPU:** `fill_triangle_gpu` vertex is direct-F32 — 11 float32 per vertex, 48-byte stride (`x,y,z,u,v,r,g,b,a,slice,flag`, built with `mem.pokef32`, bulk-copied with no int64→float convert); per-vertex Texture2DArray slice (512×512 BGRA, 256 layers), negative slice selects SDF text mode (linear-sampled distance field, smoothstep glyph alpha) in the same draw call; negative `flag` selects billboard-point mode (camera-facing expansion); per-vertex RGBA alpha with `gpu.set_blend` straight-alpha blending; `gpu.clear(ptr)` GPU background color; fog constants live in the `gpu.set_viewproj` cbuf for runtime-dynamic fog; persistent vertex buffers skip re-upload on identical resubmit; grow-on-demand vertex/scratch buffers (initial 65536 tris, up to ~29.8M/draw). **Language:** `str[]` string arrays (local & global) — indexed read/write from anywhere, brace initializers, parallel ptr/len storage; `bit.xor` (bitwise XOR); `^^` logical XOR operator; `bool` values print as `true`/`false` (not `0`/`1`); float formatting rounds to nearest 6th decimal (`3.3` → `3.300000`, was `3.299999`). **Bug fixes:** `calculate_frame_size` under-reserved stack for `str[]` locals (clobbered the next local via call shadow space); global `str[]` element literals now interned before the string-constant pool flush (fixed undefined `_str*` labels); `_gpu_up_valid` persistence bug (every persistent-geometry program silently re-staged each frame) | ✅ Complete |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
 

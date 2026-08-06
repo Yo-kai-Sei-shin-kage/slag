@@ -78,6 +78,46 @@ typedef struct Global {
 
 #define MAX_LOCALS 2048
 
+// ---------------------------------------------------------------------
+// Runtime-module lookup table
+// ---------------------------------------------------------------------
+// Each bit marks one runtime module. A program links/emits a module only when
+// at least one builtin from it is referenced (plus implied deps, resolved in
+// resolve_runtime_deps()). NET and SERVER are a single linkage unit.
+enum {
+    RT_CORE    = 1u << 0,   // kernel32: always on (process/heap/threads/timing)
+    RT_WINDOW  = 1u << 1,   // user32,gdi32: window.*, pixel, fill_triangle*, zbuffer.*
+    RT_GPU     = 1u << 2,   // dxgi,d3d11: gpu.* (implies RT_WINDOW)
+    RT_NET     = 1u << 3,   // ws2_32: net.* + server.* (single unit)
+    RT_AUDIO   = 1u << 4,   // winmm: audio.*
+    RT_CRYPTO  = 1u << 5,   // bcrypt: crypto.*
+    RT_GAMEPAD = 1u << 6,   // hid: gpad.*, on gpad_button (implies RT_WINDOW)
+    RT_SIMD    = 1u << 7,   // simd.*
+    RT_MAT     = 1u << 8,   // mat.*
+    RT_MESH    = 1u << 9,   // mesh.*
+    RT_TEX     = 1u << 10,  // tex.*
+    RT_MEM     = 1u << 11,  // mem.*
+    RT_FILE    = 1u << 12   // file.*
+};
+
+// Namespace base name -> runtime bit. net.server_* also maps here via "net".
+static const struct { const char *ns; unsigned int rt; } NS_RUNTIME[] = {
+    { "window",  RT_WINDOW  },
+    { "gpu",     RT_GPU     },
+    { "net",     RT_NET     },
+    { "audio",   RT_AUDIO   },
+    { "crypto",  RT_CRYPTO  },
+    { "gpad",    RT_GAMEPAD },
+    { "simd",    RT_SIMD    },
+    { "mat",     RT_MAT     },
+    { "mesh",    RT_MESH    },
+    { "tex",     RT_TEX     },
+    { "mem",     RT_MEM     },
+    { "file",    RT_FILE    },
+    { "input",   RT_WINDOW  },
+    { "zbuffer", RT_WINDOW  },
+};
+
 typedef struct Codegen {
     FILE *out;            // output assembly file
     int label_counter;    // unique label suffix generator
@@ -118,7 +158,42 @@ typedef struct Codegen {
     int break_label[32];
     int cont_label[32];
     int loop_depth;
+
+    // Bitset of runtime modules actually referenced by the program (RT_* bits).
+    // Populated during member-call dispatch; drives conditional runtime
+    // emission and auto link-flag selection. Not yet gating anything.
+    unsigned int used_runtimes;
 } Codegen;
+
+// Mark the runtime module for a namespace base as used. Safe no-op for a base
+// that is not a runtime namespace (user identifiers, etc.).
+static void mark_runtime_ns(Codegen *cg, const char *base) {
+    for (size_t i = 0; i < sizeof(NS_RUNTIME)/sizeof(NS_RUNTIME[0]); i++) {
+        if (strcmp(base, NS_RUNTIME[i].ns) == 0) {
+            cg->used_runtimes |= NS_RUNTIME[i].rt;
+            return;
+        }
+    }
+}
+
+// Fold implied runtime dependencies into the bitset. Must run once after all
+// builtins and event handlers have been scanned, before conditional emission.
+//   GPU     needs WINDOW (swapchain/client surface)
+//   GAMEPAD needs WINDOW (raw-input sink is attached to the window)
+// NET already covers both net.* and server.* (single linkage unit).
+static void resolve_runtime_deps(Codegen *cg) {
+    // WINDOW and GPU are bidirectionally coupled: the window WndProc/present
+    // path references _gpu_* state and helpers, and the GPU runtime references
+    // WSTATE_*/window symbols. Emit them as one linkage unit.
+    if (cg->used_runtimes & RT_GPU)     cg->used_runtimes |= RT_WINDOW;
+    if (cg->used_runtimes & RT_WINDOW)  cg->used_runtimes |= RT_GPU;
+    if (cg->used_runtimes & RT_GAMEPAD) cg->used_runtimes |= RT_WINDOW;
+    // The window WndProc hard-references gamepad symbols (RegisterRawInputDevices,
+    // _slag_gamepad_dispatch), so any window program must also emit the gamepad
+    // runtime + its imports.
+    if (cg->used_runtimes & RT_WINDOW)  cg->used_runtimes |= RT_GAMEPAD;
+}
+
 
 #define MAX_THREADS 64
 
@@ -1422,31 +1497,38 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         } else if (strcmp(name, "pixel") == 0) {
             // pixel(x, y, r, g, b)
             emit(cg, "    ; pixel()");
+            cg->used_runtimes |= RT_WINDOW;
             emit_user_call(cg, "slag_pixel", args);
         } else if (strcmp(name, "fill_triangle") == 0) {
             // fill_triangle(x0,y0,x1,y1,x2,y2,r,g,b)
             emit(cg, "    ; fill_triangle()");
+            cg->used_runtimes |= RT_WINDOW;
             emit_user_call(cg, "slag_fill_triangle", args);
         } else if (strcmp(name, "fill_triangle_gradient") == 0) {
             // fill_triangle_gradient(x0,y0,r0,g0,b0,x1,y1,r1,g1,b1,x2,y2,r2,g2,b2)
             emit(cg, "    ; fill_triangle_gradient()");
+            cg->used_runtimes |= RT_WINDOW;
             emit_user_call(cg, "slag_fill_triangle_gradient", args);
         } else if (strcmp(name, "fill_triangle_z") == 0) {
             // fill_triangle_z(x0,y0,z0,x1,y1,z1,x2,y2,z2,r,g,b)
             emit(cg, "    ; fill_triangle_z()");
+            cg->used_runtimes |= RT_WINDOW;
             emit_user_call(cg, "slag_fill_triangle_z", args);
         } else if (strcmp(name, "fill_triangle_affine") == 0) {
             // fill_triangle_affine(x0,y0,u0,v0,x1,y1,u1,v1,x2,y2,u2,v2,tex_ptr,tex_w,tex_h)
             emit(cg, "    ; fill_triangle_affine()");
+            cg->used_runtimes |= RT_WINDOW;
             emit_user_call(cg, "slag_fill_triangle_affine", args);
         } else if (strcmp(name, "fill_triangle_persp") == 0) {
             // fill_triangle_persp(x0,y0,z0,u0,v0,x1,y1,z1,u1,v1,x2,y2,z2,u2,v2,tex_ptr,tex_w,tex_h)
             emit(cg, "    ; fill_triangle_persp()");
+            cg->used_runtimes |= RT_WINDOW;
             emit_user_call(cg, "slag_fill_triangle_persp", args);
         } else if (strcmp(name, "fill_triangle_pcolor") == 0) {
             // fill_triangle_pcolor(verts, tex_ptr, tex_w, tex_h)
             // verts: ptr to 24 int64s (3 vertices x 8 values: x,y,z,u,v,r,g,b)
             emit(cg, "    ; fill_triangle_pcolor()");
+            cg->used_runtimes |= RT_WINDOW;
             emit_user_call(cg, "slag_fill_triangle_pcolor", args);
         } else if (strcmp(name, "fill_triangle_gpu") == 0) {
             // fill_triangle_gpu(verts, count, tex_ptr, tex_w, tex_h)
@@ -1454,6 +1536,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             // verts) in one call, converting to float32 directly into the GPU
             // stage buffer. No-op when no GPU device is live. pcolor untouched.
             emit(cg, "    ; fill_triangle_gpu()");
+            cg->used_runtimes |= RT_GPU;
             emit_user_call(cg, "slag_fill_triangle_gpu", args);
         } else if (strcmp(name, "zbuffer") == 0) {
             emit(cg, "    ; zbuffer stub");
@@ -1470,6 +1553,7 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
         const char *base = (base_expr && base_expr->kind == EXPR_IDENT)
                                 ? base_expr->as.str.value : "";
         const ExprList *args = &e->as.member_call.args;
+        mark_runtime_ns(cg, base);
 
         // window.open(w, h, title)
         if (strcmp(member, "open") == 0 && strcmp(base, "window") == 0) {
@@ -5298,12 +5382,14 @@ static void emit_startup(Codegen *cg) {
     emit(cg, "    call InitializeCriticalSection");
     emit(cg, "    add  rsp, 32");
     emit(cg, "");
-    emit(cg, "    ; init window TLS slot");
-    emit(cg, "    sub  rsp, 32");
-    emit(cg, "    call TlsAlloc");
-    emit(cg, "    add  rsp, 32");
-    emit(cg, "    mov  [_window_tls_index], rax");
-    emit(cg, "    mov  qword [_window_tls_init], 1");
+    if (cg->used_runtimes & RT_WINDOW) {
+        emit(cg, "    ; init window TLS slot");
+        emit(cg, "    sub  rsp, 32");
+        emit(cg, "    call TlsAlloc");
+        emit(cg, "    add  rsp, 32");
+        emit(cg, "    mov  [_window_tls_index], rax");
+        emit(cg, "    mov  qword [_window_tls_init], 1");
+    }
     emit(cg, "");
     emit(cg, "    call _slag_detect_cpu_topology");
     emit(cg, "    call _slag_detect_simd");
@@ -5652,11 +5738,109 @@ static void emit_entry(Codegen *cg, const char *entry_name) {
 // Top-level codegen entry point
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// Runtime pre-scan: walk the whole AST once, before any emission, to
+// populate cg->used_runtimes. This must precede the conditional emit_* calls
+// (imports/runtime/data/bss), since function bodies are emitted AFTER those
+// sections but their builtin references decide which runtimes are needed.
+// ---------------------------------------------------------------------
+static void scan_expr(Codegen *cg, const Expr *e);
+static void scan_stmt(Codegen *cg, const Stmt *s);
+
+static void scan_exprlist(Codegen *cg, const ExprList *l) {
+    for (int i = 0; i < l->count; i++) scan_expr(cg, l->items[i]);
+}
+
+static void scan_stmtlist(Codegen *cg, const StmtList *l) {
+    for (int i = 0; i < l->count; i++) scan_stmt(cg, l->items[i]);
+}
+
+static void scan_expr(Codegen *cg, const Expr *e) {
+    if (!e) return;
+    switch (e->kind) {
+        case EXPR_BINARY:  scan_expr(cg, e->as.binary.left);  scan_expr(cg, e->as.binary.right); break;
+        case EXPR_LOGICAL: scan_expr(cg, e->as.logical.left); scan_expr(cg, e->as.logical.right); break;
+        case EXPR_UNARY:   scan_expr(cg, e->as.unary.operand); break;
+        case EXPR_INDEX:   scan_expr(cg, e->as.index.base); scan_expr(cg, e->as.index.index); break;
+        case EXPR_MEMBER:  scan_expr(cg, e->as.member.base); break;
+        case EXPR_CALL: {
+            const char *n = e->as.call.name;
+            // Free graphics builtins pull in a runtime with no namespace base.
+            if (strcmp(n, "fill_triangle_gpu") == 0) cg->used_runtimes |= RT_GPU;
+            else if (strncmp(n, "fill_triangle", 13) == 0 || strcmp(n, "pixel") == 0)
+                cg->used_runtimes |= RT_WINDOW;
+            scan_exprlist(cg, &e->as.call.args);
+            break;
+        }
+        case EXPR_MEMBER_CALL: {
+            const char *base = (e->as.member_call.base &&
+                                e->as.member_call.base->kind == EXPR_IDENT)
+                                   ? e->as.member_call.base->as.str.value : "";
+            mark_runtime_ns(cg, base);
+            scan_expr(cg, e->as.member_call.base);
+            scan_exprlist(cg, &e->as.member_call.args);
+            break;
+        }
+        default: break;
+    }
+}
+
+static void scan_stmt(Codegen *cg, const Stmt *s) {
+    if (!s) return;
+    switch (s->kind) {
+        case STMT_LOCAL_DECL:
+        case STMT_GLOBAL_DECL: scan_expr(cg, s->as.var_decl.init); break;
+        case STMT_ARRAY_DECL:
+            scan_expr(cg, s->as.array_decl.size_expr);
+            scan_exprlist(cg, &s->as.array_decl.init_list);
+            scan_expr(cg, s->as.array_decl.init_call);
+            break;
+        case STMT_ASSIGN: scan_expr(cg, s->as.assign.target); scan_expr(cg, s->as.assign.value); break;
+        case STMT_IF:
+            scan_expr(cg, s->as.if_stmt.cond);
+            scan_stmtlist(cg, &s->as.if_stmt.then_body);
+            scan_stmtlist(cg, &s->as.if_stmt.else_body);
+            break;
+        case STMT_WHILE:
+            scan_expr(cg, s->as.while_stmt.cond);
+            scan_stmtlist(cg, &s->as.while_stmt.body);
+            scan_stmt(cg, s->as.while_stmt.post);
+            break;
+        case STMT_RETURN: scan_expr(cg, s->as.return_stmt.value); break;
+        case STMT_EXPR:   scan_expr(cg, s->as.expr_stmt.expr); break;
+        case STMT_BLOCK:  scan_stmtlist(cg, &s->as.block.body); break;
+        case STMT_THREAD: scan_stmtlist(cg, &s->as.thread_stmt.body); break;
+        case STMT_SYNC:   scan_stmtlist(cg, &s->as.sync_stmt.body); break;
+        case STMT_LOCK:   scan_stmtlist(cg, &s->as.lock_stmt.body); break;
+        case STMT_ON_HANDLER: {
+            const char *ev = s->as.on_handler.event_name;
+            if (strncmp(ev, "gpad_", 5) == 0 || strncmp(ev, "js_", 3) == 0)
+                cg->used_runtimes |= RT_GAMEPAD;
+            else  // key_*/mouse_* handlers need the window WndProc
+                cg->used_runtimes |= RT_WINDOW;
+            scan_stmtlist(cg, &s->as.on_handler.body);
+            break;
+        }
+        default: break;
+    }
+}
+
+static void scan_program(Codegen *cg, const Program *prog) {
+    scan_stmtlist(cg, &prog->globals);
+    scan_stmtlist(cg, &prog->handlers);
+    for (int i = 0; i < prog->functions.count; i++)
+        scan_stmtlist(cg, &prog->functions.items[i].body);
+    resolve_runtime_deps(cg);
+}
+
 int codegen_program(const Program *prog, FILE *out) {
     Codegen cg;
     memset(&cg, 0, sizeof(cg));
     cg.out           = out;
     cg.label_counter = 0;
+
+    // Populate cg.used_runtimes before any conditional runtime emission.
+    scan_program(&cg, prog);
 
     // File header.
     emit(&cg, "; Generated by the Slag compiler");
@@ -5667,16 +5851,16 @@ int codegen_program(const Program *prog, FILE *out) {
 
     // Imports.
     emit_imports(&cg);
-    emit_window_imports(&cg);
-    emit_gamepad_imports(&cg);
-    emit_net_imports(&cg);
-    emit_server_imports(&cg);
+    if (cg.used_runtimes & RT_WINDOW) emit_window_imports(&cg);
+    if (cg.used_runtimes & RT_GAMEPAD) emit_gamepad_imports(&cg);
+    if (cg.used_runtimes & RT_NET) emit_net_imports(&cg);
+    if (cg.used_runtimes & RT_NET) emit_server_imports(&cg);
     emit_mem_imports(&cg);
     emit_file_imports(&cg);
-    emit_audio_imports(&cg);
-    emit_crypto_imports(&cg);
-    emit_gpu_imports(&cg);
-    emit_simd_imports(&cg);
+    if (cg.used_runtimes & RT_AUDIO) emit_audio_imports(&cg);
+    if (cg.used_runtimes & RT_CRYPTO) emit_crypto_imports(&cg);
+    if (cg.used_runtimes & RT_GPU) emit_gpu_imports(&cg);
+    if (cg.used_runtimes & RT_SIMD) emit_simd_imports(&cg);
 
     // .text section.
     emit(&cg, "section .text");
@@ -5776,23 +5960,33 @@ int codegen_program(const Program *prog, FILE *out) {
         else if (strcmp(ev, "gpad_trigger") == 0) ev_flags.has_gpad_trigger = 1;
     }
 
+    // Map event handlers to their runtime modules, then close over deps.
+    if (ev_flags.has_key_down || ev_flags.has_key_up ||
+        ev_flags.has_mouse_move || ev_flags.has_mouse_down ||
+        ev_flags.has_mouse_up || ev_flags.has_mouse_wheel)
+        cg.used_runtimes |= RT_WINDOW;
+    if (ev_flags.has_gpad_button || ev_flags.has_js_left ||
+        ev_flags.has_js_right || ev_flags.has_gpad_trigger)
+        cg.used_runtimes |= RT_GAMEPAD;
+    resolve_runtime_deps(&cg);
+
     // Runtime helpers.
     emit_runtime_helpers(&cg);
     emit_cpu_topology_helper(&cg);
     emit_simd_detect_helper(&cg);
-    emit_window_runtime(&cg, &ev_flags);
-    emit_gamepad_runtime(&cg);
-    emit_net_runtime(&cg);
-    emit_server_runtime(&cg);
+    if (cg.used_runtimes & RT_WINDOW) emit_window_runtime(&cg, &ev_flags);
+    if (cg.used_runtimes & RT_GAMEPAD) emit_gamepad_runtime(&cg);
+    if (cg.used_runtimes & RT_NET) emit_net_runtime(&cg);
+    if (cg.used_runtimes & RT_NET) emit_server_runtime(&cg);
     emit_mem_runtime(&cg);
     emit_file_runtime(&cg);
-    emit_audio_runtime(&cg);
-    emit_crypto_runtime(&cg);
-    emit_gpu_runtime(&cg);
-    emit_mat_runtime(&cg);
-    emit_simd_runtime(&cg);
-    emit_mesh_runtime(&cg);
-    emit_tex_runtime(&cg);
+    if (cg.used_runtimes & RT_AUDIO) emit_audio_runtime(&cg);
+    if (cg.used_runtimes & RT_CRYPTO) emit_crypto_runtime(&cg);
+    if (cg.used_runtimes & RT_GPU) emit_gpu_runtime(&cg);
+    if (cg.used_runtimes & RT_MAT) emit_mat_runtime(&cg);
+    if (cg.used_runtimes & RT_SIMD) emit_simd_runtime(&cg);
+    if (cg.used_runtimes & RT_MESH) emit_mesh_runtime(&cg);
+    if (cg.used_runtimes & RT_TEX) emit_tex_runtime(&cg);
 
     // Non-literal global initializers; runs at startup before main.
     emit_init_globals(&cg);
@@ -5814,25 +6008,25 @@ int codegen_program(const Program *prog, FILE *out) {
     // Data sections (emitted after text so float/string pools are fully
     // populated by the time we write them).
     emit_data_section(&cg);
-    emit_window_data(&cg);
-    emit_gamepad_data(&cg);
-    emit_gpu_data(&cg);
-    emit_mat_data(&cg);
-    emit_mesh_data(&cg);
-    emit_tex_data(&cg);
+    if (cg.used_runtimes & RT_WINDOW) emit_window_data(&cg);
+    if (cg.used_runtimes & RT_GAMEPAD) emit_gamepad_data(&cg);
+    if (cg.used_runtimes & RT_GPU) emit_gpu_data(&cg);
+    if (cg.used_runtimes & RT_MAT) emit_mat_data(&cg);
+    if (cg.used_runtimes & RT_MESH) emit_mesh_data(&cg);
+    if (cg.used_runtimes & RT_TEX) emit_tex_data(&cg);
     emit_bss_section(&cg);
-    emit_window_bss(&cg);
-    emit_net_bss(&cg);
-    emit_server_bss(&cg);
+    if (cg.used_runtimes & RT_WINDOW) emit_window_bss(&cg);
+    if (cg.used_runtimes & RT_NET) emit_net_bss(&cg);
+    if (cg.used_runtimes & RT_NET) emit_server_bss(&cg);
     emit_mem_bss(&cg);
     emit_file_bss(&cg);
-    emit_audio_bss(&cg);
-    emit_crypto_bss(&cg);
-    emit_gpu_bss(&cg);
-    emit_mat_bss(&cg);
-    emit_simd_bss(&cg);
-    emit_mesh_bss(&cg);
-    emit_tex_bss(&cg);
+    if (cg.used_runtimes & RT_AUDIO) emit_audio_bss(&cg);
+    if (cg.used_runtimes & RT_CRYPTO) emit_crypto_bss(&cg);
+    if (cg.used_runtimes & RT_GPU) emit_gpu_bss(&cg);
+    if (cg.used_runtimes & RT_MAT) emit_mat_bss(&cg);
+    if (cg.used_runtimes & RT_SIMD) emit_simd_bss(&cg);
+    if (cg.used_runtimes & RT_MESH) emit_mesh_bss(&cg);
+    if (cg.used_runtimes & RT_TEX) emit_tex_bss(&cg);
 
     // Free string constant pool.
     for (int i = 0; i < cg.str_const_count; i++) {
