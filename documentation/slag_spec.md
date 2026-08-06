@@ -1168,7 +1168,40 @@ local int p = tex.perlin2d(x, y, freq, seed);  // Perlin noise
 
 ## 15. Compiler Architecture
 
-### 15.1 Bootstrap Pipeline
+### 15.1 Build Environment & Toolchain
+
+Slag currently builds only on Windows, and all build steps are run from a
+**Cygwin terminal** (the paths, shell scripts, and the `makefile`/`slagrun`
+wrapper assume a POSIX shell and Cygwin-style `/cygdrive/...` paths). The
+native command prompt / PowerShell are not supported for the build workflow at
+this time.
+
+Required tools (installed and reachable on `PATH` inside the Cygwin shell):
+
+| Tool                        | Purpose                                            |
+|-----------------------------|----------------------------------------------------|
+| **Cygwin** (terminal + coreutils) | Build shell; runs `make`, `slagrun`, and the example scripts |
+| **MinGW-w64 GCC** (`x86_64-w64-mingw32-gcc`) | Compiles the C compiler sources and links the final PE (no CRT) |
+| **NASM**                    | Assembles the emitted `.asm` into a Win64 COFF object |
+
+Building the compiler (from `compiler/`):
+
+```
+make            # builds ./slag via the makefile (MinGW-w64 GCC)
+```
+
+Building a Slag program (the `slagrun <file.slag>` wrapper automates this):
+
+```
+./slag program.slag          # .slag -> program.asm
+nasm -f win64 program.asm -o program.obj
+x86_64-w64-mingw32-gcc program.obj -o program.exe -nostdlib     -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt -ldxgi -ld3d11 -lhid     -e _start
+```
+
+Add `-mwindows` to the final link to suppress the console window for GUI-only
+programs.
+
+### 15.2 Bootstrap Pipeline
 
 ```
 .slag source
@@ -1179,7 +1212,7 @@ local int p = tex.perlin2d(x, y, freq, seed);  // Perlin noise
     → MinGW-w64 linker — links to PE executable
 ```
 
-### 15.2 Output Format
+### 15.3 Output Format
 
 - NASM format: `win64`
 - PE subsystem: `console`
@@ -1217,12 +1250,12 @@ make trimming safe; until then, link all eight.)
 Note: `dxgi.dll` and `d3d11.dll` ship with Windows, so no runtime install is
 needed by end users. The GPU runtime's vertex/pixel shaders are pre-compiled to
 DXBC bytecode and embedded directly in `gpu_runtime.c` as byte arrays, then
-emitted into every program's assembly and handed to D3D11 as raw bytecode — so
-neither building the compiler nor running a compiled program needs `fxc.exe`.
-`fxc.exe` (from the Windows SDK) is required only if a developer edits the HLSL
-shader source and regenerates those embedded DXBC blobs.
+emitted into every program's assembly and handed to D3D11 as raw bytecode. The
+GPU ubershader is a fixed, complete rendering pipeline baked into the runtime;
+it is not user-editable, so no shader toolchain (e.g. `fxc.exe`) is ever needed
+to build the compiler or run a compiled program.
 
-### 15.3 Self-Hosting Target
+### 15.4 Self-Hosting Target
 
 Once the language is expressive enough to implement its own lexer, parser, and code generator, the compiler will be rewritten in Slag. The bootstrap C compiler remains available as a fallback.
 
