@@ -7608,10 +7608,10 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    mov  rsi, rcx               ; src f32 verts");
     E("    mov  rdi, [_gpu_convbuf]");
     E("    mov  r11, rbx");
-    E("    imul r11, r11, 48           ; dst byte offset = startVertex*48");
+    E("    imul r11, r11, 64           ; dst byte offset = startVertex*64");
     E("    add  rdi, r11");
     E("    mov  rcx, r12");
-    E("    imul rcx, rcx, 6            ; qwords = vertexCount*6");
+    E("    imul rcx, rcx, 8            ; qwords = vertexCount*8");
     E("    rep  movsq");
     E("    pop  r12");
     E("    pop  rbx");
