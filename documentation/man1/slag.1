@@ -568,8 +568,8 @@ which is unchanged). Stages
 .I count
 triangles from one contiguous buffer
 .RI ( verts :
-3 verts/tri, 11 float32 each \(em x,y,z,u,v,r,g,b,a,slice,flag, 48-byte stride,
-built with
+3 verts/tri, 16 float32 each \(em x,y,z,u,v,r,g,b,a,slice,flag,nx,ny,nz,pad,pad,
+64-byte stride (6 input elements), built with
 .BR mem.pokef32 )
 via a straight bulk copy into the GPU vertex buffer (direct-F32: no int64\(->float
 convert). Positions are world-space and transformed by the
@@ -727,6 +727,27 @@ Store / load 8 bytes at a byte offset.
 Store a 32-bit float at a byte offset (narrowed from Slag's 64-bit
 double). Lets SIMD vec4 buffers be filled with readable float literals
 instead of hand-packed IEEE-754 bit patterns.
+.PP
+.B Shader/GPU buffers are 32-bit-float only.
+Every buffer handed to a
+.B gpu.*
+builtin or to
+.B fill_triangle_gpu
+(view-projection matrix, light view-projection matrix, light direction, clear
+color, vertex buffer) is read by Direct3D 11 as 32-bit floats. Build and read
+these buffers
+.B only
+with
+.BR mem.pokef32 / mem.peekf32 .
+.B Never
+use
+.BR mem.poke64 / mem.peek64
+for shader data: those store 8-byte integers, doubling the stride and shifting
+every field out of place, silently corrupting the matrix/vertex the shader reads
+(no error is raised). A 16-element matrix is 64 bytes; element
+.I i
+lives at byte offset
+.IR "i * 4" .
 .SS File I/O
 Handle-based file primitives plus path-based utility ops. Every path
 argument accepts either a string literal/variable or a runtime-built,

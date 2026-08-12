@@ -945,9 +945,14 @@ Per-face Lambertian lighting can be implemented in Slag: compute each face norma
 single general-purpose ("uber") vertex+pixel shader. It is distinct from the CPU
 `fill_triangle_*` rasterizers, which are unchanged.
 
-**Vertex format (direct-F32).** 11 **float32** per vertex, 48-byte stride:
-`x, y, z, u, v, r, g, b, a, slice, flag`, built directly with `mem.pokef32`. The
-runtime does a straight bulk copy into the GPU buffer — no int64→float convert.
+**Vertex format (direct-F32).** 16 **float32** per vertex, 64-byte stride,
+described by **6 input-layout elements** (widened from the former 5-element,
+48-byte vertex):
+`x, y, z, u, v, r, g, b, a, slice, flag, nx, ny, nz, pad, pad` — POSITION `x,y,z`,
+TEXCOORD0 `u,v`, COLOR `r,g,b,a`, TEXCOORD1 `slice`, TEXCOORD2 `flag`, and
+NORMAL `nx,ny,nz` (two trailing pad floats round the stride to 64). The whole
+64-byte vertex is supplied by the caller and built directly with `mem.pokef32`.
+The runtime does a straight bulk copy into the GPU buffer — no int64→float convert.
 Positions are world-space (transformed by the `gpu.set_viewproj` row-major 4×4
 matrix in the vertex shader). `u,v` are raw texel coordinates and `r,g,b,a` are
 0-255; **the vertex shader normalizes** (uv by the texture dimensions supplied in
@@ -1014,6 +1019,15 @@ at ~29.8M triangles. No fixed startup reservation.
     `mem.pokef32(a, 0, 1.0)`, instead of hand-packed IEEE-754 bit patterns
   - `mem.peekf32(ptr, byteoff)` — load a 32-bit float and widen it to a Slag
     64-bit double (`cvtss2sd`); complement of `mem.pokef32`
+- **Shader/GPU buffers are 32-bit-float only.** Every buffer handed to a `gpu.*`
+  builtin or to `fill_triangle_gpu` — the view-projection matrix, the light
+  view-projection matrix, the light direction, the clear color, and the vertex
+  buffer — is read by Direct3D 11 as 32-bit floats. Build and read these buffers
+  **only** with `mem.pokef32` / `mem.peekf32`. **Never** use `mem.poke64` /
+  `mem.peek64` for shader data: those write 8-byte integers, doubling the stride
+  and shifting every field out of place, which silently corrupts the matrix /
+  vertex the shader reads (no error is raised). A 16-element matrix is 16 × 4 = 64
+  bytes; element *i* lives at byte offset `i * 4`.
 - Accessors are **unchecked** and **inlined** — each `peek`/`poke` compiles to a single `mov` emitted directly at the call site (no function-call overhead), benchmarked at ~0.3 ns/op, comparable to native array access.
   Bounds are the programmer's responsibility (as in C). `alloc` returning `0`
   is the only built-in safety signal
@@ -1294,7 +1308,7 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `fill_triangle_affine(...)`     | PS1-style affine textured triangle (RGB565)        |
 | `fill_triangle_persp(...)`      | PS2-style perspective-correct textured triangle    |
 | `fill_triangle_pcolor(...)`     | Perspective-correct textured triangle, per-vertex color (CPU-optimized) |
-| `fill_triangle_gpu(verts,count,tex,w,h)` | Bulk GPU draw: world-space verts (11 float32/vertex: x,y,z,u,v,r,g,b,a,slice,flag; 48-byte stride, built with `mem.pokef32`) transformed by the view-projection matrix in-shader, depth-tested (CULL_BACK). VS normalizes uv/color. `tex` is a Texture2DArray (512×512 BGRA layers, layer count in high 32 bits of `w`); `slice` picks the layer (negative `slice` = SDF text). `flag` gates per-vertex fog; negative `flag` = billboard-point mode (camera-facing expansion). Persistent: same verts/count redraws without re-upload. Buffers grow on demand (initial 65536 tris, up to ~29.8M/draw) |
+| `fill_triangle_gpu(verts,count,tex,w,h)` | Bulk GPU draw: world-space verts (16 float32/vertex: x,y,z,u,v,r,g,b,a,slice,flag,nx,ny,nz,pad,pad; 64-byte stride, 6 input elements, built with `mem.pokef32`) transformed by the view-projection matrix in-shader, depth-tested (CULL_BACK). VS normalizes uv/color. `tex` is a Texture2DArray (512×512 BGRA layers, layer count in high 32 bits of `w`); `slice` picks the layer (negative `slice` = SDF text). `flag` gates per-vertex fog; negative `flag` = billboard-point mode (camera-facing expansion). Persistent: same verts/count redraws without re-upload. Buffers grow on demand (initial 65536 tris, up to ~29.8M/draw) |
 | `gpu.detect()`                  | Scan all adapters, select best (discrete preferred); returns vendor 1=Intel/2=AMD/3=NVIDIA/0=none |
 | `gpu.vendor()`                  | Cached vendor code from the last `gpu.detect()` (no re-probe) |
 | `gpu.init()`                    | Create device/swapchain/depth/pipeline on the selected adapter; 1 on success |

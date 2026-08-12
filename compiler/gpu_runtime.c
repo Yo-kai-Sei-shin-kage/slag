@@ -1353,7 +1353,7 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
 static void emit_gpu_stage_init(Codegen *cg) {
     E("GPU_STAGE_TRI    equ 192");        // raw bytes per staged triangle
     E("GPU_STAGE_CAP    equ 65536");      // INITIAL triangle capacity; _gpu_cap grows on demand (_slag_gpu_grow). vbuf ByteWidth is a 32-bit dword = cap*144, so a single buffer tops out ~29.8M tris.
-    E("GPU_VTX_STRIDE   equ 64");         // float vertex: pos3 + uv2 + col4 + slice + flag (11 f32)
+    E("GPU_VTX_STRIDE   equ 64");         // float vertex: pos3 + uv2 + col4 + slice + flag + nrm3 + pad2 (16 f32)
     E("MAP_WR_DISCARD   equ 4");
     E("TOPOLOGY_TRILIST equ 4");
     E("");
@@ -1804,7 +1804,7 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    mov  rsi, [_gpu_convbuf]");
     E("    mov  rdi, [rsp+0x40]        ; mapped.pData");
     E("    mov  rcx, r13");
-    E("    imul rcx, GPU_VTX_STRIDE / 4  ; dwords = verts * stride / 4 (48B -> verts*12)");
+    E("    imul rcx, GPU_VTX_STRIDE / 4  ; dwords = verts * stride / 4 (64B -> verts*16)");
     E("    rep  movsd");
 
     // Unmap vertex buffer (the same double-buffered vbuf mapped above)

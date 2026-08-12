@@ -1532,9 +1532,9 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit_user_call(cg, "slag_fill_triangle_pcolor", args);
         } else if (strcmp(name, "fill_triangle_gpu") == 0) {
             // fill_triangle_gpu(verts, count, tex_ptr, tex_w, tex_h)
-            // Bulk GPU path: stage `count` triangles (contiguous 192B/tri int64
-            // verts) in one call, converting to float32 directly into the GPU
-            // stage buffer. No-op when no GPU device is live. pcolor untouched.
+            // Bulk GPU path: stage `count` triangles (contiguous 192B/tri =
+            // 3 x 64B float32 verts, GPU-ready) in one call, bulk-copied into the
+            // GPU stage buffer (no convert). No-op when no GPU device is live. pcolor untouched.
             emit(cg, "    ; fill_triangle_gpu()");
             cg->used_runtimes |= RT_GPU;
             emit_user_call(cg, "slag_fill_triangle_gpu", args);

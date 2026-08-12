@@ -7506,9 +7506,9 @@ void emit_window_imports(Codegen *cg) {
 // ---------------------------------------------------------------------
 // Top-level emitter
 // _slag_fill_triangle_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h)
-// Bulk GPU path (direct-F32): `verts` is GPU-ready float32 vertices, 48B/vertex
-// (11 f32: x,y,z,u,v,r,g,b,a,slice,flag) built with mem.pokef32, matching the GPU
-// vertex layout. Records the texture + count, flags the frame prebuilt (so present
+// Bulk GPU path (direct-F32): `verts` is GPU-ready float32 vertices, 64B/vertex
+// (16 f32: x,y,z,u,v,r,g,b,a,slice,flag,nx,ny,nz,pad,pad) built with mem.pokef32,
+// matching the GPU vertex layout. Records the texture + count, flags the frame prebuilt (so present
 // skips its own convert), then bulk-copies the batch into _gpu_convbuf with a
 // single rep movsq -- no int64->f32 convert, no normalization on the CPU (the VS
 // divides u,v by the texture dims and rgba by 255; flag gates per-vertex fog).
@@ -7575,7 +7575,7 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    mov  r11, [_gpu_draw_cnt]");
     E("    cmp  r11, 16");
     E("    jae  .ftg_ret               ; too many draws this frame -> drop");
-    // dst vertex offset (verts, not tris) = _gpu_stage_off; byte offset = *48.
+    // dst vertex offset (verts, not tris) = _gpu_stage_off; byte offset = *64.
     E("    mov  rbx, [_gpu_stage_off]  ; startVertex (rbx is callee-saved; restore below)");
     // vertexCount for this item = tri count * 3
     E("    mov  r12, rax");
@@ -7601,8 +7601,8 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    mov  [_gpu_up_count], rdx");
     E("    mov  qword [_gpu_up_valid], 0");
     E(".ftg_do_copy:");
-    // Copy verts into convbuf at byte offset startVertex*48. rcx=src verts.
-    // qwords = vertexCount * 48 / 8 = vertexCount * 6.
+    // Copy verts into convbuf at byte offset startVertex*64. rcx=src verts.
+    // qwords = vertexCount * 64 / 8 = vertexCount * 8.
     E("    push rbx");
     E("    push r12");
     E("    mov  rsi, rcx               ; src f32 verts");

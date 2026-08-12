@@ -709,21 +709,23 @@ gpu.clear(cbuf);
 gpu.set_blend(1);
 
 ## fill_triangle_gpu(verts, count, tex_ptr, tex_w, tex_h)
-## verts: count*3 vertices, each 11 float32 (48-byte stride), built DIRECTLY
-## with mem.pokef32 (no int64->float convert): x,y,z, u,v, r,g,b,a, slice, flag.
+## verts: count*3 vertices, each 16 float32 (64-byte stride), built DIRECTLY
+## with mem.pokef32 (no int64->float convert): x,y,z, u,v, r,g,b,a, slice, flag,
+## nx,ny,nz, pad, pad.
 ##   - positions are WORLD-space (transformed by set_viewproj in the shader)
 ##   - u,v are raw texel coords; r,g,b,a are 0-255 -- the shader normalizes both
 ##   - slice: Texture2DArray layer (512x512 BGRA); NEGATIVE slice = SDF text mode
 ##   - flag: 1 disables per-vertex fog, 0 = full fog; NEGATIVE flag = billboard
 ##     point mode (camera-facing expansion)
+##   - nx,ny,nz: vertex normal; the last 2 floats are padding to round to 64B
 ## tex_w packs the layer count in its high 32 bits: texw | (nlayers << 32).
-## Stage one triangle's 33 floats (3 verts x 11) from an array + loop:
+## Stage one triangle's 48 floats (3 verts x 16) from an array + loop:
 local float[] tri = {
-    x0, y0, z0, u0, v0, r0, g0, b0, a0, 0.0, 0.0,
-    x1, y1, z1, u1, v1, r1, g1, b1, a1, 0.0, 0.0,
-    x2, y2, z2, u2, v2, r2, g2, b2, a2, 0.0, 0.0
+    x0, y0, z0, u0, v0, r0, g0, b0, a0, 0.0, 0.0, nx0, ny0, nz0, 0.0, 0.0,
+    x1, y1, z1, u1, v1, r1, g1, b1, a1, 0.0, 0.0, nx1, ny1, nz1, 0.0, 0.0,
+    x2, y2, z2, u2, v2, r2, g2, b2, a2, 0.0, 0.0, nx2, ny2, nz2, 0.0, 0.0
 };
-local int gverts = mem.alloc(144);   // 3 verts * 48-byte stride
+local int gverts = mem.alloc(192);   // 3 verts * 64-byte stride
 local int gi = 0;
 while (gi < tri.len) {
     mem.pokef32(gverts, gi * 4, tri[gi]);
