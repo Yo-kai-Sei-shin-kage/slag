@@ -1575,7 +1575,6 @@ function main() {
 | 0.13.3  | Full audio runtime (`audio.init/close/load/free/play/loop/stop/volume/pan/master_volume/is_playing/position`): 32-slot software mixer over waveOut, RIFF/WAVE parsing with automatic `smpl`-chunk loop-point support | ✅ Complete |
 | 0.13.4  | Bilinear texture filtering (4-tap weighted average) for `fill_triangle_persp`/`fill_triangle_pcolor` | ✅ Complete |
 | 0.13.5  | `file.make`/`file.rmdir`; file.* path args + `audio.load` accept runtime byte-buffer pointers (not just str literals); `window.textbuf` (draw a runtime byte buffer as text); keyboard handlers deliver translated characters (compare against char/named-key literals like `"a"`/`"esc"`/`"left"`); compiler emits a single `compiled successfully` line. **Bug fix:** `emit_user_call` 16-byte stack-alignment fix for odd-argument-count (1 or 3) user calls that reach a Win32 API | ✅ Complete |
-| 0.14    | Full near-plane geometric clipping (Sutherland-Hodgman, distinct from the 0.13.2 cull safety net) | 🔲 Planned  |
 | 0.15    | Encrypted P2P: ECDH P-256 key exchange + AES-256-CBC via CNG (`crypto.*`); non-blocking exact-length message reassembly (`net.recv_buf_exact`/`net.server_recv_buf_exact`) for framed/encrypted payloads. **Bug fix:** unescaped `%` in the window runtime's shifted-key table that broke `cg_emit`'s `vfprintf` | ✅ Complete |
 | 0.15.1  | File-scope `on` handlers (declarable at top level, not only inside a function body); key comparison against a global `str[]` element at a compile-time constant index (`key == keys[0]`) folds to the key code, with an unrecognized name now a compile-time error | ✅ Complete |
 | 0.15.2  | iGPU auto-dispatch for `fill_triangle_pcolor` (D3D11/DXGI, Intel/AMD auto-detect via `gpu.*`); `window.set_title` for live title-bar updates. **PS2-era triangle throughput reached**: ~9.1M tris/sec on an AMD Vega 8 iGPU (100k `pcolor` tris/frame @ ~91 FPS). **Bug fix:** GPU vertex convert wrote scattered stores into write-combined mapped memory (pathologically slow); now converts into a cached scratch buffer and bulk-copies via `rep movsq` | ✅ Complete |
@@ -1620,7 +1619,6 @@ PS2-era software rendering at 60fps. Current pipeline status:
   it fixed, static geometry uploads once and redraws resident.
 
 **Planned:**
-- Near-plane triangle clipping (Sutherland-Hodgman) — 0.14
 - Fog, lighting, and shadows are handled per-vertex in Slag script via
   `fill_triangle_gpu`/`fill_triangle_pcolor` color modulation (e.g. the terrain
   demo); no built-in fog stage planned — keeps the hot loop free of per-pixel

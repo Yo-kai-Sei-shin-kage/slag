@@ -3015,6 +3015,19 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  [_gpu_lightdir], rax");
             }
         }
+        // gpu.set_lights(ptr, count) -> dynamic point-light set for the PS
+        // StructuredBuffer at t1. ptr = count Light structs, each 32 bytes:
+        // pos.xyz (3 f32), color.rgb (3 f32), range (f32), castShadows (i32).
+        // count is written into the cbuffer (lightCount @176) each frame.
+        else if (strcmp(member, "set_lights") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.set_lights");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_gpu_lights_ptr], rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  [_gpu_lights_cnt], rax");
+            }
+        }
         // gpu.clear(ptr) -> set the GPU clear color; ptr is a buffer of 4 f32
         // (R,G,B,A) built with mem.alloc + mem.pokef32. Overrides the fog color.
         else if (strcmp(member, "clear") == 0 && strcmp(base, "gpu") == 0) {
