@@ -1538,6 +1538,16 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    ; fill_triangle_gpu()");
             cg->used_runtimes |= RT_GPU;
             emit_user_call(cg, "slag_fill_triangle_gpu", args);
+        } else if (strcmp(name, "fill_patch_gpu") == 0) {
+            // fill_patch_gpu(verts, patchCount, tex_ptr, tex_w, tex_h)
+            // Tessellated path: verts are 3-control-point patches (64B/vertex, same
+            // layout as fill_triangle_gpu). Distance-adaptive HS/DS LOD on-GPU. The
+            // staging proc marks the draw item so present routes it to the patchlist
+            // + Hull/Domain pipeline. Falls back to a tri draw if the tess stages
+            // failed to create. No-op when no GPU device is live.
+            emit(cg, "    ; fill_patch_gpu()");
+            cg->used_runtimes |= RT_GPU;
+            emit_user_call(cg, "slag_fill_patch_gpu", args);
         } else if (strcmp(name, "zbuffer") == 0) {
             emit(cg, "    ; zbuffer stub");
         } else {
@@ -3015,6 +3025,20 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    mov  [_gpu_lightdir], rax");
             }
         }
+        // gpu.set_lightproj_array(ptr, count) -> N per-light view-projection matrices
+        // for multi-light shadow mapping. ptr = count * 64 bytes (count row-major 4x4
+        // lightVP matrices, matrix i for light i). Uploaded to a StructuredBuffer at
+        // t5 and used to render count shadow depth passes (one per casting light) and
+        // to sample per-light in the PS. Capped at SHADOW_MAX(16) slices by the runtime.
+        else if (strcmp(member, "set_lightproj_array") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.set_lightproj_array");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_gpu_lightvp_arr], rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  [_gpu_lightvp_cnt], rax");
+            }
+        }
         // gpu.set_lights(ptr, count) -> dynamic point-light set for the PS
         // StructuredBuffer at t1. ptr = count Light structs, each 32 bytes:
         // pos.xyz (3 f32), color.rgb (3 f32), range (f32), castShadows (i32).
@@ -3044,6 +3068,101 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             if (args->count >= 1) {
                 emit_int_expr(cg, args->items[0]);
                 emit(cg, "    mov  [_gpu_blend_mode], rax");
+            }
+        }
+        // gpu.set_tess(ptr) -> point the tessellation cbuffer tail (@192) at 8 f32:
+        // tessScale, tessMax, dispScale, useNormMap, dispTexel.x, dispTexel.y, pad, pad.
+        // tessScale = world units per +1 factor (smaller = denser); tessMax = factor
+        // clamp; dispScale = world displacement per unit height; useNormMap = 1 to
+        // sample the normal map, 0 to finite-difference the height map; dispTexel =
+        // (1/w, 1/h) of the displacement map. Zero ptr disables amplification.
+        else if (strcmp(member, "set_tess") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.set_tess");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  [_gpu_tess_ptr], rax");
+            }
+        }
+        // gpu.set_dispmap(ptr, w, h) -> upload a w*h R32F height map (ptr = w*h
+        // float32 values) and bind it at the Domain shader's t3 for displacement.
+        // Creates the texture on first call / dim change; re-uploads each call.
+        // Args land in r12/r13/r14 (callee-saved); stage via the stack to avoid clobber.
+        else if (strcmp(member, "set_dispmap") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.set_dispmap");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax");
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_gpu_set_dispmap");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // gpu.set_normmap(ptr, w, h) -> upload a w*h RGBA8 normal map (rgb = N*0.5+0.5)
+        // and bind it at the Domain shader's t4. Set useNormMap=1 in the tess params
+        // so the DS reads it instead of finite-differencing (removes patch-seam
+        // shading discontinuities). Args -> r12/r13/r14, staged via the stack.
+        else if (strcmp(member, "set_normmap") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.set_normmap");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax");
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_gpu_set_normmap");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // gpu.physics_init() -> create the 4 physics compute shaders (once).
+        else if (strcmp(member, "physics_init") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.physics_init");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call _slag_gpu_physics_init");
+            emit(cg, "    add  rsp, 32");
+        }
+        // gpu.physics_step(bodies_ptr, count, params_ptr) -> run the GPU-resident
+        // 4-pass rigid-body solver. Args land in r12/r13/r14 (callee-saved) for the
+        // runtime proc; evaluate each to rax and stage on the stack to avoid clobber.
+        else if (strcmp(member, "physics_step") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.physics_step");
+            if (args->count >= 3) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[2]);
+                emit(cg, "    mov  r14, rax");
+                emit(cg, "    pop  r13");
+                emit(cg, "    pop  r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_gpu_physics_step");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // gpu.physics_read(dest_ptr, count) -> copy the GPU-resident bodies buffer
+        // back into the caller's CPU buffer (dest_ptr) so Slag can read positions.
+        // Args land in r12/r13 (callee-saved); stage via the stack to avoid clobber.
+        else if (strcmp(member, "physics_read") == 0 && strcmp(base, "gpu") == 0) {
+            emit(cg, "    ; gpu.physics_read");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit(cg, "    pop  r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_gpu_physics_read");
+                emit(cg, "    add  rsp, 32");
             }
         }
         // bit.shl(value, count) -> int (left shift)
@@ -5780,6 +5899,7 @@ static void scan_expr(Codegen *cg, const Expr *e) {
             const char *n = e->as.call.name;
             // Free graphics builtins pull in a runtime with no namespace base.
             if (strcmp(n, "fill_triangle_gpu") == 0) cg->used_runtimes |= RT_GPU;
+            else if (strcmp(n, "fill_patch_gpu") == 0) cg->used_runtimes |= RT_GPU;
             else if (strncmp(n, "fill_triangle", 13) == 0 || strcmp(n, "pixel") == 0)
                 cg->used_runtimes |= RT_WINDOW;
             scan_exprlist(cg, &e->as.call.args);

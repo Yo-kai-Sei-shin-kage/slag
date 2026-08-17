@@ -27,7 +27,9 @@ runtime modules a program actually references, so unused subsystems add nothing 
 - Encrypted P2P: ECDH key exchange + AES via CNG (`crypto.*`)
 - Windowing and software-rendered graphics: pixels, textured/shaded/z-buffered triangle
   rasterization, keyboard/mouse input, meshes (`mesh.*`), procedural textures (`tex.*`)
-- GPU-accelerated rendering via Direct3D 11 (`gpu.*`), matrix stack (`mat.*`), SIMD ops (`simd.*`)
+- GPU-accelerated 3D via Direct3D 11 (`gpu.*`): per-pixel lit ubershader with unlimited dynamic
+  point lights, multi-light PCF shadow maps, hardware tessellation + displacement, and a
+  GPU-resident rigid-body physics solver; plus matrix stack (`mat.*`) and SIMD ops (`simd.*`)
 - HID gamepad input for any controller (`gpad.*`, `on gpad_button`)
 - CPU topology and SIMD feature detection
 

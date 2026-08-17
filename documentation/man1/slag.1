@@ -554,12 +554,144 @@ camera, same layout as
 and
 .I dir_ptr
 to 3 float32 giving the world-space light direction. When set, each frame
-runs a depth-only shadow pass from the light's point of view into a
-2048x2048 shadow map, then the main pass samples it (3x3 PCF) for per-pixel
+runs a depth-only shadow pass from the light's point of view into slice 0 of a
+1024x1024 shadow-map array, then the main pass samples it (3x3 PCF) for per-pixel
 N\(bulL diffuse plus shadowing on lit faces; UI, text, and unlit geometry are
 untouched. Passing a zero
 .I mat_ptr
 disables shadows (the default \(em geometry renders unlit/fog-shaded as before).
+This is the single-light path; for many shadow-casting lights use
+.BR gpu.set_lightproj_array .
+.TP
+.BI gpu.set_lightproj_array( ptr , " count" )
+Enable multi-light shadow mapping.
+.I ptr
+points to
+.I count
+row-major light view-projection matrices (16 float32 each, 64-byte stride;
+matrix
+.I i
+is the shadow camera for light
+.IR i ).
+Each frame renders
+.I count
+depth passes, one per light into its own slice of a 1024x1024 R32 shadow-map
+array (matrix
+.I i
+\(-> slice
+.IR i ),
+and the pixel shader projects each lit fragment into every casting light's clip
+space, sampling that light's slice with 3x3 PCF so every light casts its own
+shadow. Slice count is capped at
+.B SHADOW_MAX
+(32); passes only run for lights actually supplied, so unused capacity is free.
+Pair with
+.B gpu.set_lights
+for the diffuse contribution of each light.
+.TP
+.BI gpu.set_lights( ptr , " count" )
+Upload the dynamic point-light set sampled by the
+.B fill_triangle_gpu
+pixel shader (a StructuredBuffer at t1, so the count is not capped by the
+cbuffer).
+.I ptr
+points to
+.I count
+Light structs, 32 bytes each:
+.I pos.xyz
+(3 f32),
+.I color.rgb
+(3 f32),
+.I range
+(f32 radial falloff radius),
+.I castShadows
+(i32, nonzero \(-> modulated by this light's shadow map). Lit geometry
+(per-vertex
+.I flag
+= 2) accumulates every light's inverse-square diffuse; the number of point
+lights is unlimited (only shadow-casting lights are bounded by
+.BR SHADOW_MAX ).
+.TP
+.BI gpu.set_tess( ptr )
+Point the tessellation parameter tail at 8 float32
+.RI ( tessScale ,
+.IR tessMax ,
+.IR dispScale ,
+.IR useNormMap ,
+.I dispTexel.x
+,
+.IR dispTexel.y ,
+pad, pad). Enables distance-adaptive hardware tessellation for
+.B fill_patch_gpu
+patches:
+.I tessScale
+= world units per +1 subdivision factor (smaller = denser),
+.I tessMax
+= factor clamp,
+.I dispScale
+= world displacement per unit height,
+.I useNormMap
+= 1 to sample the bound normal map (else finite-difference the height map).
+A zero
+.I ptr
+disables amplification.
+.TP
+.BI gpu.set_dispmap( ptr , " w" , " h" )
+Upload a
+.IR w \(mu h
+R32F height map (
+.I ptr
+= w*h float32) and bind it at the domain shader (t3) for displacement during
+.BR fill_patch_gpu .
+The texture is created on the first call or on a dimension change and
+re-uploaded each call.
+.TP
+.BI gpu.set_normmap( ptr , " w" , " h" )
+Upload a
+.IR w \(mu h
+RGBA8 normal map (rgb =
+.IR N *0.5+0.5) and bind it at the domain shader (t4).
+Set
+.I useNormMap
+= 1 in the
+.B gpu.set_tess
+params so the domain shader reads it instead of finite-differencing the height
+map (removes patch-seam shading discontinuities).
+.TP
+.BI fill_patch_gpu( verts , " patchCount" , " tex_ptr" , " tex_w" , " tex_h" )
+Tessellated GPU draw path. Same vertex layout as
+.B fill_triangle_gpu
+(64-byte, 16 float32) but
+.I verts
+are 3-control-point patches; the hull/domain stages apply distance-adaptive LOD
+and displacement per
+.BR gpu.set_tess / gpu.set_dispmap / gpu.set_normmap .
+Falls back to a triangle draw if the tessellation stages failed to create; a
+no-op when no GPU device is live.
+.TP
+.BI gpu.physics_init()
+Create the four rigid-body physics compute shaders (integrate, clear, resolve,
+apply). Idempotent \(em safe to call once at startup.
+.TP
+.BI gpu.physics_step( bodies_ptr , " count" , " params_ptr" )
+Run the GPU-resident rigid-body solver for
+.I count
+bodies (96-byte RigidBody structs at
+.IR bodies_ptr )
+with world parameters at
+.I params_ptr
+(gravity, dt, damping, ground plane, static sphere colliders, sleep thresholds,
+optional walls). Bodies stay GPU-resident between steps; the buffer is created
+or grown on the first call or when
+.I count
+increases. Integrates motion, resolves ground/static-sphere/body-vs-body
+collision (all-pairs, sphere colliders), and handles sleep/wake.
+.TP
+.BI gpu.physics_read( dest_ptr , " count" )
+Copy the GPU-resident bodies buffer back into the caller's CPU buffer
+.RI ( dest_ptr ,
+.I count
+\(mu 96 bytes) so Slag can read updated positions/orientations for rendering.
 .TP
 .BI fill_triangle_gpu( verts , " count" , " tex_ptr" , " tex_w" , " tex_h" )
 Bulk GPU draw path (separate from the CPU-optimized

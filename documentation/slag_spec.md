@@ -1317,7 +1317,16 @@ Once the language is expressive enough to implement its own lexer, parser, and c
 | `gpu.set_viewproj(ptr)`         | Set the 4x4 row-major view-projection matrix (16 floats) for `fill_triangle_gpu` |
 | `gpu.clear(ptr)`                | Set the GPU clear/background color; `ptr` = 4 f32 (R,G,B,A) from `mem.pokef32` |
 | `gpu.set_blend(mode)`           | GPU blend mode: 0 = opaque (default), 1 = straight alpha (uses per-vertex `a`) |
-| `gpu.set_lightproj(mat,dir)`    | Enable shadow-mapped diffuse lighting for lit geometry (per-vertex `flag`=2): `mat` = 16 f32 light view-projection, `dir` = 3 f32 light direction; 2048² shadow map + 3×3 PCF. Zero `mat` disables |
+| `gpu.set_lightproj(mat,dir)`    | Single-light shadow map for lit geometry (per-vertex `flag`=2): `mat` = 16 f32 light view-projection, `dir` = 3 f32 light direction; rendered into slice 0 of a 1024²×32 R32 shadow array, sampled 3×3 PCF. Zero `mat` disables. For many lights use `gpu.set_lightproj_array` |
+| `gpu.set_lightproj_array(ptr,count)` | Multi-light shadow maps: `ptr` = `count` row-major light view-projection matrices (16 f32 / 64 B each; matrix `i` → shadow slice `i`). Renders `count` depth passes into a 1024²×32 R32 shadow array and samples each light's slice with 3×3 PCF in the PS, so every casting light casts its own shadow. Capped at `SHADOW_MAX`=32; passes run only for supplied lights. Pair with `gpu.set_lights` |
+| `gpu.set_lights(ptr,count)`     | Dynamic point-light set (PS StructuredBuffer @t1, count uncapped): `ptr` = `count` Light structs, 32 B each — `pos.xyz` (3 f32), `color.rgb` (3 f32), `range` (f32), `castShadows` (i32). Lit geometry accumulates every light's inverse-square diffuse; only shadow-casters bounded by `SHADOW_MAX` |
+| `gpu.set_tess(ptr)`             | Tessellation params for `fill_patch_gpu`: 8 f32 — `tessScale` (world units/+1 factor), `tessMax` (clamp), `dispScale` (world displacement/height), `useNormMap` (1=sample normal map), `dispTexel.x/y`, pad, pad. Zero `ptr` disables amplification |
+| `gpu.set_dispmap(ptr,w,h)`      | Upload a `w`×`h` R32F height map (`ptr` = w*h f32) and bind at the domain shader (t3) for `fill_patch_gpu` displacement; created/re-uploaded per call |
+| `gpu.set_normmap(ptr,w,h)`      | Upload a `w`×`h` RGBA8 normal map (rgb = N*0.5+0.5) at the domain shader (t4); set `useNormMap`=1 in `gpu.set_tess` so the DS reads it instead of finite-differencing |
+| `fill_patch_gpu(verts,patchCount,tex,w,h)` | Tessellated GPU draw: same 64-B vertex layout as `fill_triangle_gpu`, but `verts` are 3-control-point patches with distance-adaptive hull/domain LOD + displacement. Falls back to triangle draw if tess stages absent; no-op without a GPU device |
+| `gpu.physics_init()`            | Create the 4 rigid-body physics compute shaders (integrate/clear/resolve/apply). Idempotent |
+| `gpu.physics_step(bodies,count,params)` | Run the GPU-resident rigid-body solver: `bodies` = `count` 96-B RigidBody structs, `params` = world cbuffer (gravity, dt, damping, ground, static sphere colliders, sleep, walls). Bodies stay GPU-resident (created/grown on demand); integrates + resolves ground/sphere/body-vs-body collision + sleep/wake |
+| `gpu.physics_read(dest,count)`  | Copy the GPU-resident bodies buffer back to CPU (`dest`, `count`×96 B) for reading updated positions/orientations |
 | `gpad.lx/ly/rx/ry()`            | Left/right analog stick axis, signed −32768..32767 (polled) |
 | `gpad.lt/rt()`                  | Left/right trigger, 0..32767 (polled) |
 | `on gpad_button(id,down)`       | HID button event (edge-diffed): `id` 0-based, `down` bool press/release |
@@ -1579,6 +1588,7 @@ function main() {
 | 0.15.1  | File-scope `on` handlers (declarable at top level, not only inside a function body); key comparison against a global `str[]` element at a compile-time constant index (`key == keys[0]`) folds to the key code, with an unrecognized name now a compile-time error | ✅ Complete |
 | 0.15.2  | iGPU auto-dispatch for `fill_triangle_pcolor` (D3D11/DXGI, Intel/AMD auto-detect via `gpu.*`); `window.set_title` for live title-bar updates. **PS2-era triangle throughput reached**: ~9.1M tris/sec on an AMD Vega 8 iGPU (100k `pcolor` tris/frame @ ~91 FPS). **Bug fix:** GPU vertex convert wrote scattered stores into write-combined mapped memory (pathologically slow); now converts into a cached scratch buffer and bulk-copies via `rep movsq` | ✅ Complete |
 | 0.16.0  | GPU shader path recovered to HLSL source (`shaders/`), vertex COLOR widened RGB→RGBA (per-vertex alpha); `gpu.clear(ptr)` for GPU clear/background color; `gpu.set_blend(mode)` straight-alpha output-merger blending for `fill_triangle_gpu` | ✅ Complete |
+| 0.17.0  | **Full 3D GPU pipeline.** Ubershader lit/shadow path for `fill_triangle_gpu` geometry (`flag`=2): per-pixel geometric normals, dynamic point-light diffuse with inverse-square falloff (`gpu.set_lights`, uncapped light count), and hardware 3×3 PCF shadow mapping. **Multi-light shadows:** `gpu.set_lightproj_array(ptr,count)` renders one depth pass per light into a 1024²×`SHADOW_MAX`(32)-slice R32 shadow array; the PS samples each casting light's own slice, so every light casts a distinct shadow (single-light `gpu.set_lightproj` retained, slice 0). **Tessellation:** `fill_patch_gpu` with distance-adaptive hull/domain LOD, `gpu.set_tess`/`gpu.set_dispmap`/`gpu.set_normmap` for displacement + normal mapping. **GPU physics:** `gpu.physics_init`/`physics_step`/`physics_read` — GPU-resident rigid-body solver (semi-implicit Euler, quaternion orientation, ground/static-sphere/all-pairs body-vs-body collision with friction + Baumgarte, sleep/wake). **Shader build:** `shaders/shaders.sh` compiles all HLSL with FXC and regenerates `gpu_shader_blobs.inc` (NASM `db` blobs) atomically. **Bug fix:** VS shadow-depth-pass gate hijacked the multi-light main pass (`shadowPass`=2.0 tripped `>0.5`) → blank screen; gated to the 1.0 depth window | ✅ Complete |
 | 0.98    | **Language:** `for` loops (C-style `for (init; cond; post)`, one-";" range-decl, count `for i in a..b`, and constant bracket-product `for i in [a..b, c..d]`); `break`/`continue`; 64-bit int literals; buffered stdout; runtime global initializers. **Compiler:** on-demand runtime emission — an AST pre-scan selects only the runtime modules a program references (WINDOW⇄GPU, WINDOW→GAMEPAD, NET⇄SERVER coupled as linkage units), collapsing console-only programs by ~8× of generated assembly and cutting NASM time accordingly. **Docs:** `mem.peekf32`; build environment/toolchain section (Cygwin, MinGW-w64, NASM) | ✅ Complete |
 | 0.99    | **GPU:** `fill_triangle_gpu` vertex is direct-F32 — 11 float32 per vertex, 48-byte stride (`x,y,z,u,v,r,g,b,a,slice,flag`, built with `mem.pokef32`, bulk-copied with no int64→float convert); per-vertex Texture2DArray slice (512×512 BGRA, 256 layers), negative slice selects SDF text mode (linear-sampled distance field, smoothstep glyph alpha) in the same draw call; negative `flag` selects billboard-point mode (camera-facing expansion); per-vertex RGBA alpha with `gpu.set_blend` straight-alpha blending; `gpu.clear(ptr)` GPU background color; fog constants live in the `gpu.set_viewproj` cbuf for runtime-dynamic fog; persistent vertex buffers skip re-upload on identical resubmit; grow-on-demand vertex/scratch buffers (initial 65536 tris, up to ~29.8M/draw). **Language:** `str[]` string arrays (local & global) — indexed read/write from anywhere, brace initializers, parallel ptr/len storage; `bit.xor` (bitwise XOR); `^^` logical XOR operator; `bool` values print as `true`/`false` (not `0`/`1`); float formatting rounds to nearest 6th decimal (`3.3` → `3.300000`, was `3.299999`). **Bug fixes:** `calculate_frame_size` under-reserved stack for `str[]` locals (clobbered the next local via call shadow space); global `str[]` element literals now interned before the string-constant pool flush (fixed undefined `_str*` labels); `_gpu_up_valid` persistence bug (every persistent-geometry program silently re-staged each frame) | ✅ Complete |
 | 1.0     | Self-hosting compiler bootstrap                             | 🔲 Planned  |
@@ -1618,12 +1628,19 @@ PS2-era software rendering at 60fps. Current pipeline status:
   persistent-geometry program silently re-stage the full buffer each frame; with
   it fixed, static geometry uploads once and redraws resident.
 
-**Planned:**
-- Fog, lighting, and shadows are handled per-vertex in Slag script via
-  `fill_triangle_gpu`/`fill_triangle_pcolor` color modulation (e.g. the terrain
-  demo); no built-in fog stage planned — keeps the hot loop free of per-pixel
-  special-casing
+**GPU lighting/shadow pipeline (complete):**
+- The `fill_triangle_gpu` ubershader does per-pixel diffuse lighting and shadow
+  mapping in HLSL for lit geometry (`flag`=2): per-pixel geometric normals from
+  `ddx/ddy(worldPos)`, unlimited dynamic point lights (`gpu.set_lights`) with
+  inverse-square falloff, and hardware 3×3 PCF shadows. Multi-light shadows via
+  `gpu.set_lightproj_array` render one depth pass per casting light into a
+  1024²×32-slice R32 shadow array (cap `SHADOW_MAX`=32), each light sampling its
+  own slice. Fog remains a per-vertex cbuffer stage (distance fog in the VS),
+  disabled on lit geometry so the PS owns its shading.
+- Distance-adaptive hardware tessellation + displacement (`fill_patch_gpu`,
+  `gpu.set_tess`/`set_dispmap`/`set_normmap`) and a GPU-resident rigid-body
+  physics solver (`gpu.physics_*`) round out the 3D pipeline.
 
 ---
 
-*Slag Language Specification v0.99 — Subject to revision*
+*Slag Language Specification v0.17.0 — Subject to revision*

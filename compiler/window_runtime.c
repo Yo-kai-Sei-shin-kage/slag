@@ -7515,8 +7515,24 @@ void emit_window_imports(Codegen *cg) {
 // No CPU culling -- the D3D11 rasterizer culls backfaces on the GPU. No-op when
 // no device is live.
 static void emit_fill_triangle_gpu(Codegen *cg) {
+    E("; --- _slag_fill_patch_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h) ---");
+    E("; Tessellated variant: verts are PATCH control points (3 per patch, count =");
+    E("; patch count), 64B/vertex, same layout. Sets bit63 of the item vertexCount so");
+    E("; present routes it through the patchlist + HS/DS path. Shares the whole body");
+    E("; with fill_triangle_gpu below (only the mark differs).");
+    E("_slag_fill_patch_gpu:");
+    // bit63 is a 64-bit immediate: mov [mem],imm only encodes a 32-bit
+    // sign-extended immediate, so stage it through a register.
+    E("    mov  rax, 0x8000000000000000");
+    E("    mov  [_gpu_patch_mark], rax");
+    E("    jmp  _slag_fill_gpu_body");
     E("; --- _slag_fill_triangle_gpu(rcx=verts, rdx=count, r8=tex_ptr, r9=tex_w, [rsp+40]=tex_h) ---");
     E("_slag_fill_triangle_gpu:");
+    E("    mov  qword [_gpu_patch_mark], 0");
+    // Global label (not .local) so both entry points above can reach it: a NASM
+    // local label binds to its preceding non-local label, which would scope it to
+    // only one entry.
+    E("_slag_fill_gpu_body:");
     // Save callee-saved rbx/r12 (used by the draw-list append below). 2 pushes ->
     // the 5th stack arg tex_h moves from [rsp+40] to [rsp+56].
     E("    push rbx");
@@ -7623,7 +7639,11 @@ static void emit_fill_triangle_gpu(Codegen *cg) {
     E("    lea  rax, [_gpu_draw_items]   ; base separately (avoid ADDR32 [sym+reg] reloc)");
     E("    add  r11, rax");
     E("    mov  [r11 + 0],  rbx        ; startVertex");
-    E("    mov  [r11 + 8],  r12        ; vertexCount");
+    // OR the patch mark (bit63, set by the fill_patch_gpu entry) into vertexCount;
+    // present extracts + masks it to route the item through the tessellated path.
+    E("    mov  rax, r12");
+    E("    or   rax, [_gpu_patch_mark]");
+    E("    mov  [r11 + 8],  rax        ; vertexCount | patchMark");
     E("    mov  [r11 + 16], r8         ; tex");
     E("    mov  [r11 + 24], r9         ; texw");
     E("    mov  [r11 + 32], r10        ; texh");
