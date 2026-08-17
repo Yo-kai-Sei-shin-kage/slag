@@ -693,6 +693,104 @@ Copy the GPU-resident bodies buffer back into the caller's CPU buffer
 .I count
 \(mu 96 bytes) so Slag can read updated positions/orientations for rendering.
 .TP
+.BI particle.init()
+Create the two GPU particle compute shaders (Emit, Simulate). Idempotent \(em
+call once at startup after
+.BR gpu.init .
+.TP
+.BI particle.step( maxParticles , " params_ptr" )
+Run the GPU-resident particle system for a dead-pool of
+.I maxParticles
+particles:
+.B Emit
+recycles dead slots and spawns new particles from the emitter parameters, then
+.B Simulate
+integrates motion (gravity, wind, drag, curl turbulence, buoyancy), ages/fades,
+and writes camera-facing billboard vertices straight into a GPU buffer.
+.I params_ptr
+points to a 128-byte
+.B EmitterConstants
+block (32 float32), fields at these byte offsets:
+.RS
+.IP \(bu 3n
+.B 0
+origin.xyz,
+.B 12
+deltaTime (real frame dt, seconds)
+.IP \(bu 3n
+.B 16
+emitVelocity.xyz,
+.B 28
+emitSpread (spawn disc radius + lateral jitter)
+.IP \(bu 3n
+.B 32
+gravity.xyz,
+.B 44
+drag (per-second linear damping)
+.IP \(bu 3n
+.B 48
+baseColor.rgba (a = peak alpha)
+.IP \(bu 3n
+.B 64
+lifeMin,
+.B 68
+lifeMax (seconds)
+.IP \(bu 3n
+.B 72
+sizeStart,
+.B 76
+sizeGrow (world half-size / growth per second)
+.IP \(bu 3n
+.B 80
+groundY,
+.B 84
+bounce (ground plane / restitution)
+.IP \(bu 3n
+.B 88
+texSlice (billboard texture layer),
+.B 92
+randSeed (per-frame RNG salt)
+.IP \(bu 3n
+.B 96
+buoyancy (upward accel, fades over life),
+.B 100
+turbScale (curl strength; 0 = ballistic)
+.IP \(bu 3n
+.B 104
+turbFreq (swirl tightness),
+.B 108
+prewarm (0..1 cold-start pre-age)
+.IP \(bu 3n
+.B 112
+wind.xyz (constant horizontal accel),
+.B 124
+emitRate (per-frame spawn fraction of dead slots)
+.RE
+.IP
+Buffers are created/grown on demand. The billboards are drawn automatically inside
+the present frame (after opaque geometry, before Present) with straight-alpha blend
+and depth-read-only \(em there is no separate draw call. Behavior is fully data-driven:
+smoke, fire, sparks, dust and debris differ only by the parameter block (e.g. sparks =
+gravity down, buoyancy/turbScale 0, short life; smoke = high buoyancy/turbScale, up
+velocity, long life). At least one
+.B fill_triangle_gpu
+draw item must be present in the frame for the frame (and thus the particles) to
+present.
+.TP
+.BI particle.read( dest_ptr , " count" )
+Copy
+.I count
+render vertices (64 bytes each) from the GPU render-verts buffer into
+.I dest_ptr
+so Slag can inspect what
+.B Simulate
+wrote (each 64B = pos3, uv2, rgba, slice, flag, nrm3, pad2). Vertex count \(em
+particle
+.I i
+occupies vertices
+.IR i *6 ..
+.IR i *6+5. Diagnostic.
+.TP
 .BI fill_triangle_gpu( verts , " count" , " tex_ptr" , " tex_w" , " tex_h" )
 Bulk GPU draw path (separate from the CPU-optimized
 .BR fill_triangle_pcolor ,

@@ -28,8 +28,9 @@ runtime modules a program actually references, so unused subsystems add nothing 
 - Windowing and software-rendered graphics: pixels, textured/shaded/z-buffered triangle
   rasterization, keyboard/mouse input, meshes (`mesh.*`), procedural textures (`tex.*`)
 - GPU-accelerated 3D via Direct3D 11 (`gpu.*`): per-pixel lit ubershader with unlimited dynamic
-  point lights, multi-light PCF shadow maps, hardware tessellation + displacement, and a
-  GPU-resident rigid-body physics solver; plus matrix stack (`mat.*`) and SIMD ops (`simd.*`)
+  point lights, multi-light PCF shadow maps, hardware tessellation + displacement, a
+  GPU-resident rigid-body physics solver, and a data-driven GPU particle system (`particle.*`)
+  for smoke/fire/sparks/dust; plus matrix stack (`mat.*`) and SIMD ops (`simd.*`)
 - HID gamepad input for any controller (`gpad.*`, `on gpad_button`)
 - CPU topology and SIMD feature detection
 

@@ -104,6 +104,7 @@ enum {
 static const struct { const char *ns; unsigned int rt; } NS_RUNTIME[] = {
     { "window",  RT_WINDOW  },
     { "gpu",     RT_GPU     },
+    { "particle", RT_GPU    },
     { "net",     RT_NET     },
     { "audio",   RT_AUDIO   },
     { "crypto",  RT_CRYPTO  },
@@ -3162,6 +3163,64 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
                 emit(cg, "    pop  r12");
                 emit(cg, "    sub  rsp, 32");
                 emit(cg, "    call _slag_gpu_physics_read");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // particle.init() -> create the 2 particle compute shaders (Emit, Simulate).
+        else if (strcmp(member, "init") == 0 && strcmp(base, "particle") == 0) {
+            emit(cg, "    ; particle.init");
+            emit(cg, "    sub  rsp, 32");
+            emit(cg, "    call _slag_gpu_particle_init");
+            emit(cg, "    add  rsp, 32");
+        }
+        // particle.step(maxParticles, params_ptr) -> dispatch Emit + Simulate over a
+        // GPU-resident dead pool of maxParticles particles. params_ptr = 96-byte
+        // EmitterConstants (see particles.hlsl). Buffers are created/grown on demand.
+        // maxParticles -> r12, params_ptr -> r14 (callee-saved; staged via the stack).
+        else if (strcmp(member, "step") == 0 && strcmp(base, "particle") == 0) {
+            emit(cg, "    ; particle.step");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r14, rax");
+                emit(cg, "    pop  r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_gpu_particle_step");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // NOTE: there is no particle.draw builtin -- the present frame draws the
+        // resident particle billboards automatically after opaque geometry and before
+        // Present (see _slag_gpu_particle_draw call in _slag_gpu_present_frame). The
+        // app only needs particle.init() once and particle.step(max, params) per frame.
+        // particle.read(dest_ptr, count) -> copy count render VERTICES (64B each) from
+        // the GPU render-verts buffer into dest_ptr, so Slag can inspect what Simulate
+        // wrote (each 64B = pos3 uv2 col4 slice flag nrm3 pad2). count is a vertex
+        // count (particle i occupies verts i*6..i*6+5). r12=dest, r13=count.
+        else if (strcmp(member, "read") == 0 && strcmp(base, "particle") == 0) {
+            emit(cg, "    ; particle.read");
+            if (args->count >= 2) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    push rax");
+                emit_int_expr(cg, args->items[1]);
+                emit(cg, "    mov  r13, rax");
+                emit(cg, "    pop  r12");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_gpu_particle_read");
+                emit(cg, "    add  rsp, 32");
+            }
+        }
+        // particle.probe(dest_ptr) -> write 8 runtime state int64s to dest so Slag can
+        // print exactly what the draw path sees (ready, verts, cnt, cap, blend,
+        // dsstate_read, part_buf, part_uav). Diagnostic. r12=dest.
+        else if (strcmp(member, "probe") == 0 && strcmp(base, "particle") == 0) {
+            emit(cg, "    ; particle.probe");
+            if (args->count >= 1) {
+                emit_int_expr(cg, args->items[0]);
+                emit(cg, "    mov  r12, rax");
+                emit(cg, "    sub  rsp, 32");
+                emit(cg, "    call _slag_gpu_particle_probe");
                 emit(cg, "    add  rsp, 32");
             }
         }

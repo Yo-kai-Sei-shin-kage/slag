@@ -11,6 +11,7 @@ static void emit_gpu_stage_init(Codegen *cg);
 static void emit_gpu_stage_pcolor(Codegen *cg);
 static void emit_gpu_present_frame(Codegen *cg);
 static void emit_gpu_physics(Codegen *cg);
+static void emit_gpu_particles(Codegen *cg);
 static void emit_gpu_dispmap(Codegen *cg);
 static void emit_gpu_normmap(Codegen *cg);
 
@@ -49,6 +50,7 @@ void emit_gpu_bss(Codegen *cg) {
     E("_gpu_raster:    resq 1");   // ID3D11RasterizerState* (CULL_BACK, FrontCW = D3D default)
     E("_gpu_raster_wire: resq 1"); // ID3D11RasterizerState* (FILL_WIREFRAME, CULL_NONE) for tess debug view
     E("_gpu_raster_shadow: resq 1"); // ID3D11RasterizerState* (CULL_FRONT) for the shadow depth pass (kills grazing acne)
+    E("_gpu_raster_none: resq 1");   // ID3D11RasterizerState* (SOLID, CULL_NONE) for particle billboards (no winding cull)");
     E("_gpu_pipeline:  resq 1");   // 1 once all pipeline objects created
     E("_gpu_stage:     resq 1");   // heap buffer of staged raw pcolor verts
     E("_gpu_convbuf:   resq 1");   // cached scratch for converted float verts (bulk-copied to WC vbuf)
@@ -72,6 +74,7 @@ void emit_gpu_bss(Codegen *cg) {
     E("_gpu_sc_w:      resq 1");     // swapchain backbuffer width  (last sized)");
     E("_gpu_sc_h:      resq 1");     // swapchain backbuffer height (last sized); resize when window differs");
     E("_gpu_dsstate:   resq 1");     // ID3D11DepthStencilState* (depth test+write, LESS)");
+    E("_gpu_dsstate_read: resq 1");  // ID3D11DepthStencilState* (depth test, NO write) for particles");
     E("_gpu_viewproj:  resq 1");     // ptr to 16 float32 (4x4 view-projection matrix) from the Slag camera; copied into the cbuf each frame");
     E("_gpu_stage_texw: resq 1");  // tex_w of staged triangles
     E("_gpu_stage_texh: resq 1");  // tex_h of staged triangles
@@ -137,6 +140,19 @@ void emit_gpu_bss(Codegen *cg) {
     E("_gpu_phys_bodies_ptr: resq 1"); // Slag bodies_ptr last uploaded (skip re-upload when same)");
     E("_gpu_phys_staging: resq 1");   // ID3D11Buffer* STAGING copy for gpu.physics_read (CPU_ACCESS_READ)");
     E("_gpu_phys_stage_cap: resq 1"); // body capacity of the staging buffer (recreate when it grows)");
+    // particle compute state (particle.init/step/draw); GPU-resident dead-pool
+    E("_gpu_cs_pemit:    resq 1");    // ID3D11ComputeShader* (particles.hlsl Emit)");
+    E("_gpu_cs_psim:     resq 1");    // ID3D11ComputeShader* (particles.hlsl Simulate)");
+    E("_gpu_part_buf:    resq 1");    // ID3D11Buffer* Particles (stride 64, UAV)");
+    E("_gpu_part_uav:    resq 1");    // Particles UAV (u0)");
+    E("_gpu_part_verts:  resq 1");    // ID3D11Buffer* render verts (stride 64, UAV+VERTEX)");
+    E("_gpu_part_verts_uav: resq 1"); // render-verts UAV (u1, written by Simulate)");
+    E("_gpu_part_cbuf:   resq 1");    // ID3D11Buffer* EmitterConstants (96B, b0)");
+    E("_gpu_part_cap:    resq 1");    // particle capacity (grows on demand); verts = cap*6");
+    E("_gpu_part_cnt:    resq 1");    // live particle count this frame (= last step's maxParticles); draw = cnt*6");
+    E("_gpu_part_ready:  resq 1");    // 1 once the 2 CS + buffers exist");
+    E("_gpu_part_staging:  resq 1");  // ID3D11Buffer* STAGING copy of render-verts for particle.read");
+    E("_gpu_part_stage_cap: resq 1"); // vertex capacity of the staging buffer (recreate when it grows)");
 }
 // Per triangle: 3 verts x 8 int64 = 192 bytes raw. Cap 4096 tris/frame.
 // GPU_STAGE_CAP triangles * GPU_STAGE_TRI bytes.
@@ -331,6 +347,7 @@ void emit_gpu_runtime(Codegen *cg) {
     emit_gpu_stage_pcolor(cg);
     emit_gpu_present_frame(cg);
     emit_gpu_physics(cg);
+    emit_gpu_particles(cg);
     emit_gpu_dispmap(cg);
     emit_gpu_normmap(cg);
 }
@@ -3511,6 +3528,24 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    call [rax + 0xb0]                 ; CreateRasterizerState (shadow CULL_NONE + slope bias)");
     // non-fatal: leave _gpu_raster_shadow=0 on failure; depth pass uses CULL_BACK.
 
+    // Particle raster (FILL_SOLID=3, CULL_NONE=1, no bias): billboards are camera-
+    // facing quads whose fixed corner winding is not orientation-tested, so back-face
+    // culling would drop them entirely. CULL_NONE renders both faces.
+    E("    lea  rdi, [rsp+0x150]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 10");
+    E("    rep  stosd");
+    E("    mov  dword [rsp+0x150+0], 3");    // FILL_SOLID
+    E("    mov  dword [rsp+0x150+4], 1");    // CULL_NONE
+    E("    mov  dword [rsp+0x150+8], 0");    // FrontCounterClockwise = FALSE
+    E("    mov  dword [rsp+0x150+24], 1");   // DepthClipEnable
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x150]");
+    E("    lea  r8,  [_gpu_raster_none]");
+    E("    call [rax + 0xb0]                 ; CreateRasterizerState (particle CULL_NONE)");
+    // non-fatal: leave _gpu_raster_none=0 on failure; particle draw falls back to CULL_BACK.
+
     // --- Depth buffer: D32_FLOAT texture + DSV + depth-stencil state (LESS) ---
     // TEXTURE2D_DESC (44 bytes) at rsp+0x100, sized to the window client area.
     E("    mov  rsi, [_window_primary_state]");
@@ -3558,6 +3593,23 @@ static void emit_gpu_create_pipeline(Codegen *cg) {
     E("    lea  rdx, [rsp+0x100]");
     E("    lea  r8,  [_gpu_dsstate]");
     E("    call [rax + 0xA8]                  ; CreateDepthStencilState");
+    E("    test eax, eax");
+    E("    jnz  .pl_fail");
+    // Depth-read-only state for transparent particles: DepthEnable=1, WriteMask=ZERO,
+    // Func=LESS. Solid geometry still occludes particles (test on), but overlapping
+    // billboards do not write depth, so they accumulate instead of z-fighting.
+    E("    lea  rdi, [rsp+0x100]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 13");
+    E("    rep  stosd");
+    E("    mov  dword [rsp+0x100+0], 1        ; DepthEnable");
+    E("    mov  dword [rsp+0x100+4], 0        ; DepthWriteMask = ZERO");
+    E("    mov  dword [rsp+0x100+8], 2        ; DepthFunc = LESS");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x100]");
+    E("    lea  r8,  [_gpu_dsstate_read]");
+    E("    call [rax + 0xA8]                  ; CreateDepthStencilState (read-only)");
     E("    test eax, eax");
     E("    jnz  .pl_fail");
 
@@ -5351,6 +5403,17 @@ static void emit_gpu_present_frame(Codegen *cg) {
     E("    jmp  .pf_item_loop");
     E(".pf_items_done:");
 
+    // Draw GPU particles AFTER opaque geometry, BEFORE Present, so they composite
+    // over the scene with the depth buffer still bound (solid geometry occludes
+    // them; overlapping puffs accumulate via depth-read-only + alpha blend). No-op
+    // when the particle system was never initialized (_gpu_part_ready == 0).
+    E("    sub  rsp, 0x20");
+    E("    call _slag_gpu_particle_draw");
+    E("    add  rsp, 0x20");
+    // Restore the main vertex buffer binding the particle draw replaced, so a later
+    // resubmit of resident geometry (persistence path) draws from the right buffer.
+    E("    mov  r15, [_gpu_context]");
+
     // Present ONCE after all items.
     // Present(SyncInterval=0, Flags=DXGI_PRESENT_ALLOW_TEARING). The tearing
     // flag pairs with the swapchain's ALLOW_TEARING flag to present immediately
@@ -5898,6 +5961,540 @@ static void emit_gpu_physics(Codegen *cg) {
     E("    mov  rax, [r15]");
     E("    call [rax + 0x78]");                    // Unmap
     E(".phr_ret:");
+    E("    add  rsp, 0x128");
+    E("    pop  r15");
+    E("    pop  rdi");
+    E("    pop  rsi");
+    E("    pop  rbx");
+    E("    ret");
+    E("");
+}
+
+// GPU particle system: dead-pool compute simulation feeding billboard verts to the
+// main draw. init creates the 2 compute shaders; step (re)creates the Particles
+// (UAV) / render-verts (UAV+VERTEX) / cbuffer on first call or when capacity grows,
+// zero-inits the pool once, uploads emitter params, then dispatches Emit+Simulate;
+// draw binds the resident render-verts as the vertex buffer and issues one Draw over
+// cap*6 verts (dead particles collapse to degenerate verts, skipped by the GPU).
+// Reuses the physics equ set (BUFDESC_*, CTX_*, DEV_CREATE_*, USAGE_*, MAP_*).
+static void emit_gpu_particles(Codegen *cg) {
+    E("; --- particle compute equ (BIND_VERTEX/FMT_R32F already defined above) ---");
+    E("PART_STRIDE     equ 64");          // sizeof(Particle)
+    E("PART_CBSZ       equ 128");         // sizeof(EmitterConstants) (24 base + buoyancy/turbScale/turbFreq + pad)
+    E("");
+
+    // ---- _slag_gpu_particle_init: create Emit + Simulate compute shaders ----
+    E("; --- _slag_gpu_particle_init ---");
+    E("_slag_gpu_particle_init:");
+    E("    push rbx");
+    E("    sub  rsp, 0x30");                 // 1 push+0x30 -> 16-align; arg5 at [rsp+0x20]
+    E("    cmp  qword [_gpu_part_ready], 0");
+    E("    jne  .pti_ret");
+    E("    mov  rbx, [_gpu_device]");
+    E("    test rbx, rbx");
+    E("    jz   .pti_ret");
+    E("    lea  rax, [_gpu_cs_pemit]");
+    E("    mov  [rsp+0x20], rax");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [_gpu_cs_pemit_blob]");
+    E("    mov  r8,  _gpu_cs_pemit_blob_len");
+    E("    xor  r9,  r9");
+    E("    call [rax + DEV_CREATE_CS]");
+    E("    test eax, eax");
+    E("    jnz  .pti_ret");
+    E("    lea  rax, [_gpu_cs_psim]");
+    E("    mov  [rsp+0x20], rax");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [_gpu_cs_psim_blob]");
+    E("    mov  r8,  _gpu_cs_psim_blob_len");
+    E("    xor  r9,  r9");
+    E("    call [rax + DEV_CREATE_CS]");
+    E("    test eax, eax");
+    E("    jnz  .pti_ret");
+    E("    mov  qword [_gpu_part_ready], 1");
+    E(".pti_ret:");
+    E("    add  rsp, 0x30");
+    E("    pop  rbx");
+    E("    ret");
+    E("");
+
+    // ---- _slag_gpu_particle_step ----  r12=maxParticles  r14=params_ptr
+    // (codegen loads r12/r14 before the call; see codegen.c particle_step)
+    E("; --- _slag_gpu_particle_step ---  r12=maxParticles r14=params_ptr");
+    E("_slag_gpu_particle_step:");
+    E("    push rbx");
+    E("    push rsi");
+    E("    push rdi");
+    E("    push r15");
+    E("    sub  rsp, 0x128");
+    E("    cmp  qword [_gpu_part_ready], 0");
+    E("    je   .pts_ret");
+    E("    mov  rbx, [_gpu_device]");
+    E("    test rbx, rbx");
+    E("    jz   .pts_ret");
+    E("    mov  r15, [_gpu_context]");
+    E("    test r12, r12");                  // maxParticles<=0 -> nothing
+    E("    jle  .pts_ret");
+    E("    mov  [_gpu_part_cnt], r12");
+
+    // (Re)create resources if first call or capacity exceeded.
+    E("    mov  rax, [_gpu_part_cap]");
+    E("    cmp  r12, rax");
+    E("    jbe  .pts_have");
+
+    // --- Particles buffer: DEFAULT, BIND_UAV, MISC_STRUCTURED, stride 64 ---
+    E("    lea  rdi, [rsp+0x40]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 8");
+    E("    rep  stosd");
+    E("    mov  rax, r12");
+    E("    imul rax, PART_STRIDE");
+    E("    mov  dword [rsp+0x40+BUFDESC_BYTEWIDTH], eax");
+    E("    mov  dword [rsp+0x40+BUFDESC_USAGE], USAGE_DEFAULT");
+    E("    mov  dword [rsp+0x40+BUFDESC_BIND], BIND_UAV");
+    E("    mov  dword [rsp+0x40+BUFDESC_CPUACCESS], 0");
+    E("    mov  dword [rsp+0x40+BUFDESC_MISC], MISC_STRUCTURED");
+    E("    mov  dword [rsp+0x40+BUFDESC_STRIDE], PART_STRIDE");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x40]");
+    E("    xor  r8,  r8");
+    E("    lea  r9,  [_gpu_part_buf]");
+    E("    call [rax + 0x18]");              // CreateBuffer
+    E("    test eax, eax");
+    E("    jnz  .pts_ret");
+
+    // Particles UAV: FORMAT_UNKNOWN, DIM_BUFFER, NumElements = maxParticles.
+    E("    lea  rdi, [rsp+0x40]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 8");
+    E("    rep  stosd");
+    E("    mov  dword [rsp+0x40+0], 0");
+    E("    mov  dword [rsp+0x40+4], UAV_DIM_BUFFER");
+    E("    mov  dword [rsp+0x40+8], 0");
+    E("    mov  dword [rsp+0x40+12], r12d");
+    E("    mov  dword [rsp+0x40+16], 0");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    mov  rdx, [_gpu_part_buf]");
+    E("    lea  r8,  [rsp+0x40]");
+    E("    lea  r9,  [_gpu_part_uav]");
+    E("    call [rax + DEV_CREATE_UAV]");
+    E("    test eax, eax");
+    E("    jnz  .pts_ret");
+
+    // --- Render verts: DEFAULT, BIND_UAV|BIND_VERTEX, ByteWidth = maxParticles*6*64.
+    //     NOT structured: a D3D11 STRUCTURED buffer may not also bind as a vertex
+    //     buffer. It is a plain byte buffer viewed two ways -- a typed R32_FLOAT UAV
+    //     for the compute write (16 floats/vertex) and a raw vertex buffer for the
+    //     draw (64B stride, the standard fill_triangle_gpu layout). ---
+    E("    lea  rdi, [rsp+0x40]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 8");
+    E("    rep  stosd");
+    E("    mov  rax, r12");
+    E("    imul rax, 6 * PART_STRIDE");       // 6 verts * 64B
+    E("    mov  dword [rsp+0x40+BUFDESC_BYTEWIDTH], eax");
+    E("    mov  dword [rsp+0x40+BUFDESC_USAGE], USAGE_DEFAULT");
+    E("    mov  dword [rsp+0x40+BUFDESC_BIND], BIND_UAV | BIND_VERTEX");
+    E("    mov  dword [rsp+0x40+BUFDESC_CPUACCESS], 0");
+    E("    mov  dword [rsp+0x40+BUFDESC_MISC], 0");
+    E("    mov  dword [rsp+0x40+BUFDESC_STRIDE], 0");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x40]");
+    E("    xor  r8,  r8");
+    E("    lea  r9,  [_gpu_part_verts]");
+    E("    call [rax + 0x18]");
+    E("    test eax, eax");
+    E("    jnz  .pts_ret");
+
+    // Render-verts UAV: typed R32_FLOAT, DIM_BUFFER, NumElements = maxParticles*6*16
+    //     (16 float32 per vertex). The Simulate shader writes it as RWBuffer<float>.
+    E("    lea  rdi, [rsp+0x40]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 8");
+    E("    rep  stosd");
+    E("    mov  dword [rsp+0x40+0], FMT_R32F"); // DXGI_FORMAT_R32_FLOAT
+    E("    mov  dword [rsp+0x40+4], UAV_DIM_BUFFER");
+    E("    mov  dword [rsp+0x40+8], 0");
+    E("    mov  rax, r12");
+    E("    imul rax, 6 * 16");                 // verts * 16 floats
+    E("    mov  dword [rsp+0x40+12], eax");
+    E("    mov  dword [rsp+0x40+16], 0");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    mov  rdx, [_gpu_part_verts]");
+    E("    lea  r8,  [rsp+0x40]");
+    E("    lea  r9,  [_gpu_part_verts_uav]");
+    E("    call [rax + DEV_CREATE_UAV]");
+    E("    test eax, eax");
+    E("    jnz  .pts_ret");
+
+    // --- cbuffer: DYNAMIC, BIND_CONSTANT, 96B (once) ---
+    E("    cmp  qword [_gpu_part_cbuf], 0");
+    E("    jne  .pts_cap_set");
+    E("    lea  rdi, [rsp+0x40]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 8");
+    E("    rep  stosd");
+    E("    mov  dword [rsp+0x40+BUFDESC_BYTEWIDTH], PART_CBSZ");
+    E("    mov  dword [rsp+0x40+BUFDESC_USAGE], USAGE_DYNAMIC");
+    E("    mov  dword [rsp+0x40+BUFDESC_BIND], BIND_CONSTANT");
+    E("    mov  dword [rsp+0x40+BUFDESC_CPUACCESS], D3DCPU_WRITE");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x40]");
+    E("    xor  r8,  r8");
+    E("    lea  r9,  [_gpu_part_cbuf]");
+    E("    call [rax + 0x18]");
+    E("    test eax, eax");
+    E("    jnz  .pts_ret");
+    E(".pts_cap_set:");
+    E("    mov  [_gpu_part_cap], r12");
+    // Zero the new Particles pool once so every slot reads life=0 (dead) on the first
+    // Emit -> the pool fills from empty instead of garbage. UpdateSubresource from a
+    // zeroed scratch would need a maxParticles*64 buffer; instead the Emit shader
+    // treats life<=0 as dead and DEFAULT buffers are driver-zeroed at creation, so
+    // no explicit clear is required. (Marker: capacity just (re)allocated.)
+    E(".pts_have:");
+
+    // Upload emitter params to cbuffer (Map DISCARD, copy 96B, Unmap).
+    E("    lea  r11, [rsp+0x60]");
+    E("    mov  [rsp+0x28], r11");
+    E("    mov  dword [rsp+0x20], 0");
+    E("    mov  rcx, r15");
+    E("    mov  rdx, [_gpu_part_cbuf]");
+    E("    xor  r8d, r8d");
+    E("    mov  r9d, MAP_WR_DISCARD");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x70]");               // Map
+    E("    test eax, eax");
+    E("    jnz  .pts_ret");
+    E("    mov  rdi, [rsp+0x60]");            // mapped.pData
+    E("    mov  rsi, r14");                   // params_ptr
+    E("    mov  ecx, PART_CBSZ / 8");         // 12 qwords
+    E("    rep  movsq");
+    E("    mov  rcx, r15");
+    E("    mov  rdx, [_gpu_part_cbuf]");
+    E("    xor  r8d, r8d");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x78]");               // Unmap
+
+    // Bind cbuffer at b0: CSSetConstantBuffers(0,1,&cbuf).
+    E("    mov  rax, [_gpu_part_cbuf]");
+    E("    mov  [rsp+0x40], rax");
+    E("    mov  rcx, r15");
+    E("    xor  edx, edx");
+    E("    mov  r8d, 1");
+    E("    lea  r9,  [rsp+0x40]");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_CSSETCB]");
+
+    // groups = (maxParticles + 255) / 256 -> ebx.
+    E("    lea  rax, [r12 + 255]");
+    E("    shr  rax, 8");
+    E("    mov  ebx, eax");
+
+    // ===== PASS 1: Emit. Bind Particles UAV @u0. =====
+    E("    mov  rax, [_gpu_part_uav]");
+    E("    mov  [rsp+0x40], rax");
+    E("    mov  rcx, r15");
+    E("    xor  edx, edx");                   // u0
+    E("    mov  r8d, 1");
+    E("    lea  r9,  [rsp+0x40]");
+    E("    mov  qword [rsp+0x20], 0");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_CSSETUAV]");
+    E("    mov  rcx, r15");
+    E("    mov  rdx, [_gpu_cs_pemit]");
+    E("    xor  r8,  r8");
+    E("    xor  r9d, r9d");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_CSSETSH]");
+    E("    mov  rcx, r15");
+    E("    mov  edx, ebx");
+    E("    mov  r8d, 1");
+    E("    mov  r9d, 1");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_DISPATCH]");
+
+    // ===== PASS 2: Simulate. Bind render-verts UAV @u1 (Particles UAV still @u0). =====
+    E("    mov  rax, [_gpu_part_verts_uav]");
+    E("    mov  [rsp+0x40], rax");
+    E("    mov  rcx, r15");
+    E("    mov  edx, 1");                     // u1
+    E("    mov  r8d, 1");
+    E("    lea  r9,  [rsp+0x40]");
+    E("    mov  qword [rsp+0x20], 0");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_CSSETUAV]");
+    E("    mov  rcx, r15");
+    E("    mov  rdx, [_gpu_cs_psim]");
+    E("    xor  r8,  r8");
+    E("    xor  r9d, r9d");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_CSSETSH]");
+    E("    mov  rcx, r15");
+    E("    mov  edx, ebx");
+    E("    mov  r8d, 1");
+    E("    mov  r9d, 1");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_DISPATCH]");
+
+    // Unbind both compute UAVs (u0,u1) so the render-verts buffer can bind as a
+    // vertex buffer for the draw (a resource can't be UAV + VB simultaneously).
+    E("    mov  qword [rsp+0x40], 0");
+    E("    mov  qword [rsp+0x48], 0");
+    E("    mov  rcx, r15");
+    E("    xor  edx, edx");                   // start u0
+    E("    mov  r8d, 2");                     // two slots
+    E("    lea  r9,  [rsp+0x40]");
+    E("    mov  qword [rsp+0x20], 0");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_CSSETUAV]");
+    // Unbind the compute shader.
+    E("    mov  rcx, r15");
+    E("    xor  rdx, rdx");
+    E("    xor  r8,  r8");
+    E("    xor  r9d, r9d");
+    E("    mov  rax, [r15]");
+    E("    call [rax + CTX_CSSETSH]");
+    E(".pts_ret:");
+    E("    add  rsp, 0x128");
+    E("    pop  r15");
+    E("    pop  rdi");
+    E("    pop  rsi");
+    E("    pop  rbx");
+    E("    ret");
+    E("");
+
+    // ---- _slag_gpu_particle_draw ----  no args
+    // Bind the resident render-verts buffer as the vertex buffer and draw cap*6
+    // verts through the main VS/PS (billboard path). Assumes the main pipeline state
+    // (input layout, topology, VS/PS, viewproj cbuffer, blend) is already set by the
+    // present frame -- the draw only swaps the VB and issues one Draw. Dead particles
+    // are degenerate (zero-size) verts, culled for free by the rasterizer.
+    E("; --- _slag_gpu_particle_draw ---");
+    E("_slag_gpu_particle_draw:");
+    E("    push rbx");
+    E("    push r15");
+    E("    sub  rsp, 0x58");                      // 2 push + 0x58 -> 16-aligned
+    E("    cmp  qword [_gpu_part_ready], 0");
+    E("    je   .ptd_ret");
+    E("    mov  rax, [_gpu_part_verts]");
+    E("    test rax, rax");
+    E("    jz   .ptd_ret");
+    E("    mov  r15, [_gpu_context]");
+    E("    test r15, r15");
+    E("    jz   .ptd_ret");
+    // Particles are transparent billboards: force straight-alpha blend ON and depth
+    // WRITE OFF (test still on, so solid geometry occludes them, but overlapping
+    // puffs accumulate instead of z-fighting). OMSetBlendState(_gpu_blend,NULL,~0).
+    E("    mov  rdx, [_gpu_blend]");
+    E("    test rdx, rdx");
+    E("    jz   .ptd_noblend");
+    E("    mov  rcx, r15");
+    E("    xor  r8,  r8");
+    E("    mov  r9d, 0xFFFFFFFF");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x118]");                  // OMSetBlendState
+    E(".ptd_noblend:");
+    // OMSetDepthStencilState(_gpu_dsstate_noZwrite, 0) if available; else leave as-is.
+    E("    mov  rdx, [_gpu_dsstate_read]");
+    E("    test rdx, rdx");
+    E("    jz   .ptd_nods");
+    E("    mov  rcx, r15");
+    E("    xor  r8d, r8d");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x120]");                  // OMSetDepthStencilState (read-only depth)
+    E(".ptd_nods:");
+    // CULL_NONE so the billboard quads' fixed winding is never back-face culled
+    // (the whole reason the draw issued valid geometry yet nothing appeared).
+    E("    mov  rdx, [_gpu_raster_none]");
+    E("    test rdx, rdx");
+    E("    jz   .ptd_noraster");
+    E("    mov  rcx, r15");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x158]");                  // RSSetState(CULL_NONE)
+    E(".ptd_noraster:");
+    // IASetVertexBuffers(0, 1, ppVertexBuffers, pStrides, pOffsets). Args 5/6 (the
+    // strides/offsets pointers) go in the stack shadow at [rsp+0x20]/[rsp+0x28];
+    // the pointed-to values live at [rsp+0x38] (stride) / [rsp+0x3C] (offset), and
+    // the vertex-buffer pointer at [rsp+0x30].
+    E("    mov  dword [rsp+0x38], PART_STRIDE"); // *pStrides
+    E("    mov  dword [rsp+0x3C], 0");           // *pOffsets
+    E("    mov  rax, [_gpu_part_verts]");
+    E("    mov  [rsp+0x30], rax");               // *ppVertexBuffers
+    E("    lea  rax, [rsp+0x38]");
+    E("    mov  [rsp+0x20], rax");               // pStrides (arg5)
+    E("    lea  rax, [rsp+0x3C]");
+    E("    mov  [rsp+0x28], rax");               // pOffsets (arg6)
+    E("    mov  rcx, r15");
+    E("    xor  edx, edx");                      // StartSlot 0
+    E("    mov  r8d, 1");                        // NumBuffers
+    E("    lea  r9,  [rsp+0x30]");               // ppVertexBuffers
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x90]");                  // IASetVertexBuffers
+    // Draw(cap*6, 0).
+    E("    mov  rax, [_gpu_part_cnt]");
+    E("    imul rax, 6");
+    E("    mov  rcx, r15");
+    E("    mov  edx, eax");                      // VertexCount
+    E("    xor  r8d, r8d");                      // StartVertexLocation
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x68]");                  // Draw
+    E(".ptd_ret:");
+    E("    add  rsp, 0x58");
+    E("    pop  r15");
+    E("    pop  rbx");
+    E("    ret");
+    E("");
+
+    // ---- _slag_gpu_particle_probe ----  r12=dest_ptr
+    // Write 8 runtime state qwords into [dest] so Slag can print the exact values the
+    // DRAW path sees. No D3D calls -> cannot fault. Layout (8 x int64):
+    //   [0] _gpu_part_ready   [1] _gpu_part_verts  [2] _gpu_part_cnt   [3] _gpu_part_cap
+    //   [4] _gpu_blend        [5] _gpu_dsstate_read [6] _gpu_part_buf   [7] _gpu_part_uav
+    E("; --- _slag_gpu_particle_probe ---  r12=dest_ptr");
+    E("_slag_gpu_particle_probe:");
+    E("    mov  rax, [_gpu_part_ready]");
+    E("    mov  [r12 + 0],  rax");
+    E("    mov  rax, [_gpu_part_verts]");
+    E("    mov  [r12 + 8],  rax");
+    E("    mov  rax, [_gpu_part_cnt]");
+    E("    mov  [r12 + 16], rax");
+    E("    mov  rax, [_gpu_part_cap]");
+    E("    mov  [r12 + 24], rax");
+    E("    mov  rax, [_gpu_blend]");
+    E("    mov  [r12 + 32], rax");
+    E("    mov  rax, [_gpu_dsstate_read]");
+    E("    mov  [r12 + 40], rax");
+    E("    mov  rax, [_gpu_part_buf]");
+    E("    mov  [r12 + 48], rax");
+    E("    mov  rax, [_gpu_part_uav]");
+    E("    mov  [r12 + 56], rax");
+    E("    ret");
+    E("");
+
+    // ---- _slag_gpu_particle_read ----  r12=dest_ptr r13=count(vertices)
+    // Copy the GPU-resident render-verts buffer into a STAGING buffer, Map READ, and
+    // memcpy count*64 bytes into the caller's CPU buffer (dest_ptr). Lets Slag read
+    // the billboard vertices the compute Simulate pass wrote (each 64B = 16 f32:
+    // pos3 uv2 col4 slice flag nrm3 pad2). count is a VERTEX count (particle i's 6
+    // verts start at i*6). The staging buffer is created lazily and grown on demand.
+    // Cloned from the proven _slag_gpu_physics_read; the render-verts buffer is NOT
+    // structured, so the staging copy is a plain (non-structured) buffer.
+    E("; --- _slag_gpu_particle_read ---  r12=dest_ptr r13=count(verts)");
+    E("_slag_gpu_particle_read:");
+    E("    push rbx");
+    E("    push rsi");
+    E("    push rdi");
+    E("    push r15");
+    E("    sub  rsp, 0x128");
+    E("    cmp  qword [_gpu_part_ready], 0");
+    E("    je   .prr_ret");
+    E("    cmp  qword [_gpu_part_verts], 0");       // nothing created yet
+    E("    je   .prr_ret");
+    E("    mov  rbx, [_gpu_device]");
+    E("    test rbx, rbx");
+    E("    jz   .prr_ret");
+    E("    mov  r15, [_gpu_context]");
+    E("    test r13, r13");                          // count<=0 -> nothing to do
+    E("    jle  .prr_ret");
+
+    // (Re)create the STAGING buffer if first call or count exceeds its capacity.
+    E("    mov  rax, [_gpu_part_stage_cap]");
+    E("    cmp  r13, rax");
+    E("    jbe  .prr_have");
+    // STAGING, no bind, CPU_ACCESS_READ, plain (NOT structured), count*64 bytes.
+    E("    lea  rdi, [rsp+0x40]");
+    E("    xor  eax, eax");
+    E("    mov  ecx, 8");
+    E("    rep  stosd");
+    E("    mov  rax, r13");
+    E("    imul rax, PART_STRIDE");                  // 64 B / vertex
+    E("    mov  dword [rsp+0x40+BUFDESC_BYTEWIDTH], eax");
+    E("    mov  dword [rsp+0x40+BUFDESC_USAGE], USAGE_STAGING");
+    E("    mov  dword [rsp+0x40+BUFDESC_BIND], 0");
+    E("    mov  dword [rsp+0x40+BUFDESC_CPUACCESS], D3DCPU_READ");
+    E("    mov  dword [rsp+0x40+BUFDESC_MISC], 0");
+    E("    mov  dword [rsp+0x40+BUFDESC_STRIDE], 0");
+    // Release any prior (smaller) staging buffer before replacing it.
+    E("    mov  rax, [_gpu_part_staging]");
+    E("    test rax, rax");
+    E("    jz   .prr_nostale");
+    E("    mov  rcx, rax");
+    E("    mov  rax, [rcx]");
+    E("    call [rax + 0x10]");                      // IUnknown::Release
+    E("    mov  qword [_gpu_part_staging], 0");
+    E(".prr_nostale:");
+    E("    mov  rcx, rbx");
+    E("    mov  rax, [rbx]");
+    E("    lea  rdx, [rsp+0x40]");
+    E("    xor  r8,  r8");                            // pInitialData = NULL
+    E("    lea  r9,  [_gpu_part_staging]");
+    E("    call [rax + 0x18]");                       // CreateBuffer
+    E("    test eax, eax");
+    E("    jnz  .prr_ret");
+    E("    mov  [_gpu_part_stage_cap], r13");
+    E(".prr_have:");
+
+    // CopySubresourceRegion(staging, 0, 0,0,0, render-verts, 0, &box) -- copy the
+    // first count*64 bytes (a partial copy; the source buffer is larger, so a whole-
+    // resource CopyResource would size-mismatch). Box: left=0, right=count*64.
+    E("    mov  rax, r13");
+    E("    imul rax, PART_STRIDE");                  // byte length = count*64
+    E("    mov  dword [rsp+0x50], 0");               // box.left
+    E("    mov  dword [rsp+0x54], 0");               // box.top
+    E("    mov  dword [rsp+0x58], 0");               // box.front
+    E("    mov  dword [rsp+0x5C], eax");             // box.right = count*64
+    E("    mov  dword [rsp+0x60], 1");               // box.bottom
+    E("    mov  dword [rsp+0x64], 1");               // box.back
+    E("    mov  qword [rsp+0x20], 0");               // DstY
+    E("    mov  qword [rsp+0x28], 0");               // DstZ
+    E("    mov  rax, [_gpu_part_verts]");
+    E("    mov  [rsp+0x30], rax");                   // pSrcResource
+    E("    mov  qword [rsp+0x38], 0");               // SrcSubresource
+    E("    lea  rax, [rsp+0x50]");
+    E("    mov  [rsp+0x40], rax");                   // pSrcBox
+    E("    mov  rcx, r15");
+    E("    mov  rdx, [_gpu_part_staging]");          // pDstResource
+    E("    xor  r8d, r8d");                          // DstSubresource
+    E("    xor  r9d, r9d");                          // DstX
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x170]");                     // CopySubresourceRegion (vtbl idx 46)
+
+    // Map(staging, 0, MAP_READ, 0, &mapped@[rsp+0x60]).
+    E("    lea  r11, [rsp+0x60]");
+    E("    mov  [rsp+0x28], r11");                   // pMappedResource (arg5)
+    E("    mov  dword [rsp+0x20], 0");               // MapFlags (arg4)
+    E("    mov  rcx, r15");
+    E("    mov  rdx, [_gpu_part_staging]");
+    E("    xor  r8d, r8d");                          // Subresource = 0
+    E("    mov  r9d, MAP_READ");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x70]");                      // Map
+    E("    test eax, eax");
+    E("    jnz  .prr_ret");
+
+    // memcpy dest_ptr <- mapped.pData, count*64 bytes (count*8 qwords).
+    E("    mov  rsi, [rsp+0x60]");                   // mapped.pData
+    E("    mov  rdi, r12");                          // dest_ptr
+    E("    mov  rax, r13");
+    E("    imul rax, PART_STRIDE / 8");              // qwords = count*8
+    E("    mov  rcx, rax");
+    E("    rep  movsq");
+
+    // Unmap(staging, 0).
+    E("    mov  rcx, r15");
+    E("    mov  rdx, [_gpu_part_staging]");
+    E("    xor  r8d, r8d");
+    E("    mov  rax, [r15]");
+    E("    call [rax + 0x78]");                      // Unmap
+    E(".prr_ret:");
     E("    add  rsp, 0x128");
     E("    pop  r15");
     E("    pop  rdi");
