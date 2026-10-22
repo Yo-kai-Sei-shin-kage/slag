@@ -1517,51 +1517,6 @@ input.set_bbox(minx, miny, maxx, maxy)
 input.in_bbox(mx, my)   // axis-aligned hit test
 .fi
 .RE
-.SS Gamepad input
-Descriptor-driven HID gamepad support (any brand). Controller reports arrive via
-Raw Input
-.RB ( WM_INPUT ,
-.BR RIDEV_INPUTSINK );
-the device's own HID report descriptor is parsed via
-.B hid.dll
-.RB ( HidP_* ),
-so axes and buttons are decoded by their HID
-.I usage
-rather than a per-brand byte layout \(em no per-controller configuration.
-Programs using gamepad input link
-.B hid
-.RB ( \-lhid ).
-A window must be open (the raw-input sink is tied to the window).
-.PP
-Analog axes are polled read-only accessors returning
-.BR int :
-.TP
-.BR gpad.lx() ", " gpad.ly() ", " gpad.rx() ", " gpad.ry()
-Left / right analog stick axes, signed
-.BR \-32768 .. 32767 .
-.TP
-.BR gpad.lt() ", " gpad.rt()
-Left / right trigger, 0..32767.
-.PP
-Buttons are delivered through an event handler, edge-diffed so it fires only on
-a state change:
-.PP
-.RS
-.nf
-on gpad_button(int id, bool down) {
-    if (id == 0) { ... }        // button 0 pressed/released
-}
-.fi
-.RE
-.PP
-.I id
-is the 0-based HID button index and
-.I down
-is
-.B true
-on press,
-.B false
-on release. Handlers not declared default to no-op stubs.
 .SH NOT YET IMPLEMENTED
 The following are described in the language design but are not
 currently functional:
@@ -1584,7 +1539,7 @@ gcc -Wall -Wextra -o slag main.c lexer.c ast.c parser.c codegen.c \e
 nasm -f win64 program.asm -o program.obj
 x86_64-w64-mingw32-gcc program.obj -o program.exe \e
     -nostdlib -lkernel32 -luser32 -lgdi32 -lws2_32 -lwinmm -lbcrypt \e
-    -ldxgi -ld3d11 -lhid -e _start
+    -ldxgi -ld3d11 -e _start
 .fi
 .RE
 .PP
@@ -1614,9 +1569,6 @@ cryptography (crypto.*)
 .TP
 .B \-ldxgi \-ld3d11
 integrated-GPU dispatch (gpu.*, Direct3D 11 / DXGI)
-.TP
-.B \-lhid
-gamepad input (gpad.*, on gpad_button)
 .PP
 Add
 .B \-mwindows

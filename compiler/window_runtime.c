@@ -86,7 +86,6 @@ static void emit_window_constants(Codegen *cg) {
     E("WM_MBUTTONDOWN       equ 0x0207");
     E("WM_MBUTTONUP         equ 0x0208");
     E("WM_MOUSEWHEEL        equ 0x020A");
-    E("WM_INPUT             equ 0x00FF  ; Raw Input (controller HID reports)");
     E("WM_USER_FLUSH        equ 0x0401  ; WM_USER+1: trigger BitBlt");
     E("WM_USER_RESIZE       equ 0x0402  ; WM_USER+2: recreate DIB at new size");
     E("WM_SIZE              equ 0x0005");
@@ -352,25 +351,6 @@ static void emit_window_thread_proc(Codegen *cg) {
     E("    mov  [rbx + WSTATE_HWND], rax");
     E("    mov  qword [rbx + WSTATE_OPEN], 1");
     E("");
-    // Register for Raw Input controller reports (usage 4 joystick + usage 5
-    // gamepad, page 1). RIDEV_INPUTSINK delivers even when not foreground.
-    E("    ; --- RegisterRawInputDevices: 2x RAWINPUTDEVICE (16 bytes each) ---");
-    E("    sub  rsp, 32 + 32             ; shadow + two 16-byte entries");
-    E("    mov  word  [rsp+32+0], 1      ; usUsagePage = 0x01 (generic desktop)");
-    E("    mov  word  [rsp+32+2], 4      ; usUsage = joystick");
-    E("    mov  dword [rsp+32+4], 0x100  ; dwFlags = RIDEV_INPUTSINK");
-    E("    mov  [rsp+32+8], r13          ; hwndTarget");
-    E("    mov  word  [rsp+32+16], 1     ; usUsagePage = 0x01");
-    E("    mov  word  [rsp+32+18], 5     ; usUsage = gamepad");
-    E("    mov  dword [rsp+32+20], 0x100 ; dwFlags = RIDEV_INPUTSINK");
-    E("    mov  [rsp+32+24], r13         ; hwndTarget");
-    E("    lea  rcx, [rsp+32]            ; pRawInputDevices");
-    E("    mov  edx, 2                   ; uiNumDevices");
-    E("    mov  r8d, 16                  ; cbSize = sizeof(RAWINPUTDEVICE)");
-    E("    call RegisterRawInputDevices");
-    E("    add  rsp, 32 + 32");
-    E("");
-
     // Store struct ptr in window's GWLP_USERDATA
     E("    ; --- Store struct ptr in window userdata ---");
     E("    mov  rcx, r13                  ; hwnd");
@@ -542,11 +522,6 @@ static void emit_wndproc(Codegen *cg) {
     E("    call GetWindowLongPtrA");
     E("    add  rsp, 32");
     E("    mov  rbx, rax         ; rbx = struct ptr");
-    E("    ; WM_INPUT is handled BEFORE the struct-ptr early-out: the controller");
-    E("    ; decode reads global _gpad_raw, not the window struct, so it must not");
-    E("    ; be dropped when GWLP_USERDATA is not set yet (races registration).");
-    E("    cmp  r13, WM_INPUT");
-    E("    je   .wndproc_input");
     E("    test rbx, rbx");
     E("    jz   .wndproc_default ; no struct yet, use default");
     E("");
@@ -800,16 +775,6 @@ static void emit_wndproc(Codegen *cg) {
     E("    add  rsp, 32");
     E("    xor  rax, rax");
     E("    jmp  .wndproc_ret");
-    E("");
-    // WM_INPUT -- controller HID report; lParam (r15) = hRawInput. Decode in
-    // the input runtime, then fall through to DefWindowProc (required for
-    // WM_INPUT cleanup).
-    E(".wndproc_input:");
-    E("    mov  rcx, r15                 ; hRawInput");
-    E("    sub  rsp, 32");
-    E("    call _slag_gamepad_dispatch");
-    E("    add  rsp, 32");
-    E("    jmp  .wndproc_default");
     E("");
     E(".wndproc_close:");
     E("    mov  rcx, r12");
@@ -7374,22 +7339,6 @@ static void emit_default_event_handlers(Codegen *cg, const EventHandlerFlags *fl
     }
     if (!flags->has_mouse_wheel) {
         E("_slag_on_mouse_wheel:");
-        E("    ret");
-    }
-    if (!flags->has_gpad_button) {
-        E("_slag_on_gpad_button:");
-        E("    ret");
-    }
-    if (!flags->has_js_left) {
-        E("_slag_on_js_left:");
-        E("    ret");
-    }
-    if (!flags->has_js_right) {
-        E("_slag_on_js_right:");
-        E("    ret");
-    }
-    if (!flags->has_gpad_trigger) {
-        E("_slag_on_gpad_trigger:");
         E("    ret");
     }
     E("");

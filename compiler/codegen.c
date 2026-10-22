@@ -35,7 +35,6 @@
 #include "ast.h"
 #include "codegen.h"
 #include "window_runtime.h"
-#include "gamepad_runtime.h"
 #include "net_runtime.h"
 #include "server_runtime.h"
 #include "mem_runtime.h"
@@ -91,7 +90,6 @@ enum {
     RT_NET     = 1u << 3,   // ws2_32: net.* + server.* (single unit)
     RT_AUDIO   = 1u << 4,   // winmm: audio.*
     RT_CRYPTO  = 1u << 5,   // bcrypt: crypto.*
-    RT_GAMEPAD = 1u << 6,   // hid: gpad.*, on gpad_button (implies RT_WINDOW)
     RT_SIMD    = 1u << 7,   // simd.*
     RT_MAT     = 1u << 8,   // mat.*
     RT_MESH    = 1u << 9,   // mesh.*
@@ -108,7 +106,6 @@ static const struct { const char *ns; unsigned int rt; } NS_RUNTIME[] = {
     { "net",     RT_NET     },
     { "audio",   RT_AUDIO   },
     { "crypto",  RT_CRYPTO  },
-    { "gpad",    RT_GAMEPAD },
     { "simd",    RT_SIMD    },
     { "mat",     RT_MAT     },
     { "mesh",    RT_MESH    },
@@ -180,7 +177,6 @@ static void mark_runtime_ns(Codegen *cg, const char *base) {
 // Fold implied runtime dependencies into the bitset. Must run once after all
 // builtins and event handlers have been scanned, before conditional emission.
 //   GPU     needs WINDOW (swapchain/client surface)
-//   GAMEPAD needs WINDOW (raw-input sink is attached to the window)
 // NET already covers both net.* and server.* (single linkage unit).
 static void resolve_runtime_deps(Codegen *cg) {
     // WINDOW and GPU are bidirectionally coupled: the window WndProc/present
@@ -188,11 +184,6 @@ static void resolve_runtime_deps(Codegen *cg) {
     // WSTATE_*/window symbols. Emit them as one linkage unit.
     if (cg->used_runtimes & RT_GPU)     cg->used_runtimes |= RT_WINDOW;
     if (cg->used_runtimes & RT_WINDOW)  cg->used_runtimes |= RT_GPU;
-    if (cg->used_runtimes & RT_GAMEPAD) cg->used_runtimes |= RT_WINDOW;
-    // The window WndProc hard-references gamepad symbols (RegisterRawInputDevices,
-    // _slag_gamepad_dispatch), so any window program must also emit the gamepad
-    // runtime + its imports.
-    if (cg->used_runtimes & RT_WINDOW)  cg->used_runtimes |= RT_GAMEPAD;
 }
 
 
@@ -1937,15 +1928,6 @@ static void emit_call_expr(Codegen *cg, const Expr *e) {
             emit(cg, "    mul  rcx              ; rdx:rax = counter * 1e6");
             emit(cg, "    mov  rcx, [_qpc_freq]");
             emit(cg, "    div  rcx              ; rax = (counter*1e6)/freq = microseconds");
-        }
-        // gpad.lx/ly/rx/ry/lt/rt() -> float latched axis normalized to -1..1.
-        // Polled each frame by the render loop; no event-handler noise.
-        else if (strcmp(base, "gpad") == 0 &&
-                 (strcmp(member, "lx") == 0 || strcmp(member, "ly") == 0 ||
-                  strcmp(member, "rx") == 0 || strcmp(member, "ry") == 0 ||
-                  strcmp(member, "lt") == 0 || strcmp(member, "rt") == 0)) {
-            emit(cg, "    ; gpad.%s (latched axis, int)", member);
-            emit(cg, "    mov  rax, [_gpad_cur_%s]", member);
         }
         else if (strcmp(member, "set_bbox") == 0) {
             emit(cg, "    ; input.set_bbox");
@@ -6005,11 +5987,8 @@ static void scan_stmt(Codegen *cg, const Stmt *s) {
         case STMT_SYNC:   scan_stmtlist(cg, &s->as.sync_stmt.body); break;
         case STMT_LOCK:   scan_stmtlist(cg, &s->as.lock_stmt.body); break;
         case STMT_ON_HANDLER: {
-            const char *ev = s->as.on_handler.event_name;
-            if (strncmp(ev, "gpad_", 5) == 0 || strncmp(ev, "js_", 3) == 0)
-                cg->used_runtimes |= RT_GAMEPAD;
-            else  // key_*/mouse_* handlers need the window WndProc
-                cg->used_runtimes |= RT_WINDOW;
+            // key_*/mouse_* handlers need the window WndProc
+            cg->used_runtimes |= RT_WINDOW;
             scan_stmtlist(cg, &s->as.on_handler.body);
             break;
         }
@@ -6044,7 +6023,6 @@ int codegen_program(const Program *prog, FILE *out) {
     // Imports.
     emit_imports(&cg);
     if (cg.used_runtimes & RT_WINDOW) emit_window_imports(&cg);
-    if (cg.used_runtimes & RT_GAMEPAD) emit_gamepad_imports(&cg);
     if (cg.used_runtimes & RT_NET) emit_net_imports(&cg);
     if (cg.used_runtimes & RT_NET) emit_server_imports(&cg);
     emit_mem_imports(&cg);
@@ -6129,10 +6107,6 @@ int codegen_program(const Program *prog, FILE *out) {
             else if (strcmp(ev, "mouse_down") == 0) ev_flags.has_mouse_down = 1;
             else if (strcmp(ev, "mouse_up") == 0)   ev_flags.has_mouse_up = 1;
             else if (strcmp(ev, "mouse_wheel") == 0) ev_flags.has_mouse_wheel = 1;
-            else if (strcmp(ev, "gpad_button") == 0) ev_flags.has_gpad_button = 1;
-            else if (strcmp(ev, "js_left") == 0)     ev_flags.has_js_left = 1;
-            else if (strcmp(ev, "js_right") == 0)    ev_flags.has_js_right = 1;
-            else if (strcmp(ev, "gpad_trigger") == 0) ev_flags.has_gpad_trigger = 1;
         }
     }
     // File-scope `on` handlers.
@@ -6146,10 +6120,6 @@ int codegen_program(const Program *prog, FILE *out) {
         else if (strcmp(ev, "mouse_down") == 0) ev_flags.has_mouse_down = 1;
         else if (strcmp(ev, "mouse_up") == 0)   ev_flags.has_mouse_up = 1;
         else if (strcmp(ev, "mouse_wheel") == 0) ev_flags.has_mouse_wheel = 1;
-        else if (strcmp(ev, "gpad_button") == 0) ev_flags.has_gpad_button = 1;
-        else if (strcmp(ev, "js_left") == 0)     ev_flags.has_js_left = 1;
-        else if (strcmp(ev, "js_right") == 0)    ev_flags.has_js_right = 1;
-        else if (strcmp(ev, "gpad_trigger") == 0) ev_flags.has_gpad_trigger = 1;
     }
 
     // Map event handlers to their runtime modules, then close over deps.
@@ -6157,9 +6127,6 @@ int codegen_program(const Program *prog, FILE *out) {
         ev_flags.has_mouse_move || ev_flags.has_mouse_down ||
         ev_flags.has_mouse_up || ev_flags.has_mouse_wheel)
         cg.used_runtimes |= RT_WINDOW;
-    if (ev_flags.has_gpad_button || ev_flags.has_js_left ||
-        ev_flags.has_js_right || ev_flags.has_gpad_trigger)
-        cg.used_runtimes |= RT_GAMEPAD;
     resolve_runtime_deps(&cg);
 
     // Runtime helpers.
@@ -6167,7 +6134,6 @@ int codegen_program(const Program *prog, FILE *out) {
     emit_cpu_topology_helper(&cg);
     emit_simd_detect_helper(&cg);
     if (cg.used_runtimes & RT_WINDOW) emit_window_runtime(&cg, &ev_flags);
-    if (cg.used_runtimes & RT_GAMEPAD) emit_gamepad_runtime(&cg);
     if (cg.used_runtimes & RT_NET) emit_net_runtime(&cg);
     if (cg.used_runtimes & RT_NET) emit_server_runtime(&cg);
     emit_mem_runtime(&cg);
@@ -6201,7 +6167,6 @@ int codegen_program(const Program *prog, FILE *out) {
     // populated by the time we write them).
     emit_data_section(&cg);
     if (cg.used_runtimes & RT_WINDOW) emit_window_data(&cg);
-    if (cg.used_runtimes & RT_GAMEPAD) emit_gamepad_data(&cg);
     if (cg.used_runtimes & RT_GPU) emit_gpu_data(&cg);
     if (cg.used_runtimes & RT_MAT) emit_mat_data(&cg);
     if (cg.used_runtimes & RT_MESH) emit_mesh_data(&cg);
